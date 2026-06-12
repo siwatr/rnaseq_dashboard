@@ -11,14 +11,30 @@ dependencies:
   # App runtime (Imports)
   - r-shiny
   - r-bslib
-  # Plotting / IO used across pages
+  # UI / UX components
+  - r-dt                 # editable metadata tables, results browsing
+  - r-shinywidgets       # richer inputs
+  - r-shinycssloaders    # loading spinners for slow renders
+  - r-thematic           # ggplots match the bslib theme
+  # Plotting / data wrangling / IO
   - r-ggplot2
+  - r-dplyr              # gene-metadata filtering
+  - r-matrixstats        # fast rowVars for variable-gene selection
   - r-readr
   - r-readxl
+  - r-writexl            # XLSX export
+  # Reproducibility / reporting
+  - r-rmarkdown
+  - r-sessioninfo
+  # Compute (dim. reduction)
+  - r-rtsne              # t-SNE (mainly single-cell path)
+  - r-uwot               # UMAP (mainly single-cell path)
   # Package development workflow
   - r-devtools
   - r-roxygen2
   - r-testthat>=3.0.0
+  # Shiny module server logic is tested with shiny::testServer() (built-in);
+  # shinytest2 is not on conda-forge, so it's intentionally omitted.
   # Bioconductor core (the dds object, QC, heatmaps, annotation)
   - bioconductor-deseq2
   - bioconductor-summarizedexperiment
@@ -26,3 +42,15 @@ dependencies:
   - bioconductor-scater
   - bioconductor-complexheatmap
   - bioconductor-rtracklayer
+  # Bioconductor analysis & annotation
+  - bioconductor-edger             # filterByExpr feature filtering
+  - bioconductor-apeglm            # LFC shrinkage (lfcShrink)
+  - r-ashr                         # LFC shrinkage (alternative; CRAN pkg)
+  - bioconductor-vsn               # meanSdPlot (variance stabilization)
+  - bioconductor-matrixgenerics    # rowVars on SE/dds assays
+  - bioconductor-annotationdbi     # OrgDb querying
+  - bioconductor-org.mm.eg.db      # mouse annotation
+  - bioconductor-org.hs.eg.db      # human annotation
+  - bioconductor-scran             # single-cell normalization (later phase)
+  # exonic feature length uses the direct rtracklayer route;
+  # GenomicFeatures/txdbmaker are optional and intentionally omitted.
