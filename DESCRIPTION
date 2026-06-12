@@ -21,6 +21,7 @@ Imports:
 Suggests:
     ComplexHeatmap,
     DESeq2,
+    S4Vectors,
     SingleCellExperiment,
     SummarizedExperiment,
     ggplot2,
