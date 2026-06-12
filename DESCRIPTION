@@ -16,17 +16,18 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Imports:
     bslib,
-    methods,
-    shiny
-Suggests:
-    ComplexHeatmap,
     DESeq2,
-    S4Vectors,
-    SingleCellExperiment,
-    SummarizedExperiment,
-    ggplot2,
+    DT,
+    methods,
     readr,
     readxl,
+    shiny,
+    SummarizedExperiment
+Suggests:
+    ComplexHeatmap,
+    S4Vectors,
+    SingleCellExperiment,
+    ggplot2,
     rtracklayer,
     scater,
     testthat (>= 3.0.0)
