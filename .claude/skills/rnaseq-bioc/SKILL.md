@@ -1,14 +1,14 @@
 ---
 name: rnaseq-bioc
-description: Domain reference for working with bulk RNA-seq Bioconductor objects in this app — DESeqDataSet/SummarizedExperiment/SingleCellExperiment structure, assay slots, normalization math (CPM/TPM/FPKM), scater QC metrics, and the DESeq2 differential-expression result conventions used here. Use when writing or reviewing any code that touches the dds object, its assays, colData/rowData, normalization, QC, or DESeq2 results.
+description: Domain reference for working with RNA-seq Bioconductor objects in this app — DESeqDataSet/SummarizedExperiment/SingleCellExperiment structure, assays, normalization math (CPM/TPM/FPKM) and size factors on endogenous genes, feature_class/feature_length conventions, scater QC metrics, filterByExpr, and the DESeq2 dual-LFC (standard + shrunken) result schema. Use when writing or reviewing any code that touches the dds object, its assays, colData/rowData, normalization, QC, or DESeq2 results.
 metadata:
   type: reference
-  version: "1.0"
+  version: "1.1"
 ---
 
 # RNA-seq Bioconductor reference
 
-Encodes the domain knowledge this app depends on so it doesn't get re-derived (or gotten subtly wrong) each time. Bulk RNA-seq only — UMI/droplet single-cell QC is out of scope.
+Encodes the domain knowledge this app depends on so it doesn't get re-derived (or gotten subtly wrong) each time. **Bulk-first:** the bulk path is built first; single-cell is a later phase via pseudobulk (see end). For bulk, UMI counts are just deduplicated counts — no special handling.
 
 ## Object model
 
@@ -23,9 +23,9 @@ A `DESeqDataSet` *is a* `RangedSummarizedExperiment`. Accessors you will use con
 | Design / model | `design(dds)` |
 | Size factors | `sizeFactors(dds)` |
 
-`sce` → `dds`: build raw counts with `DESeq2::DESeqDataSet(sce, design = ~ 1)` (or `DESeqDataSetFromMatrix`), carrying over `colData` and `rowData`. A placeholder design (`~ 1`) is fine until the user sets one on the DE page.
+`sce` → `dds`: build raw counts with `DESeq2::DESeqDataSet(sce, design = ~ 1)` (or `DESeqDataSetFromMatrix`), carrying over `colData` and `rowData`. A placeholder design (`~ 1`) is fine until the user sets one on the DE page. **For real single-cell input, prefer pseudobulk** (`scuttle::aggregateAcrossCells()` by a sample grouping) → a bulk-like `dds`; **force it above ~1k cells**. Per-cell coercion is allowed below that only behind a *"statistically inaccurate and slow"* warning — see [normalization-scran-vs-deseq.md](../../../dev_ref/normalization-scran-vs-deseq.md).
 
-**Edits invalidate downstream state.** Dropping a sample or feature subsets the object (`dds[keep_rows, keep_cols]`) and means any stored `DESeq()` fit, normalized assays, and DE results are stale and must be recomputed.
+**Edits invalidate downstream state.** Dropping a sample or feature subsets the object (`dds[keep_rows, keep_cols]`) and means any stored `DESeq()` fit, normalized assays, and DE results are stale and must be recomputed. The app tracks this with a `data_version` stamp (see the `shiny-module` skill's state model) — never silently reuse a stale `derived` artifact.
 
 ## Assays and normalization
 
@@ -36,7 +36,15 @@ Keep raw integer counts in `"counts"` untouched; add normalized values as new as
 - **TPM** (needs effective feature length `L`, in bases): `rate = counts / L`; `tpm = rate / colSums(rate) * 1e6`. Length-normalize *first*, then per-sample scale.
 - **FPKM**: `fpkm = counts / (L/1000) / (colSums(counts)/1e6)`.
 
-**Effective length caveat:** `L` may come from a different feature type than the rows (e.g. exonic length for gene-level rows). Treat it as a separately-sourced vector aligned to `rownames(dds)`, sourced either from a `rowData` column the upstream tool provided or computed from a GTF in-session. Never assume `L` = the row feature's genomic span. TPM/FPKM are unavailable until `L` exists — degrade gracefully to CPM.
+**Effective length caveat:** `L` may come from a different feature type than the rows (e.g. exonic length for gene-level rows). Store it as **`rowData(dds)$feature_length`**, aligned to `rownames(dds)`. Source it from an upstream `rowData` column, or compute from a GTF via the **direct `rtracklayer` route** (robust to custom GTFs): `import(gtf)` → keep `type == "exon"` → split by gene id → `reduce()` per group → `sum(width(...))`. Avoid building a `TxDb`. Never assume `L` = the row's genomic span. TPM/FPKM are unavailable until `L` exists — degrade gracefully to CPM.
+
+## Feature classes (always present)
+
+Add **`rowData(dds)$feature_class`** unconditionally — a factor with levels `endogenous` (default for every feature) / `spike_in` / `exogenous`. Set during annotation (ERCC pattern `^ERCC-`, GTF/manual marking). **Flag, never drop** — these features stay in the object so their expression remains plottable, but their *role* changes:
+
+- **Size factors on endogenous only:** `DESeq2::estimateSizeFactors(dds, controlGenes = which(rowData(dds)$feature_class == "endogenous"))`. (DESeq2's `controlGenes` selects which genes *form* the size-factor estimate.)
+- **Variable-gene selection** (PCA, heatmap default): subset to `feature_class == "endogenous"` before ranking by variance (`matrixStats::rowVars` / `MatrixGenerics::rowVars`).
+- **DE:** keep all genes in the fit; the column lets the UI optionally grey/hide spike-in/exogenous in MA/volcano.
 
 ## QC metrics (scater)
 
@@ -50,27 +58,40 @@ Keep raw integer counts in `"counts"` untouched; add normalized values as new as
 
 Useful QC plots: per-metric bar plot (few samples) or box plot grouped by a `colData` column (many samples); a variance-stabilization mean–variance plot (`DESeq2::vst()`); and a sample–sample correlation heatmap on log-counts (`ComplexHeatmap`, correlation of `assay(dds, "logcounts")`).
 
-Filtering: always drop all-zero features (`rowSums(counts) == 0`); drop low-count features by a user threshold on `rowSums(counts)`. **Do not use `HTSFilter`** — too slow for an interactive app.
+Filtering: always drop all-zero features (`rowSums(counts) == 0`); offer **`edgeR::filterByExpr()`** (fast, design-aware) as the smart automatic default, plus a manual `rowSums(counts)` threshold. **Do not use `HTSFilter`** — too slow for an interactive app. For small-n bulk (3–12 samples), MAD-based outlier detection is unreliable — *flag* samples, don't auto-drop.
+
+**QC page is unified** across bulk/single-cell (same plot types, per-sample vs per-cell unit) with a visible **data-type badge**. The "variance stabilization plot" = `vsn::meanSdPlot()` on VST data.
 
 ## DESeq2 differential expression
 
+Use a **guided design builder**, not free-text: pick the variable of interest + optional covariates, set the **reference (control) level** (`relevel()`), and validate the model is **full rank** before fitting. Replace free-text "results names" with a **contrast picker** over factor levels; support **multiple stored contrasts**.
+
 ```r
-dds <- DESeq2::DESeq(dds)              # rerun after any sample/feature change
+dds <- DESeq2::DESeq(dds)              # rerun from raw counts after any sample/feature change
 res <- DESeq2::results(dds, contrast = c(column, test, control))
+shr <- DESeq2::lfcShrink(dds, coef = ..., type = "apeglm")   # precompute once
 df  <- as.data.frame(res)
+df$log2FoldChange_shrunk <- shr$log2FoldChange[match(rownames(df), rownames(shr))]
 ```
 
-Augment every results frame with the app's two standard columns:
+**Precompute both LFC variants and classify each** (the shrinkage toggle then just selects columns — no recompute). `padj` is shared (shrinkage changes only LFC/lfcSE):
 
 ```r
-df$sig <- !is.na(df$padj) & df$padj < padj_cut & abs(df$log2FoldChange) >= lfc_cut
-df$DEG <- factor(
-  ifelse(!df$sig, "no_change", ifelse(df$log2FoldChange > 0, "up", "down")),
-  levels = c("up", "down", "no_change")
-)
+classify <- function(lfc, padj, padj_cut, lfc_cut) {
+  sig <- !is.na(padj) & padj < padj_cut & abs(lfc) >= lfc_cut
+  list(
+    sig = sig,
+    DEG = factor(ifelse(!sig, "no_change", ifelse(lfc > 0, "up", "down")),
+                 levels = c("up", "down", "no_change"))
+  )
+}
+std <- classify(df$log2FoldChange,        df$padj, 0.05, log2(2))
+shk <- classify(df$log2FoldChange_shrunk, df$padj, 0.05, log2(2))
+df$sig        <- std$sig;  df$DEG        <- std$DEG
+df$sig_shrunk <- shk$sig;  df$DEG_shrunk <- shk$DEG
 ```
 
-Defaults: `padj_cut = 0.05`, `lfc_cut = log2(2)`. A contrast/result name is `c(column, test, control)`.
+Defaults: `padj_cut = 0.05`, `lfc_cut = log2(2)` (user-adjustable). Memory is a non-issue (~2–3 MB/contrast at 50k genes).
 
 DE scatter plots (ggplot2; color by `DEG` by default):
 

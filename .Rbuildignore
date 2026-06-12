@@ -4,6 +4,8 @@
 ^README\.md$
 ^CLAUDE\.md$
 ^environment\.yml$
+^data-raw$
+^dev_ref$
 ^\.git$
 ^\.gitignore$
 ^.*\.Rproj$

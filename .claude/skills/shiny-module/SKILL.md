@@ -1,21 +1,34 @@
 ---
 name: shiny-module
-description: Scaffold a new page/feature in this RNA-seq dashboard as a Shiny module following the project's conventions — paired mod_<name>_ui/server functions, the shared reactive dds threaded in and returned out, bslib layout, and deferred (button-gated) plot rendering. Use when adding a new page, splitting a page into sub-modules, or refactoring inline server logic into a module.
+description: Scaffold a new page/feature in this RNA-seq dashboard as a Shiny module following the project's conventions — paired mod_<name>_ui/server functions, the shared app-state object (original/working/derived/data_version/history), versioned cached derivations, bslib layout, and deferred (button-gated) rendering. Use when adding a new page, splitting a page into sub-modules, or refactoring inline server logic into a module.
 metadata:
   type: project
-  version: "1.0"
+  version: "2.0"
 ---
 
 # Scaffolding a dashboard module
 
-Every page in this app is a Shiny module so state and namespacing stay isolated. Use this pattern for new pages and sub-panels. Pair with the `shiny-bslib` skill for layout and `rnaseq-bioc` for any data logic.
+Every page in this app is a Shiny module so state and namespacing stay isolated. Pair with the `shiny-bslib` skill for layout and `rnaseq-bioc` for any data logic.
+
+## The shared app-state object
+
+The canonical store is **not** a bare `dds` reactive — it's one `reactiveValues` (`state`) threaded into every module (see `CLAUDE.md` → State model). Modules interact with it through a small helper API (lives in `R/state.R`):
+
+- `state$working` — current `dds`; `state$original` — immutable load; `state$derived` — cached heavy artifacts; `state$data_version` — bumped on any data edit; `state$history` — action log.
+- `state_dds(state)` — reactive read of `state$working` (use this where the old code read `dds()`).
+- `state_mutate(state, fn, action)` — apply `fn(working)` → new `dds`, **bump `data_version`**, append `action` (name + params) to `history`. The single entry point for edits (filters, metadata, annotation).
+- `state_derive(state, key, params, expr)` — get-or-compute a cached artifact (VST, PCA, DESeq fit, DE table) stamped with the current `data_version`; recomputes only when stale. Wrap heavy work behind the render button **and** this helper.
+- `state_reset(state)` / `state_undo(state)` — restore `original` / pop the snapshot stack.
+
+This keeps invalidation in one place: a module never hand-rolls staleness — mutating via `state_mutate` invalidates everything downstream automatically.
 
 ## The contract
 
-- **One reactive `dds` flows through.** A module *reads* the current `dds` (passed in as a reactive) and *returns* an updated `dds` reactive. The top-level server owns the canonical copy and rewires it: `dds <- mod_qc_server("qc", dds = dds)`.
-- **Naming:** `mod_<page>_ui(id, ...)` and `mod_<page>_server(id, dds, ...)`. File `R/mod_<page>.R`.
-- **Namespacing:** all input IDs go through `ns <- NS(id)` in the UI; the server uses bare IDs inside `moduleServer()`.
-- **Deferred rendering:** expensive plots/computations are gated behind an "apply/render" button via `bindEvent()` / `eventReactive()` — never recompute live on every control.
+- **Naming:** `mod_<page>_ui(id, ...)` and `mod_<page>_server(id, state, ...)`. File `R/mod_<page>.R`.
+- **Namespacing:** all input IDs go through `ns <- NS(id)` in the UI; bare IDs inside `moduleServer()`.
+- **Edits go through `state_mutate`**; derived results go through `state_derive`. Modules return `invisible(NULL)` — they mutate shared `state`, they don't pass a `dds` back.
+- **Deferred rendering:** expensive work is gated behind an "apply/render" button (`bindEvent()`/`eventReactive()`), never live on every control.
+- **Stale-aware UI:** show a stale badge / disable "use" when a needed `derived` artifact is stale; gate on prerequisites (e.g. DE needs a design) with a banner.
 
 ## Template
 
@@ -31,28 +44,32 @@ mod_<page>_ui <- function(id) {
     ),
     bslib::card(
       bslib::card_header("..."),
-      plotOutput(ns("plot"))
+      shinycssloaders::withSpinner(plotOutput(ns("plot")))
     )
   )
 }
 
-#' @param dds reactive() returning the current DESeqDataSet
-#' @return reactive() returning the (possibly updated) DESeqDataSet
-mod_<page>_server <- function(id, dds) {
+#' @param state the shared app-state reactiveValues
+mod_<page>_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
-    # Gate heavy work behind the button + current dds.
-    result <- eventReactive(input$render, {
-      req(dds())
-      # ... compute on dds() ...
+    # Read current dds via the helper; compute heavy artifacts via state_derive.
+    embedding <- eventReactive(input$render, {
+      dds <- req(state_dds(state)())
+      state_derive(state, key = "pca",
+                   params = list(n_top = input$n_top, assay = input$assay),
+                   expr = function() compute_pca(dds, input$n_top, input$assay))
     })
 
-    output$plot <- renderPlot({
-      req(result())
-      # ggplot2 ...
+    output$plot <- renderPlot({ req(embedding()); ggplot2::ggplot(...) })
+
+    # An edit (e.g. filtering) goes through state_mutate — bumps version + logs.
+    observeEvent(input$apply_filter, {
+      state_mutate(state,
+        fn = function(dds) dds[keep_rows(dds, input$min_count), ],
+        action = list(name = "filter_features", min_count = input$min_count))
     })
 
-    # Return the (updated) object so the parent can rewire canonical state.
-    reactive(dds())
+    invisible(NULL)
   })
 }
 ```
@@ -60,32 +77,25 @@ mod_<page>_server <- function(id, dds) {
 ## Top-level wiring
 
 ```r
-# app.R / R/run_app.R
-ui <- bslib::page_navbar(
-  title = "dds dashboard",
-  theme = bslib::bs_theme(version = 5),
-  bslib::nav_panel("Input",      mod_input_ui("input")),
-  bslib::nav_panel("QC",         mod_qc_ui("qc")),
-  bslib::nav_panel("Process",    mod_process_ui("process")),
-  bslib::nav_panel("DimReduc",   mod_dimreduc_ui("dimreduc")),
-  bslib::nav_panel("DE",         mod_de_ui("de")),
-  bslib::nav_panel("Heatmap",    mod_heatmap_ui("heatmap")),
-  bslib::nav_panel("Export",     mod_export_ui("export"))
-)
-
+# R/run_app.R
 server <- function(input, output, session) {
-  dds <- mod_input_server("input")          # produces the initial dds
-  dds <- mod_qc_server("qc", dds = dds)      # each page may refine it
-  dds <- mod_process_server("process", dds = dds)
-  # dimreduc / de / heatmap read dds; export consumes it
+  state <- new_app_state()           # reactiveValues: original/working/derived/data_version/history
+  mod_input_server("input",       state)   # populates original + working
+  mod_qc_server("qc",             state)
+  mod_process_server("process",   state)
+  mod_dimreduc_server("dimreduc", state)
+  mod_de_server("de",             state)
+  mod_heatmap_server("heatmap",   state)
+  mod_export_server("export",     state)   # reads working + history for the report
+  mod_statusbar_server("statusbar", state) # persistent data-type / n / stale badges
 }
 ```
 
 ## Checklist for a new module
 
-- [ ] `mod_<page>_ui` namespaces every input with `ns()`.
-- [ ] `mod_<page>_server` takes `dds` reactive, returns a `dds` reactive (even if unchanged).
-- [ ] Heavy work is `eventReactive`/`bindEvent` on an explicit button.
-- [ ] If the module edits samples/features, downstream assays + DESeq fit are flagged stale (see `rnaseq-bioc`).
-- [ ] `req()` guards against missing `dds`/empty inputs.
-- [ ] Layout uses bslib (`layout_sidebar`, `card`, `layout_column_wrap`), not legacy `fluidRow`/`column`.
+- [ ] `mod_<page>_ui` namespaces every input with `ns()`; uses bslib (`layout_sidebar`, `card`, `layout_column_wrap`), not `fluidRow`/`column`.
+- [ ] `mod_<page>_server(id, state)` reads via `state_dds()`, edits via `state_mutate()`, caches via `state_derive()`.
+- [ ] Heavy work is gated behind an explicit button (`eventReactive`/`bindEvent`) and `req()`-guarded.
+- [ ] No hand-rolled staleness — invalidation is implicit through `state_mutate` bumping `data_version`.
+- [ ] Prerequisite banner + stale badge where a derived artifact is required.
+- [ ] Any new mutating action logs to `history` (powers the reproducibility export).
