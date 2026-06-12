@@ -18,11 +18,12 @@ mod_qc_ui <- function(id) {
   )
 }
 
-#' @param dds reactive() yielding the current DESeqDataSet.
-#' @return reactive() yielding the (possibly filtered) DESeqDataSet.
-mod_qc_server <- function(id, dds) {
+#' @param state the shared app-state object (see [new_app_state()]).
+#' @return Invisible NULL.
+mod_qc_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
-    # TODO: compute scater per-cell QC metrics behind the render button.
-    reactive(dds())
+    # TODO: compute QC metrics (per-sample/per-cell) behind the render button;
+    # filter via state_mutate(); cache via state_derive().
+    invisible(NULL)
   })
 }

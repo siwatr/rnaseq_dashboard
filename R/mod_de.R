@@ -23,12 +23,12 @@ mod_de_ui <- function(id) {
   )
 }
 
-#' @param dds reactive() yielding the current DESeqDataSet.
+#' @param state the shared app-state object (see [new_app_state()]).
 #' @return reactive() yielding the DESeqDataSet (with DESeq fit attached).
-mod_de_server <- function(id, dds) {
+mod_de_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
-    # TODO: run DESeq() behind the button; cache fit; build the chosen plot
-    # with the sig/DEG columns and axis clamping (triangle for clamped points).
-    reactive(dds())
+    # TODO: run DESeq() behind the button; cache fit via state_derive(); build
+    # the chosen plot with sig/DEG (+ _shrunk) columns and triangle clamping.
+    invisible(NULL)
   })
 }
