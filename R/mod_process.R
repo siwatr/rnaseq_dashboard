@@ -19,12 +19,12 @@ mod_process_ui <- function(id) {
   )
 }
 
-#' @param dds reactive() yielding the current DESeqDataSet.
+#' @param state the shared app-state object (see [new_app_state()]).
 #' @return reactive() yielding the DESeqDataSet with added assays.
-mod_process_server <- function(id, dds) {
+mod_process_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
     # TODO: on $apply, compute selected assays via cpm()/tpm()/fpkm() and
-    # attach them, then return the updated object.
-    reactive(dds())
+    # attach them via state_mutate().
+    invisible(NULL)
   })
 }

@@ -16,15 +16,15 @@ mod_export_ui <- function(id) {
   )
 }
 
-#' @param dds reactive() yielding the current DESeqDataSet.
+#' @param state the shared app-state object (see [new_app_state()]).
 #' @return Invisible NULL.
-mod_export_server <- function(id, dds) {
+mod_export_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
     output$dds <- downloadHandler(
       filename = function() paste0("dds-", Sys.Date(), ".rds"),
       content = function(file) {
-        req(dds())
-        saveRDS(dds(), file)
+        req(state$working)
+        saveRDS(state$working, file)
       }
     )
     invisible(NULL)

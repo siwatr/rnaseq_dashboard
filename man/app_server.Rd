@@ -13,7 +13,7 @@ app_server(input, output, session)
 Invisible \code{NULL}.
 }
 \description{
-Owns the canonical \code{dds}. Each module receives the current \code{dds} as a
-reactive and returns a (possibly updated) \code{dds}; the top-level server
-rewires the canonical copy. See the \code{shiny-module} skill for the contract.
+Creates the shared app-state object and threads it into every module. Modules
+read it via \code{state_dds()}, edit via \code{state_mutate()}, and cache via
+\code{state_derive()}. See the \code{shiny-module} skill for the contract.
 }

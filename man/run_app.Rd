@@ -4,9 +4,13 @@
 \alias{run_app}
 \title{Launch the dds dashboard}
 \usage{
-run_app(...)
+run_app(max_upload_mb = .default_max_upload_mb, ...)
 }
 \arguments{
+\item{max_upload_mb}{Maximum size (in MB) for a single browser upload — covers
+the \code{.rds} object and the counts/sample-sheet tables. Sets the global
+\code{shiny.maxRequestSize} option. Raise it for very large datasets.}
+
 \item{...}{Passed to \code{\link[shiny:shinyApp]{shiny::shinyApp()}}.}
 }
 \value{

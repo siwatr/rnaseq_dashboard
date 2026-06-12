@@ -19,9 +19,9 @@ mod_dimreduc_ui <- function(id) {
   )
 }
 
-#' @param dds reactive() yielding the current DESeqDataSet.
+#' @param state the shared app-state object (see [new_app_state()]).
 #' @return Invisible NULL (consumes dds, does not mutate it).
-mod_dimreduc_server <- function(id, dds) {
+mod_dimreduc_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
     # TODO: compute embedding behind the render button; cache it.
     invisible(NULL)

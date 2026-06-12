@@ -19,9 +19,9 @@ mod_heatmap_ui <- function(id) {
   )
 }
 
-#' @param dds reactive() yielding the current DESeqDataSet.
+#' @param state the shared app-state object (see [new_app_state()]).
 #' @return Invisible NULL (consumes dds, does not mutate it).
-mod_heatmap_server <- function(id, dds) {
+mod_heatmap_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
     # TODO: build ComplexHeatmap behind the render button.
     invisible(NULL)
