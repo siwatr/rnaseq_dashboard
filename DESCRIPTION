@@ -1,0 +1,33 @@
+Package: ddsdashboard
+Title: Explore and Process RNA-seq DESeqDataSet Objects
+Version: 0.0.0.9000
+Authors@R:
+    person("Siwat Chad", "Ruangroengkulrith", email = "chorchatty@gmail.com",
+           role = c("aut", "cre"))
+Description: A Shiny dashboard for exploring, manipulating, and visualizing
+    bulk RNA-seq results stored in DESeqDataSet (and convertible
+    SingleCellExperiment) objects. Aimed at users with little to no
+    bioinformatics background: quality control, metadata editing,
+    filtering, normalization, dimensionality reduction, DESeq2
+    differential expression, heatmaps, and export. Also exposes reusable
+    helper functions (normalization, feature lookup) for other projects.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Imports:
+    bslib,
+    methods,
+    shiny
+Suggests:
+    ComplexHeatmap,
+    DESeq2,
+    SingleCellExperiment,
+    SummarizedExperiment,
+    ggplot2,
+    readr,
+    readxl,
+    rtracklayer,
+    scater,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0

@@ -1,0 +1,11 @@
+^\.claude$
+^claude_plan$
+^rough_design\.md$
+^README\.md$
+^CLAUDE\.md$
+^environment\.yml$
+^\.git$
+^\.gitignore$
+^.*\.Rproj$
+^\.Rproj\.user$
+^LICENSE\.md$

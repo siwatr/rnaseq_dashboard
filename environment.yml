@@ -1,0 +1,28 @@
+# Project environment for the dds dashboard.
+# Create with:  mamba env create -f environment.yml
+# Update with:  mamba env update -f environment.yml --prune
+# Channels are pinned to conda-forge + bioconda (no defaults/anaconda).
+name: rnaseq_dashboard
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base>=4.4
+  # App runtime (Imports)
+  - r-shiny
+  - r-bslib
+  # Plotting / IO used across pages
+  - r-ggplot2
+  - r-readr
+  - r-readxl
+  # Package development workflow
+  - r-devtools
+  - r-roxygen2
+  - r-testthat>=3.0.0
+  # Bioconductor core (the dds object, QC, heatmaps, annotation)
+  - bioconductor-deseq2
+  - bioconductor-summarizedexperiment
+  - bioconductor-singlecellexperiment
+  - bioconductor-scater
+  - bioconductor-complexheatmap
+  - bioconductor-rtracklayer
