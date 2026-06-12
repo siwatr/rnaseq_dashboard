@@ -1,9 +1,17 @@
+# Default ceiling for browser uploads (.rds objects and tables). Shiny's own
+# default is only 5 MB, far too small for real DESeqDataSet .rds files.
+.default_max_upload_mb <- 500L
+
 #' Launch the dds dashboard
 #'
+#' @param max_upload_mb Maximum size (in MB) for a single browser upload — covers
+#'   the `.rds` object and the counts/sample-sheet tables. Sets the global
+#'   `shiny.maxRequestSize` option. Raise it for very large datasets.
 #' @param ... Passed to [shiny::shinyApp()].
 #' @return A Shiny app object (invisibly when run interactively).
 #' @export
-run_app <- function(...) {
+run_app <- function(max_upload_mb = .default_max_upload_mb, ...) {
+  options(shiny.maxRequestSize = max_upload_mb * 1024^2)
   shiny::shinyApp(ui = app_ui(), server = app_server, ...)
 }
 
@@ -37,6 +45,10 @@ app_ui <- function() {
 #' @return Invisible `NULL`.
 #' @export
 app_server <- function(input, output, session) {
+  # Ensure a sane upload ceiling even if launched directly (not via run_app()).
+  if (is.null(getOption("shiny.maxRequestSize"))) {
+    options(shiny.maxRequestSize = .default_max_upload_mb * 1024^2)
+  }
   state <- new_app_state()
   mod_input_server("input", state)
   mod_qc_server("qc", state)
