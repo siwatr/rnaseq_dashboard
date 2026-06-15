@@ -1,9 +1,11 @@
 # Page 1, "Feature info" tab: annotation (OrgDb, then an authoritative GTF) plus
 # the shared metadata draft editor configured for rowData (features). Annotation
-# applies immediately via state_mutate(); the editable table (R/mod_meta_editor.R)
-# handles feature_class and free edits. GTF annotation also sources feature_length
-# (union over a chosen feature type, or adopted from an existing numeric column),
-# which unlocks TPM/FPKM on the Assay tab.
+# and feature_length operate on the editor's DRAFT (composing with the user's
+# unsaved edits) and commit only on Save -- they do not write straight to
+# state$working, which would reset the draft and drop pending edits. The editable
+# table (R/mod_meta_editor.R) handles feature_class and free edits. feature_length
+# can be computed from the GTF (union over a chosen feature type) or adopted from
+# an existing numeric column; either unlocks TPM/FPKM on the Assay tab.
 
 .feature_editor_opts <- list(
   slot = "rowData", title = "Feature information", row_noun = "feature",
@@ -23,7 +25,7 @@ mod_feature_ui <- function(id) {
     actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary"),
     hr(),
     tags$strong("Annotate from GTF"),
-    helpText("A GTF overrides OrgDb for matching features and can supply feature_length."),
+    helpText("A GTF overrides OrgDb for matching features. Edits land in the draft - click Save to keep."),
     fileInput(ns("gtf_file"), "Upload GTF/GFF (gzip OK)",
               accept = c(".gtf", ".gff", ".gff3", ".gtf.gz", ".gff.gz", ".gff3.gz",
                          ".gz", "application/gzip", "application/x-gzip", "text/plain")),
@@ -33,10 +35,11 @@ mod_feature_ui <- function(id) {
     actionButton(ns("read_gtf"), "Read GTF"),
     uiOutput(ns("gtf_opts")),
     hr(),
-    tags$strong("Set feature_length from a column"),
-    helpText("Use an existing numeric rowData column (e.g. length from your quantifier)."),
+    tags$strong("Set feature_length"),
+    helpText("Unlocks TPM/FPKM. From an existing numeric rowData column:"),
     uiOutput(ns("len_col_ui")),
     actionButton(ns("set_len"), "Set length from column"),
+    uiOutput(ns("gtf_len_ui")),
     hr()
   )
   meta_editor_ui(ns("editor"), .feature_editor_opts,
@@ -49,34 +52,41 @@ mod_feature_ui <- function(id) {
 mod_feature_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
-    meta_editor_server("editor", state, .feature_editor_opts)
+    editor <- meta_editor_server("editor", state, .feature_editor_opts)
     gtf_obj <- reactiveVal(NULL)
 
+    # Apply fn(draft, ...) to the editor draft, reporting errors; returns the new
+    # dds (invisibly via the editor) or NULL on failure.
+    edit_draft <- function(fn) {
+      d <- editor$draft(); if (is.null(d)) return(NULL)
+      res <- tryCatch(fn(d), error = function(e) {
+        showNotification(conditionMessage(e), type = "error", duration = NULL); NULL })
+      if (is.null(res)) return(NULL)
+      editor$set(res)
+      newft <- detect_feature_type(res)
+      state$meta <- utils::modifyList(state$meta, list(feature_type = newft$feature_type))
+      res
+    }
+
     output$detected_id <- renderText({
-      req(state$working)
-      sprintf("Detected: %s", detect_id_type(rownames(state$working)))
+      d <- editor$draft(); req(d)
+      sprintf("Detected: %s", detect_id_type(rownames(d)))
     })
 
     observeEvent(input$annotate, {
-      req(state$working)
+      req(editor$draft())
       organism <- input$organism
       id_type <- if (identical(input$id_type, "auto")) NULL else input$id_type
       ft <- state_meta(state)$feature_type
-      ok <- tryCatch({
-        state_mutate(state,
-          function(d) annotate_with_orgdb(d, organism = organism, id_type = id_type, feature_type = ft),
-          action = list(action = "annotate_orgdb", organism = organism))
-        TRUE
-      }, error = function(e) { showNotification(conditionMessage(e), type = "error", duration = NULL); FALSE })
-      req(ok)
-      newft <- detect_feature_type(state$working)
-      state$meta <- utils::modifyList(state$meta, list(feature_type = newft$feature_type))
-      cov <- annotation_coverage(state$working, paste0(newft$feature_type, "_name"))
-      showNotification(sprintf("Annotated %d of %d endogenous features.", cov$matched, cov$total),
-                       type = "message")
+      res <- edit_draft(function(d)
+        annotate_with_orgdb(d, organism = organism, id_type = id_type, feature_type = ft))
+      req(res)
+      cov <- annotation_coverage(res, paste0(detect_feature_type(res)$feature_type, "_name"))
+      showNotification(sprintf("Annotated %d of %d endogenous features. Click Save to keep.",
+                               cov$matched, cov$total), type = "message")
     })
 
-    # --- GTF -----------------------------------------------------------------
+    # --- GTF read ------------------------------------------------------------
     observeEvent(input$read_gtf, {
       # Prefer a local path (no browser upload, no size cap); else the upload.
       # Either way a real file extension drives format + gzip handling.
@@ -101,78 +111,93 @@ mod_feature_server <- function(id, state) {
                                paste(gtf_feature_types(g), collapse = ", ")), type = "message")
     })
 
+    # --- GTF attribute import (draft) ----------------------------------------
     output$gtf_opts <- renderUI({
       g <- gtf_obj(); req(g)
       cols <- available_gtf_columns(g)
-      types <- gtf_feature_types(g)
       tagList(
         selectInput(ns("gtf_match"), "Match dds rows by",
                     c("Auto (id, then name)" = "auto", stats::setNames(cols, cols))),
         selectizeInput(ns("gtf_import"), "Import columns", choices = cols, multiple = TRUE,
                        selected = intersect(c("gene_name", "seqnames", "gene_biotype"), cols)),
-        checkboxInput(ns("gtf_len"), "Compute feature_length from this GTF", value = TRUE),
-        selectInput(ns("gtf_len_type"), "Length feature type", choices = types,
-                    selected = if ("exon" %in% types) "exon" else types[[1]]),
         actionButton(ns("apply_gtf"), "Apply GTF annotation", class = "btn-primary")
       )
     })
 
     observeEvent(input$apply_gtf, {
-      req(state$working, gtf_obj())
+      req(editor$draft(), gtf_obj())
       g <- gtf_obj()
       ft <- state_meta(state)$feature_type
       report <- NULL
-      ok <- tryCatch({
-        res <- annotate_with_gtf(state$working, g, match_col = input$gtf_match,
+      res <- edit_draft(function(d) {
+        out <- annotate_with_gtf(d, g, match_col = input$gtf_match,
                                  import_cols = input$gtf_import,
-                                 compute_length = isTRUE(input$gtf_len),
-                                 length_type = input$gtf_len_type, feature_type = ft)
-        report <- res$report
-        state_mutate(state, function(.) res$dds,
-                     action = list(action = "annotate_gtf", match_col = input$gtf_match,
-                                   import_cols = input$gtf_import,
-                                   length_type = if (isTRUE(input$gtf_len)) input$gtf_len_type else NA))
-        TRUE
-      }, error = function(e) { showNotification(conditionMessage(e), type = "error", duration = NULL); FALSE })
-      req(ok)
-      newft <- detect_feature_type(state$working)
-      state$meta <- utils::modifyList(state$meta, list(feature_type = newft$feature_type))
-      msg <- sprintf("GTF: matched %d of %d features.", report$matched, report$total)
-      if (isTRUE(input$gtf_len)) {
-        msg <- paste0(msg, sprintf(" feature_length set for %d/%d%s.", report$length_set, report$total,
-                      if (report$length_complete) " - TPM/FPKM available"
-                      else " - incomplete, TPM/FPKM need all features"))
-      }
-      showNotification(msg, type = "message", duration = NULL)
+                                 compute_length = FALSE, feature_type = ft)
+        report <<- out$report
+        out$dds
+      })
+      req(res)
+      showNotification(sprintf("GTF: matched %d of %d features. Click Save to keep.",
+                               report$matched, report$total), type = "message")
     })
 
-    # --- feature_length from an existing numeric column ----------------------
+    # --- feature_length: from an existing numeric column ---------------------
     output$len_col_ui <- renderUI({
-      req(state$working)
-      rd <- SummarizedExperiment::rowData(state$working)
+      d <- editor$draft(); req(d)
+      rd <- SummarizedExperiment::rowData(d)
       num <- colnames(rd)[vapply(as.list(rd), is.numeric, logical(1))]
       selectInput(ns("len_col"), NULL, choices = num)
     })
 
     observeEvent(input$set_len, {
-      req(state$working, input$len_col)
-      ok <- tryCatch({
-        state_mutate(state, function(d) set_feature_length_from_column(d, input$len_col),
-                     action = list(action = "set_feature_length", column = input$len_col))
-        TRUE
-      }, error = function(e) { showNotification(conditionMessage(e), type = "error", duration = NULL); FALSE })
-      if (ok) showNotification(sprintf("feature_length set from '%s'.", input$len_col), type = "message")
+      req(editor$draft(), input$len_col)
+      res <- edit_draft(function(d) set_feature_length_from_column(d, input$len_col))
+      req(res)
+      showNotification(sprintf("feature_length set from '%s'. Click Save to keep.", input$len_col),
+                       type = "message")
+    })
+
+    # --- feature_length: computed from the loaded GTF ------------------------
+    output$gtf_len_ui <- renderUI({
+      g <- gtf_obj(); req(g)
+      types <- gtf_feature_types(g)
+      tagList(
+        helpText("Or compute union length from the loaded GTF over a feature type:"),
+        selectInput(ns("gtf_len_type"), NULL, choices = types,
+                    selected = if ("exon" %in% types) "exon" else types[[1]]),
+        actionButton(ns("compute_len"), "Compute length from GTF")
+      )
+    })
+
+    observeEvent(input$compute_len, {
+      req(editor$draft(), gtf_obj())
+      g <- gtf_obj()
+      ft <- state_meta(state)$feature_type
+      report <- NULL
+      res <- edit_draft(function(d) {
+        out <- annotate_with_gtf(d, g, match_col = input$gtf_match %||% "auto",
+                                 import_cols = NULL, compute_length = TRUE,
+                                 length_type = input$gtf_len_type, feature_type = ft)
+        report <<- out$report
+        out$dds
+      })
+      req(res)
+      showNotification(sprintf("feature_length set for %d/%d features%s. Click Save to keep.",
+                               report$length_set, report$total,
+                               if (report$length_complete) " - TPM/FPKM available"
+                               else " - incomplete, TPM/FPKM need all features"),
+                       type = "message", duration = NULL)
     })
 
     output$coverage <- renderText({
-      req(state$working)
+      d <- editor$draft(); req(d)
       name_col <- paste0(state_meta(state)$feature_type, "_name")
-      cov <- annotation_coverage(state$working, name_col)
+      cov <- annotation_coverage(d, name_col)
       name_msg <- if (cov$matched == 0L) "Names: not annotated yet."
                   else sprintf("Names: %d of %d endogenous features.", cov$matched, cov$total)
-      len_msg <- if (has_feature_length(state$working)) "feature_length: complete (TPM/FPKM available)."
+      len_msg <- if (has_feature_length(d)) "feature_length: complete (TPM/FPKM available)."
                  else "feature_length: not set (TPM/FPKM unavailable)."
-      paste(name_msg, len_msg)
+      paste(name_msg, len_msg, "(draft - Save to commit.)")
     })
 
     invisible(NULL)
