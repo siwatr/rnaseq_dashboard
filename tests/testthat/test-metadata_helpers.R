@@ -47,6 +47,56 @@ test_that("merge_sample_metadata supports an explicit id column and errors on no
                "match")
 })
 
+test_that("merge_sample_metadata reports overwritten columns", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)  # has 'group'
+  sheet <- data.frame(sample = colnames(dds),
+                      group = rep(c("x", "y"), length.out = ncol(dds)),
+                      batch = "B")
+  res <- merge_sample_metadata(dds, sheet)
+  expect_true("group" %in% res$report$overwritten)
+  expect_false("batch" %in% res$report$overwritten)   # newly added, not overwritten
+})
+
+test_that("protected_columns reads the design", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
+  expect_equal(protected_columns(dds), "condition")
+})
+
+test_that("add/remove colData column, with design protection", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
+  dds <- add_coldata_column(dds, "batch", "character", "A")
+  expect_true("batch" %in% colnames(SummarizedExperiment::colData(dds)))
+  expect_true(all(SummarizedExperiment::colData(dds)$batch == "A"))
+  expect_error(add_coldata_column(dds, "batch", "character"), "already exists")
+
+  dds <- remove_coldata_column(dds, "batch")
+  expect_false("batch" %in% colnames(SummarizedExperiment::colData(dds)))
+  expect_error(remove_coldata_column(dds, "condition"), "design")  # protected
+})
+
+test_that("rename_coldata_column rewrites the design when needed", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
+  dds <- rename_coldata_column(dds, "condition", "treatment")
+  expect_true("treatment" %in% colnames(SummarizedExperiment::colData(dds)))
+  expect_false("condition" %in% colnames(SummarizedExperiment::colData(dds)))
+  expect_equal(all.vars(DESeq2::design(dds)), "treatment")
+  expect_error(rename_coldata_column(dds, "treatment", "group"), "already exists")
+})
+
+test_that("rename_samples enforces uniqueness and existence", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
+  s <- colnames(dds)
+  dds2 <- rename_samples(dds, s[1], "sampleA")
+  expect_equal(colnames(dds2)[1], "sampleA")
+  expect_error(rename_samples(dds, s[1], s[2]), "unique")    # collides with existing
+  expect_error(rename_samples(dds, "nope", "x"), "Unknown sample")
+})
+
 test_that("set_feature_class tags resolved ids and errors when none match", {
   skip_if_not_installed("DESeq2")
   dds <- mk_dds()

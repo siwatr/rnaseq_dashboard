@@ -101,6 +101,7 @@ merge_sample_metadata <- function(dds, table, id_col = NULL) {
 
   aligned <- newcols[match(samples, ids), , drop = FALSE]
   cd <- SummarizedExperiment::colData(dds)
+  overwritten <- intersect(colnames(aligned), colnames(cd))
   for (cn in colnames(aligned)) cd[[cn]] <- aligned[[cn]]
   SummarizedExperiment::colData(dds) <- cd
 
@@ -109,9 +110,110 @@ merge_sample_metadata <- function(dds, table, id_col = NULL) {
     report = list(
       matched            = length(matched),
       unmatched_in_data  = setdiff(samples, ids),
-      unmatched_in_table = setdiff(ids, samples)
+      unmatched_in_table = setdiff(ids, samples),
+      overwritten        = overwritten
     )
   )
+}
+
+#' colData columns referenced by the design formula
+#'
+#' These are "protected": they can be renamed (the formula follows) but not removed.
+#' @param dds A `DESeqDataSet`.
+#' @return Character vector of design variable names (empty for `~ 1`).
+#' @export
+protected_columns <- function(dds) {
+  d <- tryCatch(DESeq2::design(dds), error = function(e) NULL)
+  if (is.null(d)) character(0) else all.vars(d)
+}
+
+#' Add a typed colData column
+#'
+#' @param dds A `DESeqDataSet`.
+#' @param name New column name (must not already exist).
+#' @param type One of character/numeric/integer/logical/factor.
+#' @param default Fill value for every sample (default `NA`).
+#' @return The updated `DESeqDataSet`.
+#' @export
+add_coldata_column <- function(dds, name,
+                               type = c("character", "numeric", "integer", "logical", "factor"),
+                               default = NA) {
+  type <- match.arg(type)
+  cd <- SummarizedExperiment::colData(dds)
+  if (!nzchar(name)) stop("Column name must be non-empty.", call. = FALSE)
+  if (name %in% colnames(cd)) stop("Column '", name, "' already exists.", call. = FALSE)
+  n <- nrow(cd)
+  cd[[name]] <- switch(type,
+    character = rep(as.character(default), n),
+    numeric   = rep(as.numeric(default), n),
+    integer   = rep(as.integer(default), n),
+    logical   = rep(as.logical(default), n),
+    factor    = factor(rep(as.character(default), n)))
+  SummarizedExperiment::colData(dds) <- cd
+  dds
+}
+
+#' Remove a colData column (design columns are protected)
+#'
+#' @param dds A `DESeqDataSet`.
+#' @param name Column to remove.
+#' @return The updated `DESeqDataSet`.
+#' @export
+remove_coldata_column <- function(dds, name) {
+  cd <- SummarizedExperiment::colData(dds)
+  if (!name %in% colnames(cd)) stop("Unknown colData column: ", name, call. = FALSE)
+  if (name %in% protected_columns(dds)) {
+    stop("Column '", name, "' is used by the design and cannot be removed (rename it instead).",
+         call. = FALSE)
+  }
+  cd[[name]] <- NULL
+  SummarizedExperiment::colData(dds) <- cd
+  dds
+}
+
+#' Rename a colData column (updates the design if needed)
+#'
+#' When `old` is a design variable, the design formula is rewritten to use `new`
+#' so it stays valid.
+#' @param dds A `DESeqDataSet`.
+#' @param old Existing column name.
+#' @param new New column name (must be non-empty and not already used).
+#' @return The updated `DESeqDataSet`.
+#' @export
+rename_coldata_column <- function(dds, old, new) {
+  cd <- SummarizedExperiment::colData(dds)
+  if (!old %in% colnames(cd)) stop("Unknown colData column: ", old, call. = FALSE)
+  if (!nzchar(new)) stop("New column name must be non-empty.", call. = FALSE)
+  if (new %in% colnames(cd)) stop("Column '", new, "' already exists.", call. = FALSE)
+  was_design <- old %in% protected_columns(dds)
+  colnames(cd)[match(old, colnames(cd))] <- new
+  SummarizedExperiment::colData(dds) <- cd
+  if (was_design) {
+    f <- DESeq2::design(dds)
+    rhs <- paste(deparse(f[[length(f)]]), collapse = " ")
+    rhs <- gsub(paste0("\\b", old, "\\b"), new, rhs)
+    DESeq2::design(dds) <- stats::as.formula(paste("~", rhs))
+  }
+  dds
+}
+
+#' Rename samples (colnames), enforcing uniqueness
+#'
+#' @param dds A `DESeqDataSet`.
+#' @param old Existing sample name(s).
+#' @param new Replacement name(s), same length as `old`.
+#' @return The updated `DESeqDataSet`.
+#' @export
+rename_samples <- function(dds, old, new) {
+  if (length(old) != length(new)) stop("`old` and `new` must be the same length.", call. = FALSE)
+  cn <- colnames(dds)
+  idx <- match(as.character(old), cn)
+  if (anyNA(idx)) stop("Unknown sample(s): ", paste(old[is.na(idx)], collapse = ", "), call. = FALSE)
+  if (any(!nzchar(new))) stop("Sample names must be non-empty.", call. = FALSE)
+  cn[idx] <- as.character(new)
+  if (anyDuplicated(cn)) stop("Sample names must be unique.", call. = FALSE)
+  colnames(dds) <- cn
+  dds
 }
 
 #' Set the feature_class of selected features
