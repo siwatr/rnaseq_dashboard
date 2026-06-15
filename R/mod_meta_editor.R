@@ -100,8 +100,18 @@ meta_editor_server <- function(id, state, opts) {
     output$table <- DT::renderDT({
       redraw()
       d <- isolate(draft()); req(d)
-      DT::datatable(as.data.frame(.meta_get(d, slot)),
-                    filter = "top", editable = "cell", selection = "none",
+      df <- as.data.frame(.meta_get(d, slot))
+      # Surface the row id (sample/feature name) as a real, read-only, filterable
+      # first column so `filter = "top"` gives it a search box (DT skips rownames).
+      # Display-only: never written back to colData/rowData. It sits where the
+      # rowname did (display column 0), so data-column indices are unchanged.
+      id_name <- make.unique(c(colnames(df), opts$row_noun))[length(colnames(df)) + 1L]
+      display <- data.frame(rownames(df), df, check.names = FALSE, stringsAsFactors = FALSE)
+      names(display)[1] <- id_name
+      DT::datatable(display, rownames = FALSE,
+                    filter = "top",
+                    editable = list(target = "cell", disable = list(columns = 0)),
+                    selection = "none",
                     options = list(pageLength = 10, scrollX = TRUE))
     }, server = TRUE)
 
@@ -112,6 +122,7 @@ meta_editor_server <- function(id, state, opts) {
 
     observeEvent(input$table_cell_edit, {
       info <- input$table_cell_edit
+      if (identical(info$col, 0L)) return()              # id column is read-only
       d <- draft(); req(d)
       df <- as.data.frame(.meta_get(d, slot))
       col <- colnames(df)[info$col]
