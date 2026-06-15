@@ -24,7 +24,12 @@ app_ui <- function() {
   bslib::page_navbar(
     title = "dds dashboard",
     theme = bslib::bs_theme(version = 5),
-    bslib::nav_panel("Input",     mod_input_ui("input")),
+    bslib::nav_panel("Input",
+      bslib::navset_card_tab(
+        bslib::nav_panel("Load",        mod_input_ui("input")),
+        bslib::nav_panel("Sample info", mod_metadata_ui("metadata"))
+      )
+    ),
     bslib::nav_panel("QC",        mod_qc_ui("qc")),
     bslib::nav_panel("Process",   mod_process_ui("process")),
     bslib::nav_panel("DimReduc",  mod_dimreduc_ui("dimreduc")),
@@ -51,6 +56,7 @@ app_server <- function(input, output, session) {
   }
   state <- new_app_state()
   mod_input_server("input", state)
+  mod_metadata_server("metadata", state)
   mod_qc_server("qc", state)
   mod_process_server("process", state)
   mod_dimreduc_server("dimreduc", state)
