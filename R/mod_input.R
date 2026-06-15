@@ -50,10 +50,6 @@ mod_input_ui <- function(id) {
     bslib::card(
       bslib::card_header("Dataset summary"),
       verbatimTextOutput(ns("summary"))
-    ),
-    bslib::card(
-      bslib::card_header("Sample information (colData)"),
-      DT::DTOutput(ns("coldata"))
     )
   )
 }
@@ -116,12 +112,6 @@ mod_input_server <- function(id, state) {
 
     output$summary <- renderPrint({
       if (is.null(state$working)) cat("No dataset loaded.") else methods::show(state$working)
-    })
-
-    output$coldata <- DT::renderDT({
-      req(state$working)
-      DT::datatable(as.data.frame(SummarizedExperiment::colData(state$working)),
-                    options = list(pageLength = 5, scrollX = TRUE), selection = "none")
     })
 
     invisible(NULL)

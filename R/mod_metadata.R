@@ -1,32 +1,55 @@
-# Page 1, "Sample info" tab: edit colData in place, merge an uploaded sample
-# sheet, and tag feature_class. All edits go through state_mutate() (bumping
-# data_version, logging history). Backed by R/metadata_helpers.R.
+# Page 1, "Sample info" tab: a draft editor over colData. Edits (cell changes,
+# add/remove/rename column, rename sample, merge an uploaded sheet) accumulate in
+# a local draft DESeqDataSet and are committed in one state_mutate() on Save.
+# Reset discards the draft (to last save, or to the originally loaded object).
+# Backed by R/metadata_helpers.R. Feature metadata lives in the Feature-info tab.
 
 mod_metadata_ui <- function(id) {
   ns <- NS(id)
   bslib::layout_sidebar(
     sidebar = bslib::sidebar(
-      title = "Edit metadata", width = 340,
-      tags$strong("Merge a sample sheet"),
-      fileInput(ns("sheet"), NULL,
-                accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls")),
-      textInput(ns("id_col"), "Sample-id column (blank = row names / first col)", ""),
-      actionButton(ns("merge"), "Merge into sample info"),
-      hr(),
-      tags$strong("Tag feature class"),
-      selectizeInput(ns("feat"), "Find features", choices = NULL, multiple = TRUE,
-                     options = list(placeholder = "gene name or id")),
-      radioButtons(ns("fclass"), "Set class to",
-                   c("endogenous", "spike_in", "exogenous")),
-      actionButton(ns("tag"), "Apply tag")
+      title = "Edit sample info", width = 360,
+      div(
+        actionButton(ns("save"), "Save changes", class = "btn-primary"),
+        actionButton(ns("reset_save"), "Reset to last save", class = "btn-outline-secondary"),
+        actionButton(ns("reset_orig"), "Reset to original", class = "btn-outline-danger")
+      ),
+      uiOutput(ns("protected_note")),
+      bslib::accordion(
+        open = FALSE,
+        bslib::accordion_panel(
+          "Columns",
+          textInput(ns("add_name"), "Add column: name"),
+          selectInput(ns("add_type"), "Type",
+                      c("character", "numeric", "integer", "logical", "factor")),
+          textInput(ns("add_default"), "Default value", ""),
+          actionButton(ns("add_col"), "Add column"),
+          hr(),
+          selectInput(ns("rm_col"), "Remove column", choices = character(0)),
+          actionButton(ns("remove_col"), "Remove"),
+          hr(),
+          selectInput(ns("rn_col_old"), "Rename column", choices = character(0)),
+          textInput(ns("rn_col_new"), "New name"),
+          actionButton(ns("rename_col"), "Rename column")
+        ),
+        bslib::accordion_panel(
+          "Rename sample",
+          selectInput(ns("rn_samp_old"), "Sample", choices = character(0)),
+          textInput(ns("rn_samp_new"), "New name"),
+          actionButton(ns("rename_samp"), "Rename sample")
+        ),
+        bslib::accordion_panel(
+          "Merge a sample sheet",
+          fileInput(ns("sheet"), NULL,
+                    accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls")),
+          textInput(ns("id_col"), "Sample-id column (blank = row names / first col)", ""),
+          actionButton(ns("merge"), "Merge into draft")
+        )
+      )
     ),
     bslib::card(
-      bslib::card_header("Sample information (double-click a cell to edit)"),
+      bslib::card_header("Sample information (double-click a cell to edit; filters on top)"),
       DT::DTOutput(ns("coldata"))
-    ),
-    bslib::card(
-      bslib::card_header("Feature classes"),
-      verbatimTextOutput(ns("fclass_summary"))
     )
   )
 }
@@ -36,78 +59,111 @@ mod_metadata_ui <- function(id) {
 mod_metadata_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
 
-    coldata_df <- reactive({
-      req(state$working)
-      as.data.frame(SummarizedExperiment::colData(state$working))
+    draft  <- reactiveVal(NULL)
+    redraw <- reactiveVal(0L)
+    bump   <- function() redraw(redraw() + 1L)
+
+    # (Re)initialize the draft from the canonical object whenever it changes
+    # (load, Save, or an edit from another tab). Keeps the two consistent.
+    observeEvent(state$working, { draft(state$working); bump() }, ignoreNULL = FALSE)
+
+    # Keep column/sample selectors in sync with the draft.
+    observeEvent(draft(), {
+      d <- draft(); req(d)
+      cols <- colnames(SummarizedExperiment::colData(d))
+      prot <- protected_columns(d)
+      updateSelectInput(session, "rm_col",      choices = setdiff(cols, prot))
+      updateSelectInput(session, "rn_col_old",  choices = cols)
+      updateSelectInput(session, "rn_samp_old", choices = colnames(d))
     })
 
-    output$coldata <- DT::renderDT(
-      DT::datatable(coldata_df(), editable = "cell", selection = "none",
-                    options = list(pageLength = 10, scrollX = TRUE)),
-      server = TRUE
-    )
-    proxy <- DT::dataTableProxy("coldata")
+    output$protected_note <- renderUI({
+      d <- draft(); req(d)
+      prot <- protected_columns(d)
+      if (length(prot)) {
+        helpText(sprintf("Design column(s) cannot be removed: %s.", paste(prot, collapse = ", ")))
+      }
+    })
 
-    # In-cell edit -> coerce + apply via state_mutate; revert the cell on error.
+    output$coldata <- DT::renderDT({
+      redraw()
+      d <- isolate(draft())
+      req(d)
+      DT::datatable(as.data.frame(SummarizedExperiment::colData(d)),
+                    filter = "top", editable = "cell", selection = "none",
+                    options = list(pageLength = 10, scrollX = TRUE))
+    }, server = TRUE)
+
+    # --- structural edits on the draft (each bumps the table redraw) ---
+    .apply <- function(expr) {
+      tryCatch({ draft(expr); bump() },
+               error = function(e) showNotification(conditionMessage(e), type = "error"))
+    }
+
     observeEvent(input$coldata_cell_edit, {
       info <- input$coldata_cell_edit
-      df <- coldata_df()
-      col <- colnames(df)[info$col]          # rownames occupy col 0; data cols are 1..p
+      d <- draft(); req(d)
+      df <- as.data.frame(SummarizedExperiment::colData(d))
+      col <- colnames(df)[info$col]
       sample <- rownames(df)[info$row]
       tryCatch(
-        state_mutate(
-          state,
-          function(d) edit_coldata_cell(d, sample, col, info$value),
-          action = list(action = "edit_colData", column = col, row = sample)
-        ),
-        error = function(e) {
-          showNotification(conditionMessage(e), type = "error")
-          DT::replaceData(proxy, coldata_df(), resetPaging = FALSE, rownames = TRUE)
-        }
+        draft(edit_coldata_cell(d, sample, col, info$value)),  # silent; client shows it
+        error = function(e) { showNotification(conditionMessage(e), type = "error"); bump() }
       )
     })
 
-    # Server-side feature search, labelled by <feature_type>_name when present.
-    observeEvent(state$working, {
-      req(state$working)
-      ids <- rownames(state$working)
-      name_col <- paste0(state_meta(state)$feature_type, "_name")
-      rd <- SummarizedExperiment::rowData(state$working)
-      labels <- if (name_col %in% colnames(rd)) paste0(rd[[name_col]], " (", ids, ")") else ids
-      updateSelectizeInput(session, "feat",
-                           choices = stats::setNames(ids, labels), server = TRUE)
+    observeEvent(input$add_col, {
+      req(draft(), nzchar(input$add_name))
+      .apply(add_coldata_column(draft(), input$add_name, input$add_type, input$add_default))
+      updateTextInput(session, "add_name", value = "")
+    })
+    observeEvent(input$remove_col, {
+      req(draft(), nzchar(input$rm_col))
+      .apply(remove_coldata_column(draft(), input$rm_col))
+    })
+    observeEvent(input$rename_col, {
+      req(draft(), nzchar(input$rn_col_old), nzchar(input$rn_col_new))
+      .apply(rename_coldata_column(draft(), input$rn_col_old, input$rn_col_new))
+      updateTextInput(session, "rn_col_new", value = "")
+    })
+    observeEvent(input$rename_samp, {
+      req(draft(), nzchar(input$rn_samp_old), nzchar(input$rn_samp_new))
+      .apply(rename_samples(draft(), input$rn_samp_old, input$rn_samp_new))
+      updateTextInput(session, "rn_samp_new", value = "")
     })
 
     observeEvent(input$merge, {
-      req(state$working, input$sheet)
+      req(draft(), input$sheet)
       tbl <- tryCatch(.read_user_table(input$sheet$datapath, input$sheet$name),
                       error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
       req(tbl)
       id_col <- if (nzchar(input$id_col)) input$id_col else NULL
-      res <- tryCatch(merge_sample_metadata(state$working, tbl, id_col),
+      res <- tryCatch(merge_sample_metadata(draft(), tbl, id_col),
                       error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
       req(res)
-      state_mutate(state, function(d) res$dds, action = list(action = "merge_colData"))
-      showNotification(
-        sprintf("Merged metadata for %d sample(s); %d row(s) in the upload matched no sample.",
-                res$report$matched, length(res$report$unmatched_in_table)),
-        type = "message"
-      )
+      draft(res$dds); bump()
+      ow <- res$report$overwritten
+      msg <- sprintf("Merged %d sample(s); %d upload row(s) matched nothing.",
+                     res$report$matched, length(res$report$unmatched_in_table))
+      if (length(ow)) msg <- paste0(msg, " Overwrote column(s): ", paste(ow, collapse = ", "), ".")
+      showNotification(paste(msg, "Click Save to keep."), type = "warning")
     })
 
-    observeEvent(input$tag, {
-      req(state$working, input$feat)
-      cls <- input$fclass
-      ids <- input$feat
-      state_mutate(state, function(d) set_feature_class(d, ids, cls),
-                   action = list(action = "set_feature_class", class = cls, n = length(ids)))
-      showNotification(sprintf("Tagged %d feature(s) as %s.", length(ids), cls), type = "message")
+    # --- commit / reset ---
+    observeEvent(input$save, {
+      req(draft(), state$working)
+      d <- draft()
+      unchanged <-
+        identical(as.data.frame(SummarizedExperiment::colData(d)),
+                  as.data.frame(SummarizedExperiment::colData(state$working))) &&
+        identical(colnames(d), colnames(state$working)) &&
+        identical(deparse(DESeq2::design(d)), deparse(DESeq2::design(state$working)))
+      if (unchanged) { showNotification("No changes to save.", type = "message"); return() }
+      state_mutate(state, function(.) d, action = list(action = "edit_metadata"))
+      showNotification("Sample info saved.", type = "message")
     })
-
-    output$fclass_summary <- renderPrint({
-      req(state$working)
-      print(table(SummarizedExperiment::rowData(state$working)$feature_class))
-    })
+    observeEvent(input$reset_save, { draft(state$working);  bump(); showNotification("Reverted to last save.") })
+    observeEvent(input$reset_orig, { draft(state$original); bump(); showNotification("Reverted to original sample info.") })
 
     invisible(NULL)
   })

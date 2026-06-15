@@ -65,6 +65,13 @@ The first page is for input loading and metadata manipulation. User can look at 
 The most minimum form of input is a single `dds` object with only raw count matrix. 
 Ideally, the user can modify sample metadata as they want inside the app. Alternatively, they can upload a sample metadata table (.xlsx, .tsv, or .csv format) in which the row names or value in certain column match sample names of the `dds` object. 
 
+> **Reviewed (2026-06):**
+> - Sample metadata is edited on a dedicated **"Sample info"** tab (feature/`rowData` editing lives on a separate **"Feature info"** tab). The read-only colData preview on the Load tab is removed as redundant.
+> - Editing uses a **draft model**: in-cell edits, add/remove/rename column, rename sample, and sheet-merge all accumulate in a local draft and are committed with an explicit **Save** (one history entry); **Reset to last save** and **Reset to original** discard. (Earlier auto-apply-on-edit gave too little feedback.)
+> - **Protected columns** = design variables (`all.vars(design(dds))`): cannot be removed; renaming one rewrites the design formula to follow. Sample renames must stay unique/non-empty.
+> - A merged sample sheet **overwrites** same-named columns (new wins) and the UI reports which were overwritten.
+> - The viewing table uses DT's **built-in per-column filters** (`filter = "top"`: categorical dropdowns + numeric ranges; AND across columns). **Wishlist (deferred):** an *advanced filter builder* — rows of criteria with an AND/OR logic gate + column selector + value/range. Deferred because it is heavy and bug-prone, and a custom server-side filtered view conflicts with in-table cell editing (row-index mapping); built-in filters already cover the common AND-across-columns case. Revisit if OR-across-columns becomes necessary.
+
 
 #### Manipulating feature (gene) metadata
 
