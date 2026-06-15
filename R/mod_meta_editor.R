@@ -5,6 +5,20 @@
 # R/metadata_helpers.R. Parameterized by `opts`:
 #   slot, title, row_noun, allow_merge, allow_row_rename, bulk_class.
 
+# Build the display data.frame for the table: the row id (sample/feature name)
+# prepended as a real first column so `filter = "top"` gives it a search box
+# (DT skips the rownames column). The id name is made unique against existing
+# columns, so an input column literally named like `row_noun` (e.g. "sample")
+# keeps its name and the id column becomes "sample.1". Display-only: the id is
+# never written back to colData/rowData, and data-column indices are unchanged
+# (the id sits at display column 0, where the rowname did).
+.meta_display_df <- function(df, row_noun) {
+  id_name <- make.unique(c(colnames(df), row_noun))[length(colnames(df)) + 1L]
+  out <- data.frame(rownames(df), df, check.names = FALSE, stringsAsFactors = FALSE)
+  names(out)[1] <- id_name
+  out
+}
+
 meta_editor_ui <- function(id, opts, extra_sidebar = NULL, extra_main = NULL) {
   ns <- NS(id)
   panels <- list(
@@ -101,13 +115,7 @@ meta_editor_server <- function(id, state, opts) {
       redraw()
       d <- isolate(draft()); req(d)
       df <- as.data.frame(.meta_get(d, slot))
-      # Surface the row id (sample/feature name) as a real, read-only, filterable
-      # first column so `filter = "top"` gives it a search box (DT skips rownames).
-      # Display-only: never written back to colData/rowData. It sits where the
-      # rowname did (display column 0), so data-column indices are unchanged.
-      id_name <- make.unique(c(colnames(df), opts$row_noun))[length(colnames(df)) + 1L]
-      display <- data.frame(rownames(df), df, check.names = FALSE, stringsAsFactors = FALSE)
-      names(display)[1] <- id_name
+      display <- .meta_display_df(df, opts$row_noun)
       DT::datatable(display, rownames = FALSE,
                     filter = "top",
                     editable = list(target = "cell", disable = list(columns = 0)),

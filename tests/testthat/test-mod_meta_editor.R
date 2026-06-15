@@ -3,6 +3,41 @@ sample_opts <- list(slot = "colData", title = "Sample", row_noun = "sample",
 feature_opts <- list(slot = "rowData", title = "Feature", row_noun = "feature",
                      allow_merge = FALSE, allow_row_rename = FALSE, bulk_class = TRUE)
 
+test_that(".meta_display_df gives the id a unique name, even when it collides", {
+  # No collision: id column takes the plain row_noun name and holds the rownames.
+  df <- data.frame(condition = c("a", "b"), row.names = c("S1", "S2"))
+  d1 <- .meta_display_df(df, "sample")
+  expect_identical(names(d1), c("sample", "condition"))
+  expect_identical(d1[[1]], c("S1", "S2"))
+
+  # Collision: an input column literally named "sample" keeps its name; the id
+  # column is suffixed to "sample.1" and still holds the rownames.
+  df2 <- data.frame(sample = c("x", "y"), condition = c("a", "b"),
+                    row.names = c("S1", "S2"))
+  d2 <- .meta_display_df(df2, "sample")
+  expect_identical(names(d2), c("sample.1", "sample", "condition"))
+  expect_identical(d2[["sample.1"]], c("S1", "S2"))   # id column = rownames
+  expect_identical(d2[["sample"]], c("x", "y"))       # data column preserved
+})
+
+test_that("meta_editor: a colData column named like the id still edits correctly", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(meta_editor_server, args = list(state = state, opts = sample_opts), {
+    dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
+    dds <- add_meta_column(dds, "colData", "sample", "character", "tag")  # collides with id
+    state_load(state, dds, source = "demo")
+    session$flushReact()
+    # colData order: condition(1), bio_rep(2), group(3), sample(4). The id sits at
+    # display col 0, so data-column indices are unchanged: editing col 4 lands on
+    # the user "sample" column, not on the read-only id.
+    scol <- match("sample", colnames(SummarizedExperiment::colData(state$working)))
+    session$setInputs(table_cell_edit = list(row = 1L, col = scol, value = "edited"))
+    session$setInputs(save = 1)
+    expect_equal(as.character(SummarizedExperiment::colData(state$working)$sample[1]), "edited")
+  })
+})
+
 test_that("meta_editor (samples): cell edits stay in draft until Save", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
