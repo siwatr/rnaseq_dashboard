@@ -88,6 +88,8 @@ __Note__ on feature length, the effective feature length may not comming from th
 > - **Always add `rowData(dds)$feature_class`** (`endogenous` default / `spike_in` / `exogenous`). Mark, don't drop — these features stay in the object (so exogenous expression is still viewable in PCA/boxplots) but are excluded from size-factor estimation and variable-gene selection.
 > - **Feature type is adaptive** (decision 5): detect gene/transcript/… and relabel the UI; prompt if unknown; allow correction. Drives the `<feature_type>_name` lookup column.
 
+> **Implemented (2026-06):** The Input page is organized by the three `SummarizedExperiment` components as tabs — **Load | Sample info | Feature info | Assay** (replacing the old standalone "Process" page). **OrgDb annotation** (organism + auto-detected ID type → `<feature_type>_name` and `description`, filling only where mapped) lives in the **Feature info** tab (chromosome is left to the GTF, since OrgDb's `CHR` accessor is deprecated); **normalization assays** (CPM always; TPM/FPKM when a complete `feature_length` exists) + endogenous size factors live in the **Assay** tab. Still to come: **GTF annotation** (authoritative override + union-exon `feature_length`) and **ERCC concentration**/dose–response (with the QC page, using real ERCC92 values).
+
 <!--
 MARK: 2nd page 
 -->

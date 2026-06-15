@@ -28,11 +28,11 @@ app_ui <- function() {
       bslib::navset_card_tab(
         bslib::nav_panel("Load",         mod_input_ui("input")),
         bslib::nav_panel("Sample info",  mod_metadata_ui("metadata")),
-        bslib::nav_panel("Feature info", mod_feature_ui("feature"))
+        bslib::nav_panel("Feature info", mod_feature_ui("feature")),
+        bslib::nav_panel("Assay",        mod_assay_ui("assay"))
       )
     ),
     bslib::nav_panel("QC",        mod_qc_ui("qc")),
-    bslib::nav_panel("Process",   mod_process_ui("process")),
     bslib::nav_panel("DimReduc",  mod_dimreduc_ui("dimreduc")),
     bslib::nav_panel("DE",        mod_de_ui("de")),
     bslib::nav_panel("Heatmap",   mod_heatmap_ui("heatmap")),
@@ -59,8 +59,8 @@ app_server <- function(input, output, session) {
   mod_input_server("input", state)
   mod_metadata_server("metadata", state)
   mod_feature_server("feature", state)
+  mod_assay_server("assay", state)
   mod_qc_server("qc", state)
-  mod_process_server("process", state)
   mod_dimreduc_server("dimreduc", state)
   mod_de_server("de", state)
   mod_heatmap_server("heatmap", state)
