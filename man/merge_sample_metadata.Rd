@@ -15,7 +15,7 @@ merge_sample_metadata(dds, table, id_col = NULL)
 }
 \value{
 A list with \code{dds} (updated) and \code{report}
-(\code{matched}, \code{unmatched_in_data}, \code{unmatched_in_table}).
+(\code{matched}, \code{unmatched_in_data}, \code{unmatched_in_table}, \code{overwritten}).
 }
 \description{
 Joins \code{table} into \code{colData(dds)} by sample id (an explicit \code{id_col}, else
