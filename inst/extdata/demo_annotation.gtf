@@ -1,0 +1,12 @@
+chr1	mini	gene	100	450	.	+	.	gene_id "ENSG00000000001"; gene_name "GeneA"; gene_biotype "protein_coding";
+chr1	mini	transcript	100	450	.	+	.	gene_id "ENSG00000000001"; transcript_id "ENST00000000001"; gene_name "GeneA"; gene_biotype "protein_coding";
+chr1	mini	exon	100	200	.	+	.	gene_id "ENSG00000000001"; transcript_id "ENST00000000001"; gene_name "GeneA"; gene_biotype "protein_coding";
+chr1	mini	exon	150	250	.	+	.	gene_id "ENSG00000000001"; transcript_id "ENST00000000001"; gene_name "GeneA"; gene_biotype "protein_coding";
+chr1	mini	exon	400	450	.	+	.	gene_id "ENSG00000000001"; transcript_id "ENST00000000001"; gene_name "GeneA"; gene_biotype "protein_coding";
+chr2	mini	gene	1000	1200	.	-	.	gene_id "ENSG00000000002"; gene_name "GeneB"; gene_biotype "protein_coding";
+chr2	mini	transcript	1000	1200	.	-	.	gene_id "ENSG00000000002"; transcript_id "ENST00000000002"; gene_name "GeneB"; gene_biotype "protein_coding";
+chr2	mini	exon	1000	1100	.	-	.	gene_id "ENSG00000000002"; transcript_id "ENST00000000002"; gene_name "GeneB"; gene_biotype "protein_coding";
+chr2	mini	exon	1100	1200	.	-	.	gene_id "ENSG00000000002"; transcript_id "ENST00000000002"; gene_name "GeneB"; gene_biotype "protein_coding";
+chr3	mini	gene	5000	5500	.	+	.	gene_id "ENSG00000000003"; gene_name "GeneC"; gene_biotype "lincRNA";
+chr3	mini	transcript	5000	5500	.	+	.	gene_id "ENSG00000000003"; transcript_id "ENST00000000003"; gene_name "GeneC"; gene_biotype "lincRNA";
+chr3	mini	exon	5000	5500	.	+	.	gene_id "ENSG00000000003"; transcript_id "ENST00000000003"; gene_name "GeneC"; gene_biotype "lincRNA";

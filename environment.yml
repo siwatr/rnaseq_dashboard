@@ -41,7 +41,9 @@ dependencies:
   - bioconductor-singlecellexperiment
   - bioconductor-scater
   - bioconductor-complexheatmap
-  - bioconductor-rtracklayer
+  - bioconductor-rtracklayer        # read GTF/GFF annotation
+  - bioconductor-genomicranges      # union-exon feature_length (reduce/width)
+  - bioconductor-iranges            # width() on reduced ranges
   # Bioconductor analysis & annotation
   - bioconductor-edger             # filterByExpr feature filtering
   - bioconductor-apeglm            # LFC shrinkage (lfcShrink)
