@@ -24,8 +24,12 @@ mod_feature_ui <- function(id) {
     hr(),
     tags$strong("Annotate from GTF"),
     helpText("A GTF overrides OrgDb for matching features and can supply feature_length."),
-    fileInput(ns("gtf_file"), NULL,
-              accept = c(".gtf", ".gff", ".gff3", ".gtf.gz", ".gff.gz", ".gff3.gz")),
+    fileInput(ns("gtf_file"), "Upload GTF/GFF (gzip OK)",
+              accept = c(".gtf", ".gff", ".gff3", ".gtf.gz", ".gff.gz", ".gff3.gz",
+                         ".gz", "application/gzip", "application/x-gzip", "text/plain")),
+    helpText("Large uncompressed GTFs may exceed the upload limit - upload gzipped, ",
+             "or read a local file already on this machine:"),
+    textInput(ns("gtf_path"), NULL, placeholder = "/path/to/annotation.gtf(.gz)"),
     actionButton(ns("read_gtf"), "Read GTF"),
     uiOutput(ns("gtf_opts")),
     hr(),
@@ -74,12 +78,22 @@ mod_feature_server <- function(id, state) {
 
     # --- GTF -----------------------------------------------------------------
     observeEvent(input$read_gtf, {
-      req(input$gtf_file)
-      # Preserve the original name (extension drives format + gz handling).
-      dst <- file.path(tempdir(), basename(input$gtf_file$name))
-      file.copy(input$gtf_file$datapath, dst, overwrite = TRUE)
+      # Prefer a local path (no browser upload, no size cap); else the upload.
+      # Either way a real file extension drives format + gzip handling.
+      path <- NULL
+      if (nzchar(input$gtf_path %||% "")) {
+        if (!file.exists(input$gtf_path)) {
+          showNotification("No file at that path.", type = "error"); return()
+        }
+        path <- input$gtf_path
+      } else if (!is.null(input$gtf_file)) {
+        path <- file.path(tempdir(), basename(input$gtf_file$name))
+        file.copy(input$gtf_file$datapath, path, overwrite = TRUE)
+      } else {
+        showNotification("Upload a file or enter a local path first.", type = "warning"); return()
+      }
       g <- tryCatch(
-        withProgress(message = "Reading GTF...", value = 0.5, import_gtf(dst)),
+        withProgress(message = "Reading GTF...", value = 0.5, import_gtf(path)),
         error = function(e) { showNotification(conditionMessage(e), type = "error", duration = NULL); NULL })
       req(g)
       gtf_obj(g)
