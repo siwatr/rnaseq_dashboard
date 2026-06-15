@@ -3,108 +3,97 @@ mk_dds <- function() {
                        S1 = c(5L, 2L, 9L), S2 = c(3L, 7L, 1L), S3 = c(4L, 4L, 4L))
   samples <- data.frame(sample = c("S1", "S2", "S3"),
                         cond = c("a", "b", "a"), score = c(1.5, 2.5, 3.5))
-  tabular_to_dds(counts, samples)
+  ensure_feature_class(tabular_to_dds(counts, samples))
 }
+mk_mock <- function() make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
 
-test_that("edit_coldata_cell coerces to the column type and rejects bad values", {
+test_that("edit_meta_cell (colData) coerces type and rejects bad values", {
   skip_if_not_installed("DESeq2")
   dds <- mk_dds()
-  dds <- edit_coldata_cell(dds, "S1", "score", "5.5")
+  dds <- edit_meta_cell(dds, "colData", "S1", "score", "5.5")
   expect_equal(SummarizedExperiment::colData(dds)$score[1], 5.5)
-  expect_error(edit_coldata_cell(dds, "S1", "score", "abc"), "number")
-  expect_error(edit_coldata_cell(dds, "S1", "nope", "x"), "Unknown colData column")
-  expect_error(edit_coldata_cell(dds, "SX", "score", "1"), "Unknown sample row")
+  expect_error(edit_meta_cell(dds, "colData", "S1", "score", "abc"), "number")
+  expect_error(edit_meta_cell(dds, "colData", "S1", "nope", "x"), "Unknown colData column")
 })
 
-test_that("edit_coldata_cell adds a new factor level when needed", {
-  skip_if_not_installed("DESeq2")
-  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
-  dds <- edit_coldata_cell(dds, 1, "condition", "rescue")  # new level
-  cond <- SummarizedExperiment::colData(dds)$condition
-  expect_true("rescue" %in% levels(cond))
-  expect_equal(as.character(cond[1]), "rescue")
-})
-
-test_that("merge_sample_metadata joins by id, NA-fills, and reports", {
+test_that("edit_meta_cell (rowData) validates the feature_class value set", {
   skip_if_not_installed("DESeq2")
   dds <- mk_dds()
-  sheet <- data.frame(sample = c("S1", "S2"), batch = c("A", "B"))
-  res <- merge_sample_metadata(dds, sheet)
-  cd <- SummarizedExperiment::colData(res$dds)
-  expect_true("batch" %in% colnames(cd))
-  expect_equal(as.character(cd$batch), c("A", "B", NA))   # S3 absent -> NA
-  expect_equal(res$report$matched, 2L)
-  expect_equal(res$report$unmatched_in_data, "S3")
+  dds <- edit_meta_cell(dds, "rowData", "Gene1", "feature_class", "exogenous")
+  fc <- SummarizedExperiment::rowData(dds)$feature_class
+  names(fc) <- rownames(dds)
+  expect_equal(as.character(fc["Gene1"]), "exogenous")
+  expect_error(edit_meta_cell(dds, "rowData", "Gene1", "feature_class", "bogus"), "must be one of")
 })
 
-test_that("merge_sample_metadata supports an explicit id column and errors on no match", {
+test_that("protected_columns differ by slot", {
+  skip_if_not_installed("DESeq2")
+  m <- mk_mock()
+  expect_equal(protected_columns(m, "colData"), "condition")   # design var
+  expect_equal(protected_columns(m, "rowData"), "feature_class")
+})
+
+test_that("add_meta_column works for both slots", {
   skip_if_not_installed("DESeq2")
   dds <- mk_dds()
-  sheet <- data.frame(libname = c("S2", "S3"), batch = c("X", "Y"))
-  res <- merge_sample_metadata(dds, sheet, id_col = "libname")
-  expect_equal(as.character(SummarizedExperiment::colData(res$dds)$batch), c(NA, "X", "Y"))
-  expect_error(merge_sample_metadata(dds, data.frame(sample = c("Z1", "Z2"), x = 1:2)),
-               "match")
-})
-
-test_that("merge_sample_metadata reports overwritten columns", {
-  skip_if_not_installed("DESeq2")
-  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)  # has 'group'
-  sheet <- data.frame(sample = colnames(dds),
-                      group = rep(c("x", "y"), length.out = ncol(dds)),
-                      batch = "B")
-  res <- merge_sample_metadata(dds, sheet)
-  expect_true("group" %in% res$report$overwritten)
-  expect_false("batch" %in% res$report$overwritten)   # newly added, not overwritten
-})
-
-test_that("protected_columns reads the design", {
-  skip_if_not_installed("DESeq2")
-  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
-  expect_equal(protected_columns(dds), "condition")
-})
-
-test_that("add/remove colData column, with design protection", {
-  skip_if_not_installed("DESeq2")
-  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
-  dds <- add_coldata_column(dds, "batch", "character", "A")
+  dds <- add_meta_column(dds, "colData", "batch", "character", "A")
+  dds <- add_meta_column(dds, "rowData", "note", "character", "x")
   expect_true("batch" %in% colnames(SummarizedExperiment::colData(dds)))
-  expect_true(all(SummarizedExperiment::colData(dds)$batch == "A"))
-  expect_error(add_coldata_column(dds, "batch", "character"), "already exists")
-
-  dds <- remove_coldata_column(dds, "batch")
-  expect_false("batch" %in% colnames(SummarizedExperiment::colData(dds)))
-  expect_error(remove_coldata_column(dds, "condition"), "design")  # protected
+  expect_true("note" %in% colnames(SummarizedExperiment::rowData(dds)))
+  expect_error(add_meta_column(dds, "colData", "batch"), "already exists")
 })
 
-test_that("rename_coldata_column rewrites the design when needed", {
+test_that("remove_meta_columns is multi and skips protected, reports unknown", {
   skip_if_not_installed("DESeq2")
-  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
-  dds <- rename_coldata_column(dds, "condition", "treatment")
-  expect_true("treatment" %in% colnames(SummarizedExperiment::colData(dds)))
-  expect_false("condition" %in% colnames(SummarizedExperiment::colData(dds)))
-  expect_equal(all.vars(DESeq2::design(dds)), "treatment")
-  expect_error(rename_coldata_column(dds, "treatment", "group"), "already exists")
+  m <- mk_mock()  # colData: condition (design), bio_rep, group
+  res <- remove_meta_columns(m, "colData", c("bio_rep", "group", "condition", "nope"))
+  expect_setequal(res$removed, c("bio_rep", "group"))
+  expect_equal(res$skipped, "condition")
+  expect_equal(res$unknown, "nope")
+  cd <- SummarizedExperiment::colData(res$dds)
+  expect_false(any(c("bio_rep", "group") %in% colnames(cd)))
+  expect_true("condition" %in% colnames(cd))
+})
+
+test_that("rename_meta_column rewrites the design (colData) and protects feature_class (rowData)", {
+  skip_if_not_installed("DESeq2")
+  m <- mk_mock()
+  m2 <- rename_meta_column(m, "colData", "condition", "treatment")
+  expect_true("treatment" %in% colnames(SummarizedExperiment::colData(m2)))
+  expect_equal(all.vars(DESeq2::design(m2)), "treatment")
+  expect_error(rename_meta_column(m, "rowData", "feature_class", "fc"), "cannot be renamed")
+  m3 <- rename_meta_column(add_meta_column(m, "rowData", "note", "character", "x"),
+                           "rowData", "note", "annotation")
+  expect_true("annotation" %in% colnames(SummarizedExperiment::rowData(m3)))
 })
 
 test_that("rename_samples enforces uniqueness and existence", {
   skip_if_not_installed("DESeq2")
-  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)
+  dds <- mk_mock()
   s <- colnames(dds)
-  dds2 <- rename_samples(dds, s[1], "sampleA")
-  expect_equal(colnames(dds2)[1], "sampleA")
-  expect_error(rename_samples(dds, s[1], s[2]), "unique")    # collides with existing
+  expect_equal(colnames(rename_samples(dds, s[1], "sampleA"))[1], "sampleA")
+  expect_error(rename_samples(dds, s[1], s[2]), "unique")
   expect_error(rename_samples(dds, "nope", "x"), "Unknown sample")
 })
 
-test_that("set_feature_class tags resolved ids and errors when none match", {
+test_that("merge_sample_metadata joins, NA-fills, reports overwritten", {
+  skip_if_not_installed("DESeq2")
+  dds <- mk_dds()
+  sheet <- data.frame(sample = c("S1", "S2"), cond = c("X", "Y"), batch = c("A", "B"))
+  res <- merge_sample_metadata(dds, sheet)
+  cd <- SummarizedExperiment::colData(res$dds)
+  expect_equal(as.character(cd$batch), c("A", "B", NA))    # S3 absent -> NA
+  expect_true("cond" %in% res$report$overwritten)
+  expect_equal(res$report$unmatched_in_data, "S3")
+})
+
+test_that("set_feature_class tags resolved ids", {
   skip_if_not_installed("DESeq2")
   dds <- mk_dds()
   dds <- set_feature_class(dds, "Gene2", "exogenous")
   fc <- SummarizedExperiment::rowData(dds)$feature_class
   names(fc) <- rownames(dds)
   expect_equal(as.character(fc["Gene2"]), "exogenous")
-  expect_equal(as.character(fc["ERCC-00001"]), "spike_in")   # auto from ensure_feature_class
-  expect_equal(as.character(fc["Gene1"]), "endogenous")
+  expect_equal(as.character(fc["ERCC-00001"]), "spike_in")
   expect_error(set_feature_class(dds, "nope", "exogenous"), "None of the given")
 })

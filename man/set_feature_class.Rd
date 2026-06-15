@@ -2,7 +2,7 @@
 % Please edit documentation in R/metadata_helpers.R
 \name{set_feature_class}
 \alias{set_feature_class}
-\title{Set the feature_class of selected features}
+\title{Set the feature_class of selected features (bulk)}
 \usage{
 set_feature_class(dds, ids, class = c("endogenous", "spike_in", "exogenous"))
 }
@@ -17,5 +17,5 @@ set_feature_class(dds, ids, class = c("endogenous", "spike_in", "exogenous"))
 The updated \code{DESeqDataSet} (with \code{feature_class} ensured).
 }
 \description{
-Set the feature_class of selected features
+Set the feature_class of selected features (bulk)
 }

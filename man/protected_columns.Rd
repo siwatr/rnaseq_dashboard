@@ -2,16 +2,19 @@
 % Please edit documentation in R/metadata_helpers.R
 \name{protected_columns}
 \alias{protected_columns}
-\title{colData columns referenced by the design formula}
+\title{Protected metadata columns}
 \usage{
-protected_columns(dds)
+protected_columns(dds, slot = "colData")
 }
 \arguments{
 \item{dds}{A \code{DESeqDataSet}.}
+
+\item{slot}{\code{"colData"} or \code{"rowData"}.}
 }
 \value{
-Character vector of design variable names (empty for \code{~ 1}).
+Character vector of protected column names.
 }
 \description{
-These are "protected": they can be renamed (the formula follows) but not removed.
+Columns that cannot be removed: \code{colData} design variables (renamable — the
+formula follows) and the \code{rowData} \code{feature_class} (also not renamable).
 }
