@@ -213,6 +213,11 @@ meta_editor_server <- function(id, state, opts) {
     observeEvent(input$reset_save, { draft(state$working);  bump(); showNotification("Reverted to last save.") })
     observeEvent(input$reset_orig, { draft(state$original); bump(); showNotification("Reverted to original.") })
 
-    invisible(NULL)
+    # Expose the draft so a host page (e.g. Feature info) can compose its own
+    # edits -- annotation, feature_length -- onto the same buffer instead of
+    # committing straight to state$working (which would reset the draft and drop
+    # the user's unsaved edits). `set()` replaces the draft and redraws; changes
+    # still commit only when the user clicks Save.
+    list(draft = draft, set = function(d) { draft(d); bump() })
   })
 }

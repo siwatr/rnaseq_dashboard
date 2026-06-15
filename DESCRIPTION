@@ -26,6 +26,8 @@ Imports:
     SummarizedExperiment
 Suggests:
     ComplexHeatmap,
+    GenomicRanges,
+    IRanges,
     org.Hs.eg.db,
     org.Mm.eg.db,
     rtracklayer,
