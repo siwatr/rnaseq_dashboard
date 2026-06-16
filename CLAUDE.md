@@ -103,7 +103,7 @@ Pages, in order:
 
 ## Workflow
 
-- Build the app in **phases** (bulk-first; see roadmap in [rough_design.md](rough_design.md)): P1 = layout + status bar + import (rds + tabular) + export shell *(skeleton done)*; P2 = metadata edit, annotation, QC, filtering, normalization; P3 = PCA dim-reduction; P4 = DESeq2 + DE plots + heatmap; P5 (later) = single-cell + pseudobulk.
+- Build the app in **phases** (bulk-first; see roadmap in [rough_design.md](rough_design.md)): P1 = layout + status bar + import (rds + tabular) + export shell *(done)*; P2 = metadata edit, annotation (OrgDb + GTF), normalization, GTF memory minimization + session memory monitor, feature-info annotation UI redesign; P3 = QC + sample/feature filtering; P4 = PCA dim-reduction; P5 = DESeq2 + DE plots + heatmap; P6 (later) = single-cell + pseudobulk.
 - **Build mock-`dds` fixtures early** (`data-raw/`, used by `tests/`) so every phase has data to test against.
 - **Commit after each meaningful, self-contained change** with a descriptive message.
 - Heavy Bioconductor objects: don't print full matrices to logs; prefer `show()` / dimensions / `head()`.

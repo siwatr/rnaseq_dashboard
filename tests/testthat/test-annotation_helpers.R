@@ -30,6 +30,25 @@ test_that("annotate_with_orgdb tolerates unmapped ids", {
   expect_true(all(is.na(SummarizedExperiment::rowData(dds)$gene_name)))
 })
 
+test_that("annotate_with_orgdb can flag mapped features", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("org.Mm.eg.db")
+  dds <- mk_ens_dds(c("ENSMUSG00000000001", "NOTAGENE2"))
+  dds <- annotate_with_orgdb(dds, "mouse", id_type = "ensembl", matched_col = "in_orgdb")
+  fl <- SummarizedExperiment::rowData(dds)$in_orgdb
+  expect_type(fl, "logical")
+  expect_equal(fl, c(TRUE, FALSE))   # first maps (Gnai3), second does not
+})
+
+test_that("annotation_overwrites flags only existing, populated targets", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 6, n_per_group = 2, n_spike = 1, seed = 1)  # gene_name populated
+  expect_setequal(annotation_overwrites(dds, c("gene_name", "description", "feature_class")),
+                  c("gene_name", "feature_class"))   # description absent -> not flagged
+  SummarizedExperiment::rowData(dds)$empty <- NA_character_
+  expect_false("empty" %in% annotation_overwrites(dds, "empty"))   # all-NA -> not flagged
+})
+
 test_that("annotation_coverage counts endogenous matches", {
   skip_if_not_installed("DESeq2")
   dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1)  # has gene_name

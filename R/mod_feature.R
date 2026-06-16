@@ -12,6 +12,13 @@
   allow_merge = FALSE, allow_row_rename = FALSE, bulk_class = TRUE
 )
 
+# Notification text after an annotation step (how much of the table it touched).
+.append_msg <- function(source, matched, total) {
+  pct <- if (total > 0L) round(100 * matched / total) else 0L
+  sprintf("Appending %s annotation to %d of %d features (%d%%). Click Save to keep.",
+          source, matched, total, pct)
+}
+
 mod_feature_ui <- function(id) {
   ns <- NS(id)
   annotation_ui <- tagList(
@@ -22,17 +29,12 @@ mod_feature_ui <- function(id) {
                 c("Auto-detect" = "auto", "Ensembl" = "ensembl",
                   "Entrez" = "entrez", "Symbol" = "symbol")),
     helpText(textOutput(ns("detected_id"), inline = TRUE)),
+    checkboxInput(ns("orgdb_flag"), "Flag mapped features (in_orgdb column)", value = TRUE),
     actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary"),
     hr(),
     tags$strong("Annotate from GTF"),
     helpText("A GTF overrides OrgDb for matching features. Edits land in the draft - click Save to keep."),
-    fileInput(ns("gtf_file"), "Upload GTF/GFF (gzip OK)",
-              accept = c(".gtf", ".gff", ".gff3", ".gtf.gz", ".gff.gz", ".gff3.gz",
-                         ".gz", "application/gzip", "application/x-gzip", "text/plain")),
-    helpText("Large uncompressed GTFs may exceed the upload limit - upload gzipped, ",
-             "or read a local file already on this machine:"),
-    textInput(ns("gtf_path"), NULL, placeholder = "/path/to/annotation.gtf(.gz)"),
-    actionButton(ns("read_gtf"), "Read GTF"),
+    mod_gtf_reader_ui(ns("gtf")),
     uiOutput(ns("gtf_opts")),
     hr(),
     tags$strong("Set feature_length"),
@@ -53,7 +55,9 @@ mod_feature_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     editor <- meta_editor_server("editor", state, .feature_editor_opts)
-    gtf_obj <- reactiveVal(NULL)
+    gtf_obj <- mod_gtf_reader_server("gtf")   # confirmed (trimmed) GRanges, or NULL
+    suppress_overwrite <- reactiveVal(FALSE)  # "don't warn again this session"
+    pending_apply      <- reactiveVal(NULL)   # deferred op awaiting modal confirm
 
     # Apply fn(draft, ...) to the editor draft, reporting errors; returns the new
     # dds (invisibly via the editor) or NULL on failure.
@@ -68,6 +72,30 @@ mod_feature_server <- function(id, state) {
       res
     }
 
+    # Run `do()` immediately, unless it would overwrite columns that already hold
+    # values -- then ask first (Proceed/Cancel + a session-wide "don't warn").
+    guarded <- function(targets, do) {
+      d <- editor$draft(); if (is.null(d)) return(invisible())
+      ow <- annotation_overwrites(d, targets)
+      if (length(ow) && !isTRUE(suppress_overwrite())) {
+        pending_apply(do)
+        showModal(modalDialog(
+          title = "Overwrite existing annotation?",
+          tags$p(sprintf("These column(s) already hold values and will be updated where the source matches: %s.",
+                         paste(ow, collapse = ", "))),
+          checkboxInput(ns("ow_suppress"), "Don't warn again this session", FALSE),
+          footer = tagList(modalButton("Cancel"),
+                           actionButton(ns("ow_proceed"), "Proceed", class = "btn-warning"))
+        ))
+      } else do()
+    }
+
+    observeEvent(input$ow_proceed, {
+      if (isTRUE(input$ow_suppress)) suppress_overwrite(TRUE)
+      op <- pending_apply(); pending_apply(NULL); removeModal()
+      if (is.function(op)) op()
+    })
+
     output$detected_id <- renderText({
       d <- editor$draft(); req(d)
       sprintf("Detected: %s", detect_id_type(rownames(d)))
@@ -78,37 +106,16 @@ mod_feature_server <- function(id, state) {
       organism <- input$organism
       id_type <- if (identical(input$id_type, "auto")) NULL else input$id_type
       ft <- state_meta(state)$feature_type
-      res <- edit_draft(function(d)
-        annotate_with_orgdb(d, organism = organism, id_type = id_type, feature_type = ft))
-      req(res)
-      cov <- annotation_coverage(res, paste0(detect_feature_type(res)$feature_type, "_name"))
-      showNotification(sprintf("Annotated %d of %d endogenous features. Click Save to keep.",
-                               cov$matched, cov$total), type = "message")
-    })
-
-    # --- GTF read ------------------------------------------------------------
-    observeEvent(input$read_gtf, {
-      # Prefer a local path (no browser upload, no size cap); else the upload.
-      # Either way a real file extension drives format + gzip handling.
-      path <- NULL
-      if (nzchar(input$gtf_path %||% "")) {
-        if (!file.exists(input$gtf_path)) {
-          showNotification("No file at that path.", type = "error"); return()
-        }
-        path <- input$gtf_path
-      } else if (!is.null(input$gtf_file)) {
-        path <- file.path(tempdir(), basename(input$gtf_file$name))
-        file.copy(input$gtf_file$datapath, path, overwrite = TRUE)
-      } else {
-        showNotification("Upload a file or enter a local path first.", type = "warning"); return()
+      flag <- if (isTRUE(input$orgdb_flag)) "in_orgdb" else NULL
+      do <- function() {
+        res <- edit_draft(function(d)
+          annotate_with_orgdb(d, organism = organism, id_type = id_type,
+                              feature_type = ft, matched_col = flag))
+        req(res)
+        cov <- annotation_coverage(res, paste0(detect_feature_type(res)$feature_type, "_name"))
+        showNotification(.append_msg("OrgDb", cov$matched, cov$total), type = "message")
       }
-      g <- tryCatch(
-        withProgress(message = "Reading GTF...", value = 0.5, import_gtf(path)),
-        error = function(e) { showNotification(conditionMessage(e), type = "error", duration = NULL); NULL })
-      req(g)
-      gtf_obj(g)
-      showNotification(sprintf("Read GTF: %d records; types: %s.", length(g),
-                               paste(gtf_feature_types(g), collapse = ", ")), type = "message")
+      guarded(c(paste0(ft, "_name"), "description"), do)
     })
 
     # --- GTF attribute import (draft) ----------------------------------------
@@ -120,6 +127,7 @@ mod_feature_server <- function(id, state) {
                     c("Auto (id, then name)" = "auto", stats::setNames(cols, cols))),
         selectizeInput(ns("gtf_import"), "Import columns", choices = cols, multiple = TRUE,
                        selected = intersect(c("gene_name", "seqnames", "gene_biotype"), cols)),
+        checkboxInput(ns("gtf_flag"), "Flag matched features (in_gtf column)", value = TRUE),
         actionButton(ns("apply_gtf"), "Apply GTF annotation", class = "btn-primary")
       )
     })
@@ -128,17 +136,23 @@ mod_feature_server <- function(id, state) {
       req(editor$draft(), gtf_obj())
       g <- gtf_obj()
       ft <- state_meta(state)$feature_type
-      report <- NULL
-      res <- edit_draft(function(d) {
-        out <- annotate_with_gtf(d, g, match_col = input$gtf_match,
-                                 import_cols = input$gtf_import,
-                                 compute_length = FALSE, feature_type = ft)
-        report <<- out$report
-        out$dds
-      })
-      req(res)
-      showNotification(sprintf("GTF: matched %d of %d features. Click Save to keep.",
-                               report$matched, report$total), type = "message")
+      import_cols <- input$gtf_import
+      flag <- if (isTRUE(input$gtf_flag)) "in_gtf" else NULL
+      targets <- vapply(import_cols, function(c)
+        switch(c, gene_name = paste0(ft, "_name"), seqnames = "chromosome", c),
+        character(1))
+      do <- function() {
+        report <- NULL
+        res <- edit_draft(function(d) {
+          out <- annotate_with_gtf(d, g, match_col = input$gtf_match, import_cols = import_cols,
+                                   compute_length = FALSE, feature_type = ft, matched_col = flag)
+          report <<- out$report
+          out$dds
+        })
+        req(res)
+        showNotification(.append_msg("GTF", report$matched, report$total), type = "message")
+      }
+      guarded(targets, do)
     })
 
     # --- feature_length: from an existing numeric column ---------------------
@@ -151,10 +165,13 @@ mod_feature_server <- function(id, state) {
 
     observeEvent(input$set_len, {
       req(editor$draft(), input$len_col)
-      res <- edit_draft(function(d) set_feature_length_from_column(d, input$len_col))
-      req(res)
-      showNotification(sprintf("feature_length set from '%s'. Click Save to keep.", input$len_col),
-                       type = "message")
+      do <- function() {
+        res <- edit_draft(function(d) set_feature_length_from_column(d, input$len_col))
+        req(res)
+        showNotification(sprintf("feature_length set from '%s'. Click Save to keep.", input$len_col),
+                         type = "message")
+      }
+      guarded("feature_length", do)
     })
 
     # --- feature_length: computed from the loaded GTF ------------------------
@@ -173,20 +190,23 @@ mod_feature_server <- function(id, state) {
       req(editor$draft(), gtf_obj())
       g <- gtf_obj()
       ft <- state_meta(state)$feature_type
-      report <- NULL
-      res <- edit_draft(function(d) {
-        out <- annotate_with_gtf(d, g, match_col = input$gtf_match %||% "auto",
-                                 import_cols = NULL, compute_length = TRUE,
-                                 length_type = input$gtf_len_type, feature_type = ft)
-        report <<- out$report
-        out$dds
-      })
-      req(res)
-      showNotification(sprintf("feature_length set for %d/%d features%s. Click Save to keep.",
-                               report$length_set, report$total,
-                               if (report$length_complete) " - TPM/FPKM available"
-                               else " - incomplete, TPM/FPKM need all features"),
-                       type = "message", duration = NULL)
+      do <- function() {
+        report <- NULL
+        res <- edit_draft(function(d) {
+          out <- annotate_with_gtf(d, g, match_col = input$gtf_match %||% "auto",
+                                   import_cols = NULL, compute_length = TRUE,
+                                   length_type = input$gtf_len_type, feature_type = ft)
+          report <<- out$report
+          out$dds
+        })
+        req(res)
+        showNotification(sprintf("feature_length set for %d/%d features%s. Click Save to keep.",
+                                 report$length_set, report$total,
+                                 if (report$length_complete) " - TPM/FPKM available"
+                                 else " - incomplete, TPM/FPKM need all features"),
+                         type = "message", duration = NULL)
+      }
+      guarded("feature_length", do)
     })
 
     output$coverage <- renderText({

@@ -29,6 +29,17 @@ test_that("gtf helpers expose feature types and importable columns", {
                     available_gtf_columns(gtf)))
 })
 
+test_that("gtf_attribute_table is one row per group with seqnames + attributes", {
+  skip_if_not_installed("rtracklayer"); skip_if_not_installed("GenomicRanges")
+  gtf <- import_gtf(gtf_path())
+  tab <- gtf_attribute_table(gtf, "gene_id")
+  expect_setequal(rownames(tab),
+                  c("ENSG00000000001", "ENSG00000000002", "ENSG00000000003"))
+  expect_true(all(c("seqnames", "gene_name", "gene_biotype", "type") %in% colnames(tab)))
+  expect_equal(as.character(tab["ENSG00000000001", "seqnames"]), "chr1")
+  expect_equal(as.character(tab["ENSG00000000001", "gene_name"]), "GeneA")
+})
+
 test_that("annotate_with_gtf fills names/chromosome/length and overrides OrgDb", {
   skip_if_not_installed("rtracklayer"); skip_if_not_installed("GenomicRanges")
   gtf <- import_gtf(gtf_path())
@@ -58,6 +69,16 @@ test_that("annotate_with_gtf handles partial coverage without wiping existing va
   expect_equal(as.character(rd$gene_name[4]), "keepme")    # existing value kept, not wiped
   expect_false(has_feature_length(res$dds))                # incomplete -> TPM/FPKM stay off
   expect_false(res$report$length_complete)
+})
+
+test_that("annotate_with_gtf can flag matched features", {
+  skip_if_not_installed("rtracklayer"); skip_if_not_installed("GenomicRanges")
+  gtf <- import_gtf(gtf_path())
+  res <- annotate_with_gtf(mk_gtf_dds(extra_absent = TRUE), gtf,
+                           import_cols = NULL, matched_col = "in_gtf")
+  fl <- SummarizedExperiment::rowData(res$dds)$in_gtf
+  expect_type(fl, "logical")
+  expect_equal(fl, c(TRUE, TRUE, TRUE, FALSE))   # 4th gene absent from the GTF
 })
 
 test_that("set_feature_length_from_column adopts a numeric column, rejects non-numeric", {

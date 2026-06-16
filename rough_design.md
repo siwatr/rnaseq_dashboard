@@ -268,19 +268,24 @@ The project is implemented in phases, **bulk-first** (revised in review). Cross-
 * Data import (1st page): `.rds` **and** counts-matrix + sample-sheet tabular input; show `show(dds)`
 * Data export page shell
 
-### Phase 2
+### Phase 2 (annotation & normalization)
 * Metadata manipulation (editable tables); annotation (OrgDb-first, then GTF); `feature_class` flags
-* QC (unified bulk/single-cell page) + sample/feature filtering (`filterByExpr`)
 * Normalization assays (CPM/TPM/FPKM; size factors on endogenous)
+* GTF memory minimization (reader/filter submodule that trims + frees the parse) + session memory monitor
+* Feature-info annotation UI redesign (two-card layout + GTF/OrgDb preview tables) — **closes Phase 2**
 
-### Phase 3
-* PCA-focused dimensional-reduction page
+### Phase 3 (QC & filtering)
+* QC (unified bulk/single-cell page) + sample/feature filtering (`filterByExpr`, manual `rowSums`, drop all-zero)
+* Gentle outlier flags; `vsn::meanSdPlot`; sample–sample correlation heatmap
 
 ### Phase 4
+* PCA-focused dimensional-reduction page
+
+### Phase 5
 * DESeq2 steps: guided design + contrast builder + reference level; LFC shrinkage (dual columns)
 * DE plots (MA / volcano / direct comparison); expression heatmap (row z-score default)
 
-### Phase 5 (later — single-cell)
+### Phase 6 (later — single-cell)
 * Single-cell ingestion, per-cell QC (`scran`/`scater`), pseudobulk aggregation, warned per-cell DESeq2; t-SNE/UMAP for single-cell
 
 <!-- 

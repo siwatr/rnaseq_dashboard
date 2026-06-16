@@ -16,6 +16,7 @@ dependencies:
   - r-shinywidgets       # richer inputs
   - r-shinycssloaders    # loading spinners for slow renders
   - r-thematic           # ggplots match the bslib theme
+  - r-ps                 # session memory footprint (process RSS) in the status bar
   # Plotting / data wrangling / IO
   - r-ggplot2
   - r-dplyr              # gene-metadata filtering

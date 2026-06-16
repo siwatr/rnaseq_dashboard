@@ -8,7 +8,8 @@ annotate_with_orgdb(
   dds,
   organism = c("mouse", "human"),
   id_type = NULL,
-  feature_type = "gene"
+  feature_type = "gene",
+  matched_col = NULL
 )
 }
 \arguments{
@@ -19,6 +20,9 @@ annotate_with_orgdb(
 \item{id_type}{\code{"ensembl"}/\code{"entrez"}/\code{"symbol"}; auto-detected when \code{NULL}.}
 
 \item{feature_type}{Feature unit; sets the name column \verb{<feature_type>_name}.}
+
+\item{matched_col}{Optional name of a logical \code{rowData} column to write,
+flagging which features were mapped in the OrgDb (\code{NULL} = none).}
 }
 \value{
 The annotated \code{DESeqDataSet}.

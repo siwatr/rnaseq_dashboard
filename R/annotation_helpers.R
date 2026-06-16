@@ -38,10 +38,13 @@ detect_id_type <- function(ids) {
 #' @param organism `"mouse"` (org.Mm.eg.db) or `"human"` (org.Hs.eg.db).
 #' @param id_type `"ensembl"`/`"entrez"`/`"symbol"`; auto-detected when `NULL`.
 #' @param feature_type Feature unit; sets the name column `<feature_type>_name`.
+#' @param matched_col Optional name of a logical `rowData` column to write,
+#'   flagging which features were mapped in the OrgDb (`NULL` = none).
 #' @return The annotated `DESeqDataSet`.
 #' @export
 annotate_with_orgdb <- function(dds, organism = c("mouse", "human"),
-                                id_type = NULL, feature_type = "gene") {
+                                id_type = NULL, feature_type = "gene",
+                                matched_col = NULL) {
   organism <- match.arg(organism)
   pkg <- .orgdb_pkg[[organism]]
   for (p in c("AnnotationDbi", pkg)) {
@@ -63,10 +66,12 @@ annotate_with_orgdb <- function(dds, organism = c("mouse", "human"),
       error = function(e) stats::setNames(rep(NA_character_, length(keys)), keys)
     ))
   }
+  symbol <- unname(pull("SYMBOL"))
   rd <- SummarizedExperiment::rowData(dds)
   name_col <- paste0(feature_type, "_name")
-  rd[[name_col]]      <- .fill(rd[[name_col]],      unname(pull("SYMBOL")))
+  rd[[name_col]]      <- .fill(rd[[name_col]],      symbol)
   rd[["description"]] <- .fill(rd[["description"]], unname(pull("GENENAME")))
+  if (!is.null(matched_col)) rd[[matched_col]] <- !is.na(symbol)  # mapped in OrgDb?
   SummarizedExperiment::rowData(dds) <- rd
   dds
 }
@@ -83,4 +88,22 @@ annotation_coverage <- function(dds, name_col) {
   if (!name_col %in% colnames(rd)) return(list(matched = 0L, total = sum(endo)))
   vals <- as.character(rd[[name_col]])[endo]
   list(matched = sum(!is.na(vals) & nzchar(vals)), total = sum(endo))
+}
+
+#' Which target columns already hold values (would be overwritten)
+#'
+#' Given the columns an annotation step would write, returns those that already
+#' exist in `rowData` with at least one non-empty value -- i.e. matched rows
+#' would overwrite existing data. Used to warn before applying.
+#' @param dds A `DESeqDataSet`.
+#' @param target_cols Character vector of column names the step will write.
+#' @return Character vector of existing, non-empty target columns.
+#' @export
+annotation_overwrites <- function(dds, target_cols) {
+  rd <- SummarizedExperiment::rowData(dds)
+  existing <- intersect(as.character(target_cols), colnames(rd))
+  existing[vapply(existing, function(c) {
+    v <- rd[[c]]
+    any(!is.na(v) & nzchar(as.character(v)))
+  }, logical(1))]
 }
