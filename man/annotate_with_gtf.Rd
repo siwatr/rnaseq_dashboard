@@ -11,7 +11,8 @@ annotate_with_gtf(
   import_cols = NULL,
   compute_length = FALSE,
   length_type = "exon",
-  feature_type = "gene"
+  feature_type = "gene",
+  matched_col = NULL
 )
 }
 \arguments{
@@ -28,6 +29,9 @@ annotate_with_gtf(
 \item{length_type}{Feature \code{type} used for length (default \code{"exon"}).}
 
 \item{feature_type}{Feature unit; sets the name column \verb{<feature_type>_name}.}
+
+\item{matched_col}{Optional name of a logical \code{rowData} column to write,
+flagging which features matched the GTF (\code{NULL} = none).}
 }
 \value{
 list(\code{dds}, \code{report} = list(\code{matched}, \code{total}, \code{length_set}, \code{length_complete})).

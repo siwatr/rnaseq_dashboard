@@ -53,7 +53,7 @@ mod_statusbar_server <- function(id, state) {
       invalidateLater(5000, session)
       rss <- .process_rss()
       if (is.na(rss)) return(NULL)
-      .badge(paste("mem:", .format_bytes(rss)), "text-bg-light")
+      .badge(paste("session memory:", .format_bytes(rss)), "text-bg-light")
     })
   })
 }

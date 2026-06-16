@@ -55,6 +55,34 @@ test_that("Feature-info GTF annotation and length apply to the draft until Save"
   })
 })
 
+test_that("Feature-info: GTF apply warns before overwrite, applies on Proceed, flags matches", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("rtracklayer")
+  skip_if_not_installed("GenomicRanges")
+  state <- new_app_state()
+  shiny::testServer(mod_feature_server, args = list(state = state), {
+    ids <- c("ENSG00000000001", "ENSG00000000002", "ENSG00000000003")
+    counts <- matrix(c(5L, 2L, 9L, 3L, 7L, 1L), nrow = 3, dimnames = list(ids, c("S1", "S2")))
+    samples <- data.frame(cond = c("a", "b"), row.names = c("S1", "S2"))
+    dds <- ensure_feature_class(DESeq2::DESeqDataSetFromMatrix(counts, samples, ~ 1))
+    SummarizedExperiment::rowData(dds)$gene_name <- c("OLD1", "OLD2", "OLD3")  # populated -> overwrite
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    gtf_obj(import_gtf(system.file("extdata", "demo_annotation.gtf", package = "ddsdashboard")))
+
+    session$setInputs(gtf_match = "auto", gtf_import = "gene_name", gtf_flag = TRUE, apply_gtf = 1)
+    # Overwrite of an existing populated column -> deferred behind the modal.
+    expect_equal(as.character(SummarizedExperiment::rowData(editor$draft())$gene_name),
+                 c("OLD1", "OLD2", "OLD3"))
+
+    session$setInputs(ow_proceed = 1)            # confirm
+    rd <- SummarizedExperiment::rowData(editor$draft())
+    expect_equal(as.character(rd$gene_name), c("GeneA", "GeneB", "GeneC"))  # now applied
+    expect_true("in_gtf" %in% colnames(rd))      # match-flag column added
+    expect_true(all(rd$in_gtf))
+  })
+})
+
 test_that("Feature-info: GTF edits compose with unsaved draft edits", {
   skip_if_not_installed("DESeq2")
   skip_if_not_installed("rtracklayer")

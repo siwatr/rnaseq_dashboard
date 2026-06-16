@@ -129,11 +129,13 @@ gtf_attribute_table <- function(gtf, group_col = "gene_id") {
 #' @param compute_length Whether to compute and store `feature_length`.
 #' @param length_type Feature `type` used for length (default `"exon"`).
 #' @param feature_type Feature unit; sets the name column `<feature_type>_name`.
+#' @param matched_col Optional name of a logical `rowData` column to write,
+#'   flagging which features matched the GTF (`NULL` = none).
 #' @return list(`dds`, `report` = list(`matched`, `total`, `length_set`, `length_complete`)).
 #' @export
 annotate_with_gtf <- function(dds, gtf, match_col = "auto", import_cols = NULL,
                               compute_length = FALSE, length_type = "exon",
-                              feature_type = "gene") {
+                              feature_type = "gene", matched_col = NULL) {
   ids <- rownames(dds)
   match_col <- .resolve_match_col(match_col, ids, gtf)
   tab <- gtf_attribute_table(gtf, group_col = match_col)
@@ -169,6 +171,7 @@ annotate_with_gtf <- function(dds, gtf, match_col = "auto", import_cols = NULL,
     length_set <- sum(!is.na(existing))
   }
 
+  if (!is.null(matched_col)) rd[[matched_col]] <- matched   # matched in GTF?
   SummarizedExperiment::rowData(dds) <- rd
   list(dds = dds, report = list(
     matched         = sum(matched),

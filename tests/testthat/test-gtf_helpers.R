@@ -71,6 +71,16 @@ test_that("annotate_with_gtf handles partial coverage without wiping existing va
   expect_false(res$report$length_complete)
 })
 
+test_that("annotate_with_gtf can flag matched features", {
+  skip_if_not_installed("rtracklayer"); skip_if_not_installed("GenomicRanges")
+  gtf <- import_gtf(gtf_path())
+  res <- annotate_with_gtf(mk_gtf_dds(extra_absent = TRUE), gtf,
+                           import_cols = NULL, matched_col = "in_gtf")
+  fl <- SummarizedExperiment::rowData(res$dds)$in_gtf
+  expect_type(fl, "logical")
+  expect_equal(fl, c(TRUE, TRUE, TRUE, FALSE))   # 4th gene absent from the GTF
+})
+
 test_that("set_feature_length_from_column adopts a numeric column, rejects non-numeric", {
   skip_if_not_installed("DESeq2")
   dds <- mk_gtf_dds()

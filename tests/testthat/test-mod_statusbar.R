@@ -12,7 +12,7 @@ test_that("statusbar renders dataset and memory badges", {
   shiny::testServer(mod_statusbar_server, args = list(state = state), {
     expect_true(any(grepl("no dataset loaded", as.character(output$status))))
     if (requireNamespace("ps", quietly = TRUE)) {
-      expect_true(any(grepl("mem:", as.character(output$mem))))
+      expect_true(any(grepl("session memory:", as.character(output$mem))))
     }
   })
 })
