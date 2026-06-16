@@ -23,6 +23,16 @@ test_that("mod_gtf_reader reads, trims columns/types on Confirm, frees on Confir
   })
 })
 
+test_that("reader UI can split controls from the preview output", {
+  with_preview    <- as.character(mod_gtf_reader_ui("gtf", preview = TRUE))
+  without_preview  <- as.character(mod_gtf_reader_ui("gtf", preview = FALSE))
+  preview_only     <- as.character(mod_gtf_reader_preview_ui("gtf"))
+  expect_true(any(grepl("gtf-preview_ui", with_preview)))
+  expect_false(any(grepl("gtf-preview_ui", without_preview)))  # controls only
+  expect_true(any(grepl("gtf-preview_ui", preview_only)))      # preview alone
+  expect_true(any(grepl("gtf-read", without_preview)))         # controls still present
+})
+
 test_that("mod_gtf_reader Remove frees the confirmed object", {
   skip_if_not_installed("rtracklayer")
   skip_if_not_installed("GenomicRanges")

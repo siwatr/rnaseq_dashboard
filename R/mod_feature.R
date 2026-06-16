@@ -21,49 +21,60 @@
 
 mod_feature_ui <- function(id) {
   ns <- NS(id)
-  annotation_controls <- bslib::accordion(
-    open = FALSE,
-    bslib::accordion_panel(
-      "OrgDb",
-      selectInput(ns("organism"), "Organism",
-                  c("Mouse (org.Mm.eg.db)" = "mouse", "Human (org.Hs.eg.db)" = "human")),
-      selectInput(ns("id_type"), "Feature id type",
-                  c("Auto-detect" = "auto", "Ensembl" = "ensembl",
-                    "Entrez" = "entrez", "Symbol" = "symbol")),
-      helpText(textOutput(ns("detected_id"), inline = TRUE)),
-      checkboxInput(ns("orgdb_flag"), "Flag mapped features (in_orgdb column)", value = TRUE),
-      actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary")
-    ),
-    bslib::accordion_panel(
-      "GTF (overrides OrgDb on matched features)",
-      mod_gtf_reader_ui(ns("gtf")),
-      uiOutput(ns("gtf_opts"))
-    ),
-    bslib::accordion_panel(
-      "Feature length",
-      helpText("Unlocks TPM/FPKM. From an existing numeric rowData column:"),
-      uiOutput(ns("len_col_ui")),
-      actionButton(ns("set_len"), "Set length from column"),
-      uiOutput(ns("gtf_len_ui"))
-    ),
-    bslib::accordion_panel(
-      "Feature unit",
-      selectInput(ns("feature_type"), "Feature unit",
-                  choices = c("gene", "transcript", "exon", "feature")),
-      helpText("What each row represents; sets the <unit>_name column and labels.")
-    )
+  # General feature settings (belong to neither annotation source) go in the
+  # metadata card's own sidebar.
+  feature_settings <- tagList(
+    tags$strong("Feature settings"),
+    selectInput(ns("feature_type"), "Feature unit",
+                choices = c("gene", "transcript", "exon", "feature")),
+    helpText("What each row represents; sets the <unit>_name column and labels."),
+    tags$strong("Set feature_length from a column"),
+    helpText("Unlocks TPM/FPKM from an existing numeric rowData column:"),
+    uiOutput(ns("len_col_ui")),
+    actionButton(ns("set_len"), "Set length from column"),
+    hr()
   )
-  annotation_card <- bslib::card(
-    bslib::card_header("Annotation (edits land in the draft above - Save to keep)"),
-    bslib::layout_sidebar(
-      sidebar = bslib::sidebar(title = "Annotate", width = 360, annotation_controls),
-      div(class = "mb-2", textOutput(ns("coverage"))),
-      tags$small(class = "text-muted", "OrgDb preview (first features):"),
-      DT::DTOutput(ns("orgdb_preview"))
+  # Bottom card: two annotation tabs, each with its own sidebar controls and a
+  # preview of the data it would join into rowData above.
+  annotation_card <- bslib::navset_card_pill(
+    title = "Annotation (edits land in the draft above - Save to keep)",
+    height = "25vh", full_screen = TRUE,
+    bslib::nav_panel(
+      "OrgDb",
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          title = "OrgDb", width = 320,
+          selectInput(ns("organism"), "Organism",
+                      c("Mouse (org.Mm.eg.db)" = "mouse", "Human (org.Hs.eg.db)" = "human")),
+          selectInput(ns("id_type"), "Feature id type",
+                      c("Auto-detect" = "auto", "Ensembl" = "ensembl",
+                        "Entrez" = "entrez", "Symbol" = "symbol")),
+          helpText(textOutput(ns("detected_id"), inline = TRUE)),
+          checkboxInput(ns("orgdb_flag"), "Flag mapped features (in_orgdb column)", value = TRUE),
+          actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary")
+        ),
+        tags$small(class = "text-muted", "Preview to be joined into rowData (first features):"),
+        DT::DTOutput(ns("orgdb_preview"))
+      )
+    ),
+    bslib::nav_panel(
+      "GTF",
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          title = "GTF (overrides OrgDb on matches)", width = 320,
+          mod_gtf_reader_ui(ns("gtf"), preview = FALSE),
+          uiOutput(ns("gtf_opts")),
+          uiOutput(ns("gtf_len_ui"))
+        ),
+        tags$small(class = "text-muted", "GTF preview (first rows):"),
+        mod_gtf_reader_preview_ui(ns("gtf"))
+      )
     )
   )
   tagList(
-    meta_editor_ui(ns("editor"), .feature_editor_opts),
+    meta_editor_ui(ns("editor"), .feature_editor_opts,
+                   extra_sidebar = feature_settings,
+                   extra_main = div(class = "mb-2", textOutput(ns("coverage")))),
     annotation_card
   )
 }

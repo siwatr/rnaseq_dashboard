@@ -5,7 +5,13 @@
 # object persists). Returns the confirmed (trimmed) GRanges reactiveVal so the
 # host page composes annotation on top of it; tests inject with gtf(<GRanges>).
 
-mod_gtf_reader_ui <- function(id) {
+#' Reader controls UI
+#'
+#' @param id Module id.
+#' @param preview If TRUE, also embed the preview table inline; set FALSE to place
+#'   the preview elsewhere via [mod_gtf_reader_preview_ui()] (e.g. a tab's main area).
+#' @noRd
+mod_gtf_reader_ui <- function(id, preview = TRUE) {
   ns <- NS(id)
   tagList(
     fileInput(ns("file"), "Upload GTF/GFF (gzip OK)",
@@ -17,8 +23,15 @@ mod_gtf_reader_ui <- function(id) {
     actionButton(ns("read"), "Read GTF"),
     uiOutput(ns("select")),
     uiOutput(ns("status")),
-    uiOutput(ns("preview_ui"))
+    if (isTRUE(preview)) uiOutput(ns("preview_ui"))
   )
+}
+
+#' The reader's preview table alone (for placing in a separate region)
+#' @param id Module id (same as passed to [mod_gtf_reader_ui()]).
+#' @noRd
+mod_gtf_reader_preview_ui <- function(id) {
+  uiOutput(NS(id)("preview_ui"))
 }
 
 #' @param id Module id.
