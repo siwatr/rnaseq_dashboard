@@ -86,10 +86,21 @@ mod_gtf_reader_server <- function(id) {
 
     observeEvent(input$reset, { raw(NULL); confirmed(NULL); showNotification("GTF selection reset.") })
 
+    # Optional: drop the kept GTF once its annotation has been applied to rowData,
+    # so the session no longer holds it (re-read to use it again).
+    observeEvent(input$remove, {
+      confirmed(NULL); raw(NULL); gc()
+      showNotification("GTF removed from session.", type = "message")
+    })
+
     output$status <- renderUI({
       if (!is.null(confirmed())) {
-        div(class = "form-text text-success",
-            sprintf("GTF ready: %d records kept.", length(confirmed())))
+        tagList(
+          div(class = "form-text text-success",
+              sprintf("GTF ready: %d records kept.", length(confirmed()))),
+          actionButton(ns("remove"), "Remove GTF from session", class = "btn-outline-danger btn-sm"),
+          helpText("Frees memory once the annotation is applied; re-read the GTF to use it again.")
+        )
       } else if (!is.null(raw())) {
         div(class = "form-text", "Select types/columns, then Confirm.")
       }

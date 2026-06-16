@@ -23,6 +23,18 @@ test_that("mod_gtf_reader reads, trims columns/types on Confirm, frees on Confir
   })
 })
 
+test_that("mod_gtf_reader Remove frees the confirmed object", {
+  skip_if_not_installed("rtracklayer")
+  skip_if_not_installed("GenomicRanges")
+  shiny::testServer(mod_gtf_reader_server, {
+    session$setInputs(path = gtf_demo(), read = 1)
+    session$setInputs(keep_types = character(0), keep_cols = character(0), confirm = 1)
+    expect_false(is.null(confirmed()))
+    session$setInputs(remove = 1)
+    expect_null(confirmed())
+  })
+})
+
 test_that("mod_gtf_reader keeps all columns/types when selections are empty", {
   skip_if_not_installed("rtracklayer")
   skip_if_not_installed("GenomicRanges")
