@@ -21,6 +21,16 @@ test_that("gtf_feature_lengths takes the union per group, by chosen type", {
   expect_error(gtf_feature_lengths(gtf, "CDS"), "No 'CDS'")
 })
 
+test_that("gtf_preview returns at most n rows as a data.frame", {
+  skip_if_not_installed("rtracklayer")
+  gtf <- import_gtf(gtf_path())
+  p <- gtf_preview(gtf, n = 5)
+  expect_s3_class(p, "data.frame")
+  expect_lte(nrow(p), 5)
+  expect_true(all(c("seqnames", "type") %in% colnames(p)))
+  expect_equal(nrow(gtf_preview(NULL)), 0)
+})
+
 test_that("gtf helpers expose feature types and importable columns", {
   skip_if_not_installed("rtracklayer")
   gtf <- import_gtf(gtf_path())

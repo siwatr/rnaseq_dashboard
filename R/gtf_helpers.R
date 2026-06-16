@@ -74,6 +74,19 @@ gtf_feature_lengths <- function(gtf, type = "exon", group_col = "gene_id") {
   stats::setNames(as.numeric(len), names(len))
 }
 
+#' First-rows preview of a GTF as a data.frame
+#'
+#' A small head() of the parsed `GRanges` for display (choosing import columns),
+#' converting only the first `n` rows -- never the whole object.
+#' @param gtf A `GRanges` from [import_gtf()].
+#' @param n Maximum rows to show (default 20).
+#' @return A data.frame with at most `n` rows.
+#' @export
+gtf_preview <- function(gtf, n = 20L) {
+  if (is.null(gtf) || !length(gtf)) return(data.frame())
+  as.data.frame(gtf[seq_len(min(as.integer(n), length(gtf)))], stringsAsFactors = FALSE)
+}
+
 #' One-row-per-feature attribute table from a GTF
 #'
 #' The first row seen for each `group_col` value (the gene/transcript row in a

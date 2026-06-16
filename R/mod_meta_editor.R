@@ -67,16 +67,22 @@ meta_editor_ui <- function(id, opts, extra_sidebar = NULL, extra_main = NULL) {
   sidebar <- bslib::sidebar(
     title = paste("Edit", opts$row_noun, "info"), width = 360,
     extra_sidebar,
-    div(
-      actionButton(ns("save"), "Save changes", class = "btn-primary"),
-      actionButton(ns("reset_save"), "Reset to last save", class = "btn-outline-secondary"),
-      actionButton(ns("reset_orig"), "Reset to original", class = "btn-outline-danger")
-    ),
     uiOutput(ns("protected_note")),
     do.call(bslib::accordion, c(list(open = FALSE), panels))
   )
+  toolbar <- div(
+    class = "d-flex gap-2 mb-2 align-items-center",
+    actionButton(ns("save"), tagList(icon("floppy-disk"), "Save"), class = "btn-primary"),
+    bslib::tooltip(actionButton(ns("reset_save"), icon("arrow-rotate-left"),
+                                class = "btn-outline-secondary"),
+                   "Reset to last save"),
+    bslib::tooltip(actionButton(ns("reset_orig"), icon("arrows-rotate"),
+                                class = "btn-outline-danger"),
+                   "Reset to original")
+  )
   card <- bslib::card(
     bslib::card_header(paste(opts$title, "(double-click a cell to edit; filters on top)")),
+    toolbar,
     DT::DTOutput(ns("table"))
   )
   do.call(bslib::layout_sidebar,

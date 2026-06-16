@@ -21,32 +21,51 @@
 
 mod_feature_ui <- function(id) {
   ns <- NS(id)
-  annotation_ui <- tagList(
-    tags$strong("Annotate from OrgDb"),
-    selectInput(ns("organism"), "Organism",
-                c("Mouse (org.Mm.eg.db)" = "mouse", "Human (org.Hs.eg.db)" = "human")),
-    selectInput(ns("id_type"), "Feature id type",
-                c("Auto-detect" = "auto", "Ensembl" = "ensembl",
-                  "Entrez" = "entrez", "Symbol" = "symbol")),
-    helpText(textOutput(ns("detected_id"), inline = TRUE)),
-    checkboxInput(ns("orgdb_flag"), "Flag mapped features (in_orgdb column)", value = TRUE),
-    actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary"),
-    hr(),
-    tags$strong("Annotate from GTF"),
-    helpText("A GTF overrides OrgDb for matching features. Edits land in the draft - click Save to keep."),
-    mod_gtf_reader_ui(ns("gtf")),
-    uiOutput(ns("gtf_opts")),
-    hr(),
-    tags$strong("Set feature_length"),
-    helpText("Unlocks TPM/FPKM. From an existing numeric rowData column:"),
-    uiOutput(ns("len_col_ui")),
-    actionButton(ns("set_len"), "Set length from column"),
-    uiOutput(ns("gtf_len_ui")),
-    hr()
+  annotation_controls <- bslib::accordion(
+    open = FALSE,
+    bslib::accordion_panel(
+      "OrgDb",
+      selectInput(ns("organism"), "Organism",
+                  c("Mouse (org.Mm.eg.db)" = "mouse", "Human (org.Hs.eg.db)" = "human")),
+      selectInput(ns("id_type"), "Feature id type",
+                  c("Auto-detect" = "auto", "Ensembl" = "ensembl",
+                    "Entrez" = "entrez", "Symbol" = "symbol")),
+      helpText(textOutput(ns("detected_id"), inline = TRUE)),
+      checkboxInput(ns("orgdb_flag"), "Flag mapped features (in_orgdb column)", value = TRUE),
+      actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary")
+    ),
+    bslib::accordion_panel(
+      "GTF (overrides OrgDb on matched features)",
+      mod_gtf_reader_ui(ns("gtf")),
+      uiOutput(ns("gtf_opts"))
+    ),
+    bslib::accordion_panel(
+      "Feature length",
+      helpText("Unlocks TPM/FPKM. From an existing numeric rowData column:"),
+      uiOutput(ns("len_col_ui")),
+      actionButton(ns("set_len"), "Set length from column"),
+      uiOutput(ns("gtf_len_ui"))
+    ),
+    bslib::accordion_panel(
+      "Feature unit",
+      selectInput(ns("feature_type"), "Feature unit",
+                  choices = c("gene", "transcript", "exon", "feature")),
+      helpText("What each row represents; sets the <unit>_name column and labels.")
+    )
   )
-  meta_editor_ui(ns("editor"), .feature_editor_opts,
-                 extra_sidebar = annotation_ui,
-                 extra_main = div(class = "mb-2", textOutput(ns("coverage"))))
+  annotation_card <- bslib::card(
+    bslib::card_header("Annotation (edits land in the draft above - Save to keep)"),
+    bslib::layout_sidebar(
+      sidebar = bslib::sidebar(title = "Annotate", width = 360, annotation_controls),
+      div(class = "mb-2", textOutput(ns("coverage"))),
+      tags$small(class = "text-muted", "OrgDb preview (first features):"),
+      DT::DTOutput(ns("orgdb_preview"))
+    )
+  )
+  tagList(
+    meta_editor_ui(ns("editor"), .feature_editor_opts),
+    annotation_card
+  )
 }
 
 #' @param state the shared app-state object (see [new_app_state()]).
@@ -99,6 +118,28 @@ mod_feature_server <- function(id, state) {
     output$detected_id <- renderText({
       d <- editor$draft(); req(d)
       sprintf("Detected: %s", detect_id_type(rownames(d)))
+    })
+
+    # Feature-unit selector (moved here from Load): keep it in sync with meta and
+    # write back as a labeling change only (no data_version bump).
+    observeEvent(state$working, {
+      updateSelectInput(session, "feature_type", selected = state_meta(state)$feature_type)
+    })
+    observeEvent(input$feature_type, {
+      req(state$working)
+      state$meta <- utils::modifyList(state$meta, list(feature_type = input$feature_type))
+    }, ignoreInit = TRUE)
+
+    # Non-committing preview of what OrgDb annotation would add (first features).
+    output$orgdb_preview <- DT::renderDT({
+      req(editor$draft())
+      id_type <- if (identical(input$id_type, "auto")) NULL else input$id_type
+      df <- tryCatch(
+        orgdb_annotation_preview(editor$draft(), organism = input$organism,
+                                 id_type = id_type, feature_type = state_meta(state)$feature_type),
+        error = function(e) NULL)
+      req(df)
+      DT::datatable(df, rownames = FALSE, options = list(dom = "tp", pageLength = 5, scrollX = TRUE))
     })
 
     observeEvent(input$annotate, {

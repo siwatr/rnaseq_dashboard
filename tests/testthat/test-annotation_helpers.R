@@ -40,6 +40,18 @@ test_that("annotate_with_orgdb can flag mapped features", {
   expect_equal(fl, c(TRUE, FALSE))   # first maps (Gnai3), second does not
 })
 
+test_that("orgdb_annotation_preview returns a small non-committing mapping table", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("org.Mm.eg.db")
+  dds <- mk_ens_dds(c("ENSMUSG00000000001", "NOTAGENE2"))
+  pv <- orgdb_annotation_preview(dds, "mouse", id_type = "ensembl", feature_type = "gene", n = 20)
+  expect_true(all(c("id", "gene_name", "description", "in_orgdb") %in% colnames(pv)))
+  expect_equal(nrow(pv), 2)
+  expect_equal(pv$in_orgdb, c(TRUE, FALSE))   # first maps, second does not
+  # non-committing: the dds itself is untouched
+  expect_false("gene_name" %in% colnames(SummarizedExperiment::rowData(dds)))
+})
+
 test_that("annotation_overwrites flags only existing, populated targets", {
   skip_if_not_installed("DESeq2")
   dds <- make_mock_dds(n_genes = 6, n_per_group = 2, n_spike = 1, seed = 1)  # gene_name populated

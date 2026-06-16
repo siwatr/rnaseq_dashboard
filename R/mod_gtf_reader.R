@@ -16,7 +16,8 @@ mod_gtf_reader_ui <- function(id) {
     textInput(ns("path"), NULL, placeholder = "/path/to/annotation.gtf(.gz)"),
     actionButton(ns("read"), "Read GTF"),
     uiOutput(ns("select")),
-    uiOutput(ns("status"))
+    uiOutput(ns("status")),
+    uiOutput(ns("preview_ui"))
   )
 }
 
@@ -104,6 +105,19 @@ mod_gtf_reader_server <- function(id) {
       } else if (!is.null(raw())) {
         div(class = "form-text", "Select types/columns, then Confirm.")
       }
+    })
+
+    # ~20-row preview of the loaded GTF (raw while selecting, else the trimmed
+    # object) so users can see columns/values when choosing what to keep/import.
+    output$preview_ui <- renderUI({
+      g <- raw() %||% confirmed(); req(g)
+      tagList(tags$small(class = "text-muted", "GTF preview (first rows):"),
+              DT::DTOutput(ns("preview")))
+    })
+    output$preview <- DT::renderDT({
+      g <- raw() %||% confirmed(); req(g)
+      DT::datatable(gtf_preview(g), rownames = FALSE,
+                    options = list(dom = "tp", pageLength = 5, scrollX = TRUE))
     })
 
     confirmed

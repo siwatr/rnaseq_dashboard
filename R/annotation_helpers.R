@@ -76,6 +76,42 @@ annotate_with_orgdb <- function(dds, organism = c("mouse", "human"),
   dds
 }
 
+#' Preview the OrgDb annotation for the first features
+#'
+#' A small, non-committing table of what [annotate_with_orgdb()] would add, for
+#' display before applying. Maps the first `n` feature ids and returns
+#' `id`, `<feature_type>_name` (SYMBOL), `description` (GENENAME), and `in_orgdb`
+#' (whether a symbol was found).
+#' @inheritParams annotate_with_orgdb
+#' @param n Number of features to preview (default 20).
+#' @return A data.frame with up to `n` rows.
+#' @export
+orgdb_annotation_preview <- function(dds, organism = c("mouse", "human"),
+                                     id_type = NULL, feature_type = "gene", n = 20L) {
+  organism <- match.arg(organism)
+  pkg <- .orgdb_pkg[[organism]]
+  for (p in c("AnnotationDbi", pkg)) {
+    if (!requireNamespace(p, quietly = TRUE)) {
+      stop("orgdb_annotation_preview() needs the '", p, "' package.", call. = FALSE)
+    }
+  }
+  org <- getExportedValue(pkg, pkg)
+  ids <- utils::head(rownames(dds), as.integer(n))
+  id_type <- id_type %||% detect_id_type(ids)
+  keytype <- switch(id_type, ensembl = "ENSEMBL", entrez = "ENTREZID", symbol = "SYMBOL",
+                    stop("Unknown id_type: ", id_type, call. = FALSE))
+  keys <- if (keytype == "ENSEMBL") sub("\\..*$", "", ids) else ids
+  pull <- function(col) suppressMessages(tryCatch(
+    AnnotationDbi::mapIds(org, keys = keys, column = col, keytype = keytype, multiVals = "first"),
+    error = function(e) stats::setNames(rep(NA_character_, length(keys)), keys)))
+  sym <- unname(pull("SYMBOL"))
+  out <- data.frame(id = ids, stringsAsFactors = FALSE)
+  out[[paste0(feature_type, "_name")]] <- sym
+  out[["description"]] <- unname(pull("GENENAME"))
+  out[["in_orgdb"]]    <- !is.na(sym)
+  out
+}
+
 #' Annotation coverage over endogenous features
 #'
 #' @param dds A `DESeqDataSet`.
