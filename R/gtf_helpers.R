@@ -83,16 +83,18 @@ gtf_feature_lengths <- function(gtf, type = "exon", group_col = "gene_id") {
 #' @return A data.frame, row names = `group_col` values.
 #' @export
 gtf_attribute_table <- function(gtf, group_col = "gene_id") {
-  df <- as.data.frame(gtf, stringsAsFactors = FALSE)
-  if (!group_col %in% colnames(df)) {
-    stop("Column '", group_col, "' not found in the GTF.", call. = FALSE)
-  }
-  keys <- as.character(df[[group_col]])
-  keep <- !is.na(keys) & nzchar(keys)
-  df <- df[keep, , drop = FALSE]; keys <- keys[keep]
-  first <- !duplicated(keys)
-  out <- df[first, , drop = FALSE]
-  rownames(out) <- keys[first]
+  .need(c("S4Vectors", "GenomicRanges"))
+  md <- S4Vectors::mcols(gtf)
+  # Grouping key vector, without materializing the whole GRanges as a data.frame
+  # (that would copy every row + expand the Rle seqnames -- the memory spike).
+  keys <- if (group_col == "seqnames") as.character(GenomicRanges::seqnames(gtf))
+          else if (group_col %in% colnames(md)) as.character(md[[group_col]])
+          else stop("Column '", group_col, "' not found in the GTF.", call. = FALSE)
+  keep <- !is.na(keys) & nzchar(keys) & !duplicated(keys)
+  # Convert only the deduplicated subset (n_groups rows, not n_features).
+  out <- as.data.frame(md[keep, , drop = FALSE], stringsAsFactors = FALSE)
+  out$seqnames <- as.character(GenomicRanges::seqnames(gtf))[keep]
+  rownames(out) <- keys[keep]
   out
 }
 

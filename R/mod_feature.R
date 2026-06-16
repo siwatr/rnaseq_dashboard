@@ -26,13 +26,7 @@ mod_feature_ui <- function(id) {
     hr(),
     tags$strong("Annotate from GTF"),
     helpText("A GTF overrides OrgDb for matching features. Edits land in the draft - click Save to keep."),
-    fileInput(ns("gtf_file"), "Upload GTF/GFF (gzip OK)",
-              accept = c(".gtf", ".gff", ".gff3", ".gtf.gz", ".gff.gz", ".gff3.gz",
-                         ".gz", "application/gzip", "application/x-gzip", "text/plain")),
-    helpText("Large uncompressed GTFs may exceed the upload limit - upload gzipped, ",
-             "or read a local file already on this machine:"),
-    textInput(ns("gtf_path"), NULL, placeholder = "/path/to/annotation.gtf(.gz)"),
-    actionButton(ns("read_gtf"), "Read GTF"),
+    mod_gtf_reader_ui(ns("gtf")),
     uiOutput(ns("gtf_opts")),
     hr(),
     tags$strong("Set feature_length"),
@@ -53,7 +47,7 @@ mod_feature_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     editor <- meta_editor_server("editor", state, .feature_editor_opts)
-    gtf_obj <- reactiveVal(NULL)
+    gtf_obj <- mod_gtf_reader_server("gtf")   # confirmed (trimmed) GRanges, or NULL
 
     # Apply fn(draft, ...) to the editor draft, reporting errors; returns the new
     # dds (invisibly via the editor) or NULL on failure.
@@ -84,31 +78,6 @@ mod_feature_server <- function(id, state) {
       cov <- annotation_coverage(res, paste0(detect_feature_type(res)$feature_type, "_name"))
       showNotification(sprintf("Annotated %d of %d endogenous features. Click Save to keep.",
                                cov$matched, cov$total), type = "message")
-    })
-
-    # --- GTF read ------------------------------------------------------------
-    observeEvent(input$read_gtf, {
-      # Prefer a local path (no browser upload, no size cap); else the upload.
-      # Either way a real file extension drives format + gzip handling.
-      path <- NULL
-      if (nzchar(input$gtf_path %||% "")) {
-        if (!file.exists(input$gtf_path)) {
-          showNotification("No file at that path.", type = "error"); return()
-        }
-        path <- input$gtf_path
-      } else if (!is.null(input$gtf_file)) {
-        path <- file.path(tempdir(), basename(input$gtf_file$name))
-        file.copy(input$gtf_file$datapath, path, overwrite = TRUE)
-      } else {
-        showNotification("Upload a file or enter a local path first.", type = "warning"); return()
-      }
-      g <- tryCatch(
-        withProgress(message = "Reading GTF...", value = 0.5, import_gtf(path)),
-        error = function(e) { showNotification(conditionMessage(e), type = "error", duration = NULL); NULL })
-      req(g)
-      gtf_obj(g)
-      showNotification(sprintf("Read GTF: %d records; types: %s.", length(g),
-                               paste(gtf_feature_types(g), collapse = ", ")), type = "message")
     })
 
     # --- GTF attribute import (draft) ----------------------------------------

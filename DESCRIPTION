@@ -30,6 +30,7 @@ Suggests:
     IRanges,
     org.Hs.eg.db,
     org.Mm.eg.db,
+    ps,
     rtracklayer,
     S4Vectors,
     scater,

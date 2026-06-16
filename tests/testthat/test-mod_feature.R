@@ -21,19 +21,9 @@ test_that("Feature-info OrgDb annotation populates a name column", {
   })
 })
 
-test_that("Feature-info GTF reader accepts a local file path", {
-  skip_if_not_installed("DESeq2")
-  skip_if_not_installed("rtracklayer")
-  skip_if_not_installed("GenomicRanges")
-  state <- new_app_state()
-  shiny::testServer(mod_feature_server, args = list(state = state), {
-    session$setInputs(
-      gtf_path = system.file("extdata", "demo_annotation.gtf", package = "ddsdashboard"),
-      read_gtf = 1)
-    expect_false(is.null(gtf_obj()))
-    expect_setequal(gtf_feature_types(gtf_obj()), c("exon", "gene", "transcript"))
-  })
-})
+# Reading/trimming a GTF now lives in mod_gtf_reader (see test-mod_gtf_reader.R);
+# the tests below inject the confirmed GRanges via gtf_obj() and exercise the
+# draft-based annotation/length wiring on the Feature page.
 
 test_that("Feature-info GTF annotation and length apply to the draft until Save", {
   skip_if_not_installed("DESeq2")

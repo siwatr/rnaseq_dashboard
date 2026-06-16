@@ -29,6 +29,17 @@ test_that("gtf helpers expose feature types and importable columns", {
                     available_gtf_columns(gtf)))
 })
 
+test_that("gtf_attribute_table is one row per group with seqnames + attributes", {
+  skip_if_not_installed("rtracklayer"); skip_if_not_installed("GenomicRanges")
+  gtf <- import_gtf(gtf_path())
+  tab <- gtf_attribute_table(gtf, "gene_id")
+  expect_setequal(rownames(tab),
+                  c("ENSG00000000001", "ENSG00000000002", "ENSG00000000003"))
+  expect_true(all(c("seqnames", "gene_name", "gene_biotype", "type") %in% colnames(tab)))
+  expect_equal(as.character(tab["ENSG00000000001", "seqnames"]), "chr1")
+  expect_equal(as.character(tab["ENSG00000000001", "gene_name"]), "GeneA")
+})
+
 test_that("annotate_with_gtf fills names/chromosome/length and overrides OrgDb", {
   skip_if_not_installed("rtracklayer"); skip_if_not_installed("GenomicRanges")
   gtf <- import_gtf(gtf_path())
