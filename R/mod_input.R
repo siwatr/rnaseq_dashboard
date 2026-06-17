@@ -39,13 +39,7 @@ mod_input_ui <- function(id) {
                   accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls"))
       ),
       actionButton(ns("load"), "Load dataset", class = "btn-primary"),
-      hr(),
-      conditionalPanel(
-        sprintf("output['%s']", ns("loaded")),
-        selectInput(ns("feature_type"), "Feature unit",
-                    choices = c("gene", "transcript", "exon", "feature")),
-        helpText("What each row represents; used to label the app and find name columns.")
-      )
+      helpText("Set the feature unit (gene/transcript/...) on the Feature info tab.")
     ),
     bslib::card(
       bslib::card_header("Dataset summary"),
@@ -58,9 +52,6 @@ mod_input_ui <- function(id) {
 #' @return Invisible NULL.
 mod_input_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
-
-    output$loaded <- reactive(!is.null(state$working))
-    outputOptions(output, "loaded", suspendWhenHidden = FALSE)
 
     observeEvent(input$load, {
       obj <- tryCatch(
@@ -93,7 +84,6 @@ mod_input_server <- function(id, state) {
       req(res)
 
       state_load(state, res$dds, source = input$source, meta = res$meta)
-      updateSelectInput(session, "feature_type", selected = res$meta$feature_type)
       msg <- sprintf("Loaded %d features x %d samples (%s).",
                      nrow(res$dds), ncol(res$dds), res$meta$data_type)
       if (isTRUE(res$meta$sce_per_cell)) {
@@ -102,13 +92,6 @@ mod_input_server <- function(id, state) {
       }
       showNotification(msg, type = if (isTRUE(res$meta$sce_per_cell)) "warning" else "message")
     })
-
-    # Feature-type correction is a labeling change, not a data edit — don't bump
-    # data_version; just update app-level meta.
-    observeEvent(input$feature_type, {
-      req(state$working)
-      state$meta <- utils::modifyList(state$meta, list(feature_type = input$feature_type))
-    }, ignoreInit = TRUE)
 
     output$summary <- renderPrint({
       if (is.null(state$working)) cat("No dataset loaded.") else methods::show(state$working)

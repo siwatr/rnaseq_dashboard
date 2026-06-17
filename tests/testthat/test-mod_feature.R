@@ -25,6 +25,20 @@ test_that("Feature-info OrgDb annotation populates a name column", {
 # the tests below inject the confirmed GRanges via gtf_obj() and exercise the
 # draft-based annotation/length wiring on the Feature page.
 
+test_that("Feature-info feature-unit selector updates meta without bumping version", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_feature_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 10, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    v0 <- state$data_version
+    session$setInputs(feature_type = "transcript")
+    expect_equal(state_meta(state)$feature_type, "transcript")
+    expect_equal(state$data_version, v0)   # labeling change only, no data edit
+  })
+})
+
 test_that("Feature-info GTF annotation and length apply to the draft until Save", {
   skip_if_not_installed("DESeq2")
   skip_if_not_installed("rtracklayer")

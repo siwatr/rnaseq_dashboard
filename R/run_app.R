@@ -24,6 +24,12 @@ app_ui <- function() {
   bslib::page_navbar(
     title = "dds dashboard",
     theme = bslib::bs_theme(version = 5),
+    # Smaller, denser DT tables so more data is visible at once.
+    header = tags$style(HTML(paste(
+      "table.dataTable td, table.dataTable th { font-size: 0.8rem; padding: 3px 6px; }",
+      ".dataTables_wrapper, .dataTables_wrapper .dataTables_filter input,",
+      ".dataTables_wrapper .dataTables_length select { font-size: 0.8rem; }"
+    ))),
     bslib::nav_panel("Input",
       bslib::navset_card_tab(
         bslib::nav_panel("Load",         mod_input_ui("input")),

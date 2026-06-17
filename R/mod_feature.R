@@ -12,6 +12,16 @@
   allow_merge = FALSE, allow_row_rename = FALSE, bulk_class = TRUE
 )
 
+# OrgDb columns offered in the "Information to add" selector (values are OrgDb
+# keytypes; each maps to a fixed rowData column, see .orgdb_target()).
+.orgdb_col_choices <- c(
+  "Gene symbol (-> <unit>_name)" = "SYMBOL",
+  "Description (-> description)" = "GENENAME",
+  "Ensembl id (-> ensembl_id)"  = "ENSEMBL",
+  "Entrez id (-> entrez_id)"    = "ENTREZID",
+  "Gene type (-> gene_biotype)" = "GENETYPE"
+)
+
 # Notification text after an annotation step (how much of the table it touched).
 .append_msg <- function(source, matched, total) {
   pct <- if (total > 0L) round(100 * matched / total) else 0L
@@ -21,32 +31,66 @@
 
 mod_feature_ui <- function(id) {
   ns <- NS(id)
-  annotation_ui <- tagList(
-    tags$strong("Annotate from OrgDb"),
-    selectInput(ns("organism"), "Organism",
-                c("Mouse (org.Mm.eg.db)" = "mouse", "Human (org.Hs.eg.db)" = "human")),
-    selectInput(ns("id_type"), "Feature id type",
-                c("Auto-detect" = "auto", "Ensembl" = "ensembl",
-                  "Entrez" = "entrez", "Symbol" = "symbol")),
-    helpText(textOutput(ns("detected_id"), inline = TRUE)),
-    checkboxInput(ns("orgdb_flag"), "Flag mapped features (in_orgdb column)", value = TRUE),
-    actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary"),
-    hr(),
-    tags$strong("Annotate from GTF"),
-    helpText("A GTF overrides OrgDb for matching features. Edits land in the draft - click Save to keep."),
-    mod_gtf_reader_ui(ns("gtf")),
-    uiOutput(ns("gtf_opts")),
-    hr(),
-    tags$strong("Set feature_length"),
-    helpText("Unlocks TPM/FPKM. From an existing numeric rowData column:"),
+  # General feature settings (belong to neither annotation source) go in the
+  # metadata card's own sidebar.
+  feature_settings <- tagList(
+    tags$strong("Feature settings"),
+    selectInput(ns("feature_type"), "Feature unit",
+                choices = c("gene", "transcript", "exon", "feature")),
+    helpText("What each row represents; sets the <unit>_name column and labels."),
+    tags$strong("Set feature_length from a column"),
+    helpText("Unlocks TPM/FPKM from an existing numeric rowData column:"),
     uiOutput(ns("len_col_ui")),
     actionButton(ns("set_len"), "Set length from column"),
-    uiOutput(ns("gtf_len_ui")),
     hr()
   )
-  meta_editor_ui(ns("editor"), .feature_editor_opts,
-                 extra_sidebar = annotation_ui,
-                 extra_main = div(class = "mb-2", textOutput(ns("coverage"))))
+  # One navset: the metadata table and each annotation source are separate tabs,
+  # so only one table + its sidebar is shown at a time.
+  bslib::navset_card_pill(
+    title = "Feature info",
+    bslib::nav_panel(
+      "Feature Metadata",
+      meta_editor_ui(ns("editor"), .feature_editor_opts,
+                     extra_sidebar = feature_settings,
+                     extra_main = div(class = "mb-2", textOutput(ns("coverage"))))
+    ),
+    bslib::nav_panel(
+      "OrgDb Annotation",
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          title = "OrgDb", width = 320,
+          selectInput(ns("organism"), "Organism",
+                      c("Mouse (org.Mm.eg.db)" = "mouse", "Human (org.Hs.eg.db)" = "human")),
+          selectInput(ns("id_type"), "Feature id type",
+                      c("Auto-detect" = "auto", "Ensembl" = "ensembl",
+                        "Entrez" = "entrez", "Symbol" = "symbol")),
+          helpText(textOutput(ns("detected_id"), inline = TRUE)),
+          selectizeInput(ns("orgdb_cols"), "Information to add", multiple = TRUE,
+                         choices = .orgdb_col_choices, selected = c("SYMBOL", "GENENAME")),
+          checkboxInput(ns("orgdb_flag"), "Flag mapped features (in_orgdb column)", value = TRUE),
+          actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary")
+        ),
+        uiOutput(ns("orgdb_cov")),
+        tags$small(class = "text-muted",
+                   "Available to join (your feature ids resolved against the OrgDb):"),
+        DT::DTOutput(ns("orgdb_preview"))
+      )
+    ),
+    bslib::nav_panel(
+      "GTF Annotation",
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          title = "GTF", width = 320,
+          helpText("GTF values override OrgDb where they match."),
+          mod_gtf_reader_ui(ns("gtf"), preview = FALSE),
+          uiOutput(ns("gtf_opts")),
+          uiOutput(ns("gtf_len_ui"))
+        ),
+        uiOutput(ns("gtf_cov")),
+        mod_gtf_reader_preview_ui(ns("gtf"))
+      )
+    )
+  )
 }
 
 #' @param state the shared app-state object (see [new_app_state()]).
@@ -101,21 +145,74 @@ mod_feature_server <- function(id, state) {
       sprintf("Detected: %s", detect_id_type(rownames(d)))
     })
 
+    # Feature-unit selector (moved here from Load): keep it in sync with meta and
+    # write back as a labeling change only (no data_version bump).
+    observeEvent(state$working, {
+      updateSelectInput(session, "feature_type", selected = state_meta(state)$feature_type)
+    })
+    observeEvent(input$feature_type, {
+      req(state$working)
+      state$meta <- utils::modifyList(state$meta, list(feature_type = input$feature_type))
+    }, ignoreInit = TRUE)
+
+    # Columns the user picked, falling back to the historical default so the page
+    # works before the selectize input reports (and in headless tests).
+    orgdb_cols <- reactive(input$orgdb_cols %||% c("SYMBOL", "GENENAME"))
+
+    # Match-coverage banners above each preview (how many of the user's feature
+    # ids the source resolves), coloured red/amber/green by completeness.
+    output$orgdb_cov <- renderUI({
+      req(editor$draft())
+      id_type <- if (identical(input$id_type, "auto")) NULL else input$id_type
+      cnt <- tryCatch(orgdb_match_count(editor$draft(), organism = input$organism,
+                                        id_type = id_type, columns = orgdb_cols()),
+                      error = function(e) NULL)
+      req(cnt)
+      .coverage_banner(cnt$matched, cnt$total, "feature IDs", "OrgDb")
+    })
+
+    output$gtf_cov <- renderUI({
+      g <- gtf_obj(); req(g, editor$draft())
+      cnt <- tryCatch(gtf_match_count(editor$draft(), g, match_col = input$gtf_match %||% "auto"),
+                      error = function(e) NULL)
+      req(cnt)
+      .coverage_banner(cnt$matched, cnt$total, "feature IDs", "the GTF")
+    })
+
+    # Non-committing preview of what OrgDb makes available to join: the join key
+    # (id) plus one column per selected piece of information, for the first rows.
+    output$orgdb_preview <- DT::renderDT({
+      req(editor$draft())
+      id_type <- if (identical(input$id_type, "auto")) NULL else input$id_type
+      df <- tryCatch(
+        orgdb_annotation_preview(editor$draft(), organism = input$organism,
+                                 id_type = id_type, feature_type = state_meta(state)$feature_type,
+                                 columns = orgdb_cols(), n = 100L),
+        error = function(e) NULL)
+      req(df)
+      DT::datatable(df, rownames = FALSE,
+                    options = list(dom = "ltp", pageLength = 10, scrollX = TRUE,
+                                   lengthMenu = list(c(10, 25, 50, 100),
+                                                     c("10", "25", "50", "100"))))
+    })
+
     observeEvent(input$annotate, {
       req(editor$draft())
       organism <- input$organism
       id_type <- if (identical(input$id_type, "auto")) NULL else input$id_type
       ft <- state_meta(state)$feature_type
+      cols <- orgdb_cols()
       flag <- if (isTRUE(input$orgdb_flag)) "in_orgdb" else NULL
       do <- function() {
         res <- edit_draft(function(d)
           annotate_with_orgdb(d, organism = organism, id_type = id_type,
-                              feature_type = ft, matched_col = flag))
+                              feature_type = ft, columns = cols, matched_col = flag))
         req(res)
         cov <- annotation_coverage(res, paste0(detect_feature_type(res)$feature_type, "_name"))
         showNotification(.append_msg("OrgDb", cov$matched, cov$total), type = "message")
       }
-      guarded(c(paste0(ft, "_name"), "description"), do)
+      targets <- vapply(cols, .orgdb_target, character(1), feature_type = ft)
+      guarded(unname(targets), do)
     })
 
     # --- GTF attribute import (draft) ----------------------------------------
@@ -123,12 +220,13 @@ mod_feature_server <- function(id, state) {
       g <- gtf_obj(); req(g)
       cols <- available_gtf_columns(g)
       tagList(
+        tags$hr(), tags$strong("Import GTF attributes"),
         selectInput(ns("gtf_match"), "Match dds rows by",
                     c("Auto (id, then name)" = "auto", stats::setNames(cols, cols))),
         selectizeInput(ns("gtf_import"), "Import columns", choices = cols, multiple = TRUE,
                        selected = intersect(c("gene_name", "seqnames", "gene_biotype"), cols)),
         checkboxInput(ns("gtf_flag"), "Flag matched features (in_gtf column)", value = TRUE),
-        actionButton(ns("apply_gtf"), "Apply GTF annotation", class = "btn-primary")
+        actionButton(ns("apply_gtf"), "Import into features", class = "btn-primary")
       )
     })
 
@@ -179,7 +277,8 @@ mod_feature_server <- function(id, state) {
       g <- gtf_obj(); req(g)
       types <- gtf_feature_types(g)
       tagList(
-        helpText("Or compute union length from the loaded GTF over a feature type:"),
+        tags$hr(), tags$strong("Compute feature length"),
+        helpText("Union length over a feature type (exon for mature mRNA):"),
         selectInput(ns("gtf_len_type"), NULL, choices = types,
                     selected = if ("exon" %in% types) "exon" else types[[1]]),
         actionButton(ns("compute_len"), "Compute length from GTF")

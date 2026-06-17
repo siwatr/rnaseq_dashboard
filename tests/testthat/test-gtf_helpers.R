@@ -21,6 +21,16 @@ test_that("gtf_feature_lengths takes the union per group, by chosen type", {
   expect_error(gtf_feature_lengths(gtf, "CDS"), "No 'CDS'")
 })
 
+test_that("gtf_preview returns at most n rows as a data.frame", {
+  skip_if_not_installed("rtracklayer")
+  gtf <- import_gtf(gtf_path())
+  p <- gtf_preview(gtf, n = 5)
+  expect_s3_class(p, "data.frame")
+  expect_lte(nrow(p), 5)
+  expect_true(all(c("seqnames", "type") %in% colnames(p)))
+  expect_equal(nrow(gtf_preview(NULL)), 0)
+})
+
 test_that("gtf helpers expose feature types and importable columns", {
   skip_if_not_installed("rtracklayer")
   gtf <- import_gtf(gtf_path())
@@ -79,6 +89,14 @@ test_that("annotate_with_gtf can flag matched features", {
   fl <- SummarizedExperiment::rowData(res$dds)$in_gtf
   expect_type(fl, "logical")
   expect_equal(fl, c(TRUE, TRUE, TRUE, FALSE))   # 4th gene absent from the GTF
+})
+
+test_that("gtf_match_count tallies dds features present in the GTF", {
+  skip_if_not_installed("rtracklayer"); skip_if_not_installed("GenomicRanges")
+  gtf <- import_gtf(gtf_path())
+  cnt <- gtf_match_count(mk_gtf_dds(extra_absent = TRUE), gtf)
+  expect_equal(cnt$total, 4)
+  expect_equal(cnt$matched, 3)   # 4th gene absent from the GTF
 })
 
 test_that("set_feature_length_from_column adopts a numeric column, rejects non-numeric", {

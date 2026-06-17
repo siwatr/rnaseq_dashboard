@@ -40,6 +40,45 @@ test_that("annotate_with_orgdb can flag mapped features", {
   expect_equal(fl, c(TRUE, FALSE))   # first maps (Gnai3), second does not
 })
 
+test_that("orgdb_annotation_preview returns id + selected-info columns, non-committing", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("org.Mm.eg.db")
+  dds <- mk_ens_dds(c("ENSMUSG00000000001", "NOTAGENE2"))
+  # Default columns -> id + gene_name + description; id is the join key (first col).
+  pv <- orgdb_annotation_preview(dds, "mouse", id_type = "ensembl", feature_type = "gene", n = 20)
+  expect_equal(colnames(pv), c("id", "gene_name", "description"))
+  expect_equal(nrow(pv), 2)
+  expect_equal(pv$id[1], "ENSMUSG00000000001")
+  expect_equal(as.character(pv$gene_name), c("Gnai3", NA))   # first maps, second does not
+  # non-committing: the dds itself is untouched
+  expect_false("gene_name" %in% colnames(SummarizedExperiment::rowData(dds)))
+
+  # The selector drives which info columns appear.
+  pv2 <- orgdb_annotation_preview(dds, "mouse", id_type = "ensembl", feature_type = "gene",
+                                  columns = "ENTREZID")
+  expect_equal(colnames(pv2), c("id", "entrez_id"))
+})
+
+test_that("annotate_with_orgdb imports the requested column set", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("org.Mm.eg.db")
+  dds <- mk_ens_dds(c("ENSMUSG00000000001", "ENSMUSG00000000003"))
+  dds <- annotate_with_orgdb(dds, "mouse", id_type = "ensembl", feature_type = "gene",
+                             columns = c("SYMBOL", "ENTREZID"))
+  rd <- SummarizedExperiment::rowData(dds)
+  expect_true(all(c("gene_name", "entrez_id") %in% colnames(rd)))
+  expect_false("description" %in% colnames(rd))   # GENENAME not requested
+})
+
+test_that("orgdb_match_count tallies resolvable feature ids", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("org.Mm.eg.db")
+  dds <- mk_ens_dds(c("ENSMUSG00000000001", "NOTAGENE2"))
+  cnt <- orgdb_match_count(dds, "mouse", id_type = "ensembl")
+  expect_equal(cnt$total, 2)
+  expect_equal(cnt$matched, 1)   # only the first id resolves (Gnai3)
+})
+
 test_that("annotation_overwrites flags only existing, populated targets", {
   skip_if_not_installed("DESeq2")
   dds <- make_mock_dds(n_genes = 6, n_per_group = 2, n_spike = 1, seed = 1)  # gene_name populated

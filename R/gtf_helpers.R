@@ -74,6 +74,19 @@ gtf_feature_lengths <- function(gtf, type = "exon", group_col = "gene_id") {
   stats::setNames(as.numeric(len), names(len))
 }
 
+#' First-rows preview of a GTF as a data.frame
+#'
+#' A small head() of the parsed `GRanges` for display (choosing import columns),
+#' converting only the first `n` rows -- never the whole object.
+#' @param gtf A `GRanges` from [import_gtf()].
+#' @param n Maximum rows to show (default 20).
+#' @return A data.frame with at most `n` rows.
+#' @export
+gtf_preview <- function(gtf, n = 20L) {
+  if (is.null(gtf) || !length(gtf)) return(data.frame())
+  as.data.frame(gtf[seq_len(min(as.integer(n), length(gtf)))], stringsAsFactors = FALSE)
+}
+
 #' One-row-per-feature attribute table from a GTF
 #'
 #' The first row seen for each `group_col` value (the gene/transcript row in a
@@ -179,6 +192,26 @@ annotate_with_gtf <- function(dds, gtf, match_col = "auto", import_cols = NULL,
     length_set      = length_set,
     length_complete = has_feature_length(dds)
   ))
+}
+
+#' Count how many dds features match a GTF
+#'
+#' Non-committing tally for a coverage banner: how many dataset rownames resolve
+#' against the GTF on the chosen match column (Ensembl ids matched
+#' version-insensitively, as in [annotate_with_gtf()]).
+#' @param dds A `DESeqDataSet`.
+#' @param gtf A `GRanges` from [import_gtf()].
+#' @param match_col GTF column matched to rownames; `"auto"` (id then name).
+#' @return list(`matched`, `total`).
+#' @export
+gtf_match_count <- function(dds, gtf, match_col = "auto") {
+  ids <- rownames(dds)
+  match_col <- .resolve_match_col(match_col, ids, gtf)
+  tab <- gtf_attribute_table(gtf, group_col = match_col)
+  is_ens   <- detect_id_type(ids) == "ensembl"
+  dds_keys <- if (is_ens) .strip_version(ids) else as.character(ids)
+  tab_keys <- if (is_ens) .strip_version(rownames(tab)) else rownames(tab)
+  list(matched = sum(!is.na(match(dds_keys, tab_keys))), total = length(ids))
 }
 
 #' Adopt an existing numeric rowData column as feature_length
