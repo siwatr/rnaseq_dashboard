@@ -2,6 +2,27 @@
 # default is only 5 MB, far too small for real DESeqDataSet .rds files.
 .default_max_upload_mb <- 500L
 
+# The app theme: Bootstrap 5 with a light custom palette + a system-font stack
+# (no runtime web-font fetch, so it works offline), plus the compiled custom
+# rules (denser DT tables + dark-mode fixes) in inst/www/custom.scss. The numeric
+# starting values here are meant to be tuned interactively with
+# `bslib::run_with_themer(run_app())`; dark mode is handled by Bootstrap's
+# [data-bs-theme] and the scoped rules in custom.scss.
+.app_theme <- function() {
+  theme <- bslib::bs_theme(
+    version = 5,
+    primary = "#2C7FB8",
+    "border-radius" = "0.5rem",
+    base_font = bslib::font_collection(
+      "system-ui", "-apple-system", "Segoe UI", "Roboto",
+      "Helvetica Neue", "Arial", "sans-serif"
+    )
+  )
+  scss <- system.file("www", "custom.scss", package = "ddsdashboard")
+  if (nzchar(scss)) theme <- bslib::bs_add_rules(theme, readLines(scss))
+  theme
+}
+
 #' Launch the dds dashboard
 #'
 #' @param max_upload_mb Maximum size (in MB) for a single browser upload — covers
@@ -23,13 +44,7 @@ run_app <- function(max_upload_mb = .default_max_upload_mb, ...) {
 app_ui <- function() {
   bslib::page_navbar(
     title = "dds dashboard",
-    theme = bslib::bs_theme(version = 5),
-    # Smaller, denser DT tables so more data is visible at once.
-    header = tags$style(HTML(paste(
-      "table.dataTable td, table.dataTable th { font-size: 0.8rem; padding: 3px 6px; }",
-      ".dataTables_wrapper, .dataTables_wrapper .dataTables_filter input,",
-      ".dataTables_wrapper .dataTables_length select { font-size: 0.8rem; }"
-    ))),
+    theme = .app_theme(),
     bslib::nav_panel("Input",
       bslib::navset_card_tab(
         bslib::nav_panel("Load",         mod_input_ui("input")),
@@ -44,7 +59,10 @@ app_ui <- function() {
     bslib::nav_panel("Heatmap",   mod_heatmap_ui("heatmap")),
     bslib::nav_panel("Export",    mod_export_ui("export")),
     bslib::nav_spacer(),
-    bslib::nav_item(mod_statusbar_ui("statusbar"))
+    bslib::nav_item(mod_statusbar_ui("statusbar")),
+    # Light/dark switch; no `mode` arg => follows the OS prefers-color-scheme and
+    # persists the user's choice per browser.
+    bslib::nav_item(bslib::input_dark_mode(id = "dark_mode"))
   )
 }
 
@@ -61,6 +79,9 @@ app_server <- function(input, output, session) {
   if (is.null(getOption("shiny.maxRequestSize"))) {
     options(shiny.maxRequestSize = .default_max_upload_mb * 1024^2)
   }
+  # Make plots (ggplot2/base/lattice) follow the active bslib theme, including
+  # the dark-mode switch. Takes effect for the Phase-3 QC plots onward.
+  thematic::thematic_shiny(font = "auto")
   state <- new_app_state()
   mod_input_server("input", state)
   mod_metadata_server("metadata", state)

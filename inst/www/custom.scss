@@ -1,0 +1,67 @@
+// App custom rules, compiled into the bslib theme via bs_add_rules() in
+// R/run_app.R. Two jobs: (1) denser DT tables (migrated from the old inline
+// <style> in app_ui), and (2) make DataTables legible in dark mode -- DT ships
+// light-assuming CSS, so its surfaces/controls need to follow the Bootstrap
+// dark tokens. Bootstrap CSS variables (var(--bs-*)) are available at runtime.
+
+// --- (1) Denser tables, both modes ---------------------------------------
+table.dataTable td,
+table.dataTable th {
+  font-size: 0.8rem;
+  padding: 3px 6px;
+}
+.dataTables_wrapper,
+.dataTables_wrapper .dataTables_filter input,
+.dataTables_wrapper .dataTables_length select {
+  font-size: 0.8rem;
+}
+
+// --- (2) Dark-mode DataTables fixes --------------------------------------
+[data-bs-theme="dark"] {
+  // Table body: follow the Bootstrap dark surface + text tokens.
+  table.dataTable {
+    color: var(--bs-body-color);
+    border-color: var(--bs-border-color);
+  }
+  table.dataTable td,
+  table.dataTable th {
+    border-color: var(--bs-border-color);
+  }
+  // Zebra striping / hover, keyed off the secondary surface so it reads on dark.
+  table.dataTable.stripe tbody tr.odd,
+  table.dataTable.display tbody tr.odd {
+    background-color: var(--bs-secondary-bg);
+  }
+  table.dataTable.hover tbody tr:hover,
+  table.dataTable.display tbody tr:hover {
+    background-color: var(--bs-tertiary-bg);
+  }
+
+  // Wrapper chrome: labels, info text, and the search / length controls.
+  .dataTables_wrapper,
+  .dataTables_wrapper .dataTables_info,
+  .dataTables_wrapper .dataTables_filter,
+  .dataTables_wrapper .dataTables_length {
+    color: var(--bs-body-color);
+  }
+  .dataTables_wrapper .dataTables_filter input,
+  .dataTables_wrapper .dataTables_length select {
+    color: var(--bs-body-color);
+    background-color: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+  }
+
+  // Pagination buttons.
+  .dataTables_wrapper .dataTables_paginate .paginate_button {
+    color: var(--bs-body-color) !important;
+  }
+  .dataTables_wrapper .dataTables_paginate .paginate_button.current,
+  .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+    color: var(--bs-body-color) !important;
+    background: var(--bs-secondary-bg);
+    border-color: var(--bs-border-color);
+  }
+  .dataTables_wrapper .dataTables_paginate .paginate_button.disabled {
+    color: var(--bs-secondary-color) !important;
+  }
+}
