@@ -10,7 +10,7 @@ mod_export_ui <- function(id) {
       # TODO: result tables, plot exports
     ),
     bslib::card(
-      bslib::card_header("Export"),
+      bslib::card_header(tags$h3("Export", class = "fs-6 mb-0")),
       "Download the processed object, DE tables, and plots."
     )
   )

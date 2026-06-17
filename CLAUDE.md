@@ -28,18 +28,24 @@ DESCRIPTION / NAMESPACE   # package metadata + exports (regenerate NAMESPACE wit
 environment.yml           # conda/mamba env (source of truth for deps)
 R/
   run_app.R               # run_app(), app_ui(), app_server() — the navbar shell + module wiring
-  mod_<page>.R            # one Shiny module per page (input, qc, process, dimreduc, de, heatmap, export)
-  utils_normalization.R   # cpm(), tpm(), fpkm(), logcounts_from_counts() — pure, exported, tested
+  state.R                 # new_app_state() + the state_*() helper API (the canonical store)
+  mod_<page>.R            # one Shiny module per page (input, metadata, feature, assay, qc, dimreduc, de, heatmap, export)
+  mod_<shared>.R          # reusable sub-modules embedded in pages (mod_meta_editor, mod_gtf_reader, mod_statusbar)
+  <topic>_helpers.R       # pure, exported, tested helpers (annotation_, gtf_, metadata_, assay_, load_)
+  utils_normalization.R   # cpm(), tpm(), fpkm(), logcounts_from_counts() — pure, dependency-free, tested
   utils_lookup.R          # lookup_feature() — feature id <-> name resolution
+  mock_data.R             # make_mock_dds() etc. — fixtures used by tests + the demo
 data-raw/                 # scripts that build mock dds/sce fixtures for tests + demo
 dev_ref/                  # developer reference notes (e.g. normalization-scran-vs-deseq.md)
-tests/testthat/           # unit tests for the utils
+tests/testthat/           # unit tests for helpers + module servers (shiny::testServer)
 inst/extdata/             # bundled reference data (e.g. ERCC ids + concentrations)
 ```
 
-Module contract and the `dds`-in/`dds`-out wiring are documented in the **`shiny-module`** skill. New pages follow that pattern. Domain/statistical conventions live in **`rnaseq-bioc`**; a **`de-analysis`** skill (design/contrast/shrinkage) and an **`annotation`** skill (OrgDb-first + GTF precedence + ERCC) may be added as those phases land. The **`bioc-reviewer`** agent reviews any data-logic change.
+The file conventions: **`mod_<page>.R`** = a navbar page; **`mod_<shared>.R`** = a reusable sub-module embedded inside pages (e.g. the draft metadata editor, the GTF reader); **`<topic>_helpers.R`** = pure, Shiny-free, exported functions that the modules call (so they stay reusable and unit-testable).
 
-**Dependency policy:** only what the code actually calls today sits in `DESCRIPTION` `Imports` (`shiny`, `bslib`, `methods`). Other packages (`DESeq2`, `scater`, `ComplexHeatmap`, `edgeR`, OrgDb, …) are in `Suggests` and `environment.yml`; promote a package to `Imports` when a feature starts calling it. The pure base-R utilities (`utils_normalization.R`) deliberately take no dependencies so they stay reusable and fast to test.
+Module contract and the shared-`state` wiring are documented in the **`shiny-module`** skill (which also covers the reusable sub-module + draft-editor patterns). New pages follow that pattern. Domain/statistical conventions (object shape, assays, normalization, QC, DE schema, `feature_class`/`feature_length`, ERCC) live in **`rnaseq-bioc`**; the **`annotation`** skill covers the OrgDb + GTF row-annotation write conventions (consult it before touching mapping/annotation logic). A **`de-analysis`** skill (design/contrast/shrinkage) may be added when Phase 5 lands. The **`bioc-reviewer`** agent reviews any data-logic change; the **`shiny-feature-builder`** agent implements a page/helper end-to-end.
+
+**Dependency policy:** `DESCRIPTION` `Imports` holds the always-on framework deps the app loads unconditionally — currently `AnnotationDbi`, `bslib`, `DESeq2`, `DT`, `methods`, `readr`, `readxl`, `shiny`, `SummarizedExperiment`, `thematic`. Heavy or optional packages are loaded **on demand via `requireNamespace()`** (with graceful degradation / a `skip_if_not_installed()` in tests) and stay in `Suggests` *even though code calls them* — currently `ComplexHeatmap`, `GenomicRanges`, `IRanges`, `S4Vectors`, `rtracklayer`, `org.*.eg.db`, `ps`, `scater`, `SingleCellExperiment`. They're also pinned in `environment.yml`. Promote `Suggests → Imports` only when a feature loads the package unconditionally. The pure base-R utilities (`utils_normalization.R`) deliberately take no dependencies so they stay reusable and fast to test.
 
 ## Environment & running
 
@@ -69,25 +75,30 @@ Multi-page dashboard. Each page is a **Shiny module** (`mod_<page>_ui()` / `mod_
 
 ### State model (the load-bearing design)
 
-App state lives in a `reactiveValues` with five parts:
+App state is one `reactiveValues` (`new_app_state()` in `R/state.R`) interacted with through the `state_*()` helper API (`state_load/mutate/derive/reset/undo`, `state_dds`, `state_meta`):
 
 - **`original`** — the object exactly as loaded; never mutated; the reset target.
 - **`working`** — the current `dds` after edits/filters/normalization (always a `dds`, even for `sce` input via pseudobulk/coercion).
-- **`derived`** — cached heavy artifacts (size factors, VST, PCA, DESeq fit, DE result tables), keyed by name.
 - **`data_version`** — bumped on **any** edit to samples, features, or design-relevant metadata.
-- **`history`** — an ordered action log (one entry per operation, with parameters).
+- **`history`** — an ordered action log (one entry per operation, with parameters); renders the reproducibility export.
+- **`undo_stack`** — a short snapshot stack (depth 5) of prior `working` objects for `state_undo()`.
+- **`meta`** — app-level flags not stored on the `dds` itself: `data_type` (bulk/single-cell), `feature_type` (drives `<feature_type>_name` labels and the status bar), `sce_per_cell`.
+- **`derived`** — cached heavy artifacts (size factors, VST, PCA, DESeq fit, DE result tables), keyed by name. **A plain environment, not a reactive field** (writing cache entries must not trigger reactivity); staleness is keyed on `data_version` via `state_derive()`.
 
 **Invalidation (conservative v1):** each `derived` artifact records the `data_version` it was computed under and is **stale** when that differs from the current `data_version`. The UI shows a stale badge + re-run button and **never silently reuses stale results**. Dependency order: `raw counts → filter → normalized assays → variable genes → PCA → DESeq fit → DE results → heatmap`. **Reset-to-original** restores `working <- original` + clears `derived`; **undo** keeps a short snapshot stack. A **persistent dataset-status bar** on every page surfaces data type, n samples/features, assays, design-set?, and DE current/stale. The `history` log renders the **reproducibility export** (R script / Quarto report). Modules still follow the `dds`-in/`dds`-out contract (see `shiny-module`), but the canonical store is this state object.
 
-Pages, in order:
+Pages (navbar order). The first navbar entry, **Input**, is itself a sub-tabbed group (`navset_card_tab`) holding Dataset / Sample / Feature / Assay; the rest are top-level pages, plus a persistent status-bar `nav_item`:
 
-1. **Input data** — load `dds`/`sce` **or** counts matrix + sample sheet; show `show(dds)`; edit `colData` via editable `DT`; annotation (OrgDb organism-first, then GTF which overrides); set `feature_class`; detect/confirm feature type; tag exogenous / ERCC spike-in.
+1. **Input** (sub-tabbed group):
+   - **Dataset** — load `dds`/`sce` **or** counts matrix + sample sheet; show `show(dds)`.
+   - **Sample** — a `navset_card_pill` of *Sample Metadata* (edit `colData` via editable `DT`) and *Additional Metadata* (upload + bind a sample sheet). Built on the shared draft editor (`mod_meta_editor`).
+   - **Feature** — a `navset_card_pill` of *Feature Metadata* (edit `rowData`, set `feature_class`/feature unit), *OrgDb Annotation*, and *GTF Annotation*. Annotation (OrgDb organism-first, then GTF which overrides) composes onto the editor draft and commits on Save; detect/confirm feature type; tag exogenous / ERCC spike-in. See the **`annotation`** skill.
+   - **Assay** — add normalized assays (CPM/TPM/FPKM); size factors on **endogenous** via `controlGenes`; store `feature_length`.
 2. **QC & filtering** — one **unified** page with a **data-type badge**; per-sample (bulk) vs per-cell (single-cell) metrics (library size, detected features, % mito, % spike-in); `vsn::meanSdPlot` VST plot; sample–sample correlation heatmap (log-counts). Gentle outlier flags (not aggressive auto-drop) for small-n bulk. Feature filtering: always drop all-zero; `edgeR::filterByExpr()` default + manual `rowSums` threshold. **Avoid `HTSFilter`** (too slow).
-3. **Processing** — add normalized assays (CPM/TPM/FPKM); size factors on **endogenous** via `controlGenes`; store `feature_length`.
-4. **Dimensionality reduction** — **PCA-focused** (t-SNE/UMAP gated by sample count). Top-variable genes (default 500, assay default `logcounts`), excluding non-endogenous. Up to 4 panels (1/2/4); compute the embedding once, vary aesthetics per panel; color/shape by metadata or gene expression (via `lookup_feature()`).
-5. **Differential expression** — guided design builder (+ reference level, full-rank check) and contrast picker; multiple stored contrasts; `DESeq2::DESeq()` + `lfcShrink`. Results carry **both** `log2FoldChange`/`log2FoldChange_shrunk` and matching `sig`/`DEG`/`sig_shrunk`/`DEG_shrunk`; shrinkage toggle = column selection. MA / volcano / direct-comparison plots with axis clamping (triangle markers).
-6. **Expression heatmap** — `ComplexHeatmap` over a gene set (default = DEGs, fallback top-variable). **Default per-gene z-score** (toggle to raw `log10(TPM/CPM + 0.01)`). Row names hidden by default with `anno_mark()` for genes of interest; column names auto-hidden when > 30 samples.
-7. **Export** — `dds` object, DE tables (XLSX), plots, and the reproducibility script/report.
+3. **Dimensionality reduction** — **PCA-focused** (t-SNE/UMAP gated by sample count). Top-variable genes (default 500, assay default `logcounts`), excluding non-endogenous. Up to 4 panels (1/2/4); compute the embedding once, vary aesthetics per panel; color/shape by metadata or gene expression (via `lookup_feature()`).
+4. **Differential expression** — guided design builder (+ reference level, full-rank check) and contrast picker; multiple stored contrasts; `DESeq2::DESeq()` + `lfcShrink`. Results carry **both** `log2FoldChange`/`log2FoldChange_shrunk` and matching `sig`/`DEG`/`sig_shrunk`/`DEG_shrunk`; shrinkage toggle = column selection. MA / volcano / direct-comparison plots with axis clamping (triangle markers).
+5. **Expression heatmap** — `ComplexHeatmap` over a gene set (default = DEGs, fallback top-variable). **Default per-gene z-score** (toggle to raw `log10(TPM/CPM + 0.01)`). Row names hidden by default with `anno_mark()` for genes of interest; column names auto-hidden when > 30 samples.
+6. **Export** — `dds` object, DE tables (XLSX), plots, and the reproducibility script/report.
 
 ## Conventions that must hold
 
@@ -98,12 +109,13 @@ Pages, in order:
   - `log2FoldChange` (standard) and `log2FoldChange_shrunk` (`lfcShrink`).
   - `sig`/`DEG` and `sig_shrunk`/`DEG_shrunk` — `sig` rule: `!is.na(padj) & padj < 0.05 & abs(<chosen LFC>) >= log2(2)`; `padj` is shared. `DEG` factor levels `up`/`down`/`no_change`. Thresholds user-adjustable; the shrinkage toggle selects which column set drives plots.
 - **Feature lookup & adaptive labels:** `lookup_feature()` resolves a query against `rowData`, defaulting to `<feature_type>_name` (e.g. `gene_name`), falling back to `rownames`. The feature unit (gene/transcript/…) is detected and relabeled dynamically; prompt when unknown; let the user correct it.
+- **Heading hierarchy in the UI:** `h1` = app title (navbar); `h2` = top-level `nav_panel` labels ("Input", "QC", …); `h3` = Input sub-tab labels ("Dataset", "Sample", "Feature", "Assay") and `card_header` titles on non-Input pages; `h4` = `card_header` titles inside Input sub-tabs and `navset_card_pill` titles. All are visually scaled with `fs-*` to fit their context. Tab/pill navigation labels (plain strings in `nav_panel`) are not headings.
 - **Deferred rendering:** plots can be slow. Gate re-rendering behind an explicit "apply / render" button (`bindEvent()` / `eventReactive()`), not live reactivity on every input.
 - **Caching is the `derived` store** (see State model): VST/PCA/DESeq fit are version-stamped and invalidated when `data_version` changes. `bindCache()` or keyed entries both work.
 
 ## Workflow
 
-- Build the app in **phases** (bulk-first; see roadmap in [rough_design.md](rough_design.md)): P1 = layout + status bar + import (rds + tabular) + export shell *(done)*; P2 = metadata edit, annotation (OrgDb + GTF), normalization, GTF memory minimization + session memory monitor, feature-info annotation UI redesign; P3 = QC + sample/feature filtering; P4 = PCA dim-reduction; P5 = DESeq2 + DE plots + heatmap; P6 (later) = single-cell + pseudobulk.
+- Build the app in **phases** (bulk-first; see roadmap in [rough_design.md](rough_design.md)): P1 = layout + status bar + import (rds + tabular) + export shell *(done)*; P2 = metadata edit, annotation (OrgDb + GTF), normalization, GTF memory minimization + session memory monitor, feature-info annotation UI redesign *(done)*; theming pass (custom palette + dark mode + `thematic`) *(done)*; **P3 = QC + sample/feature filtering (+ ERCC) ← next**; P4 = PCA dim-reduction; P5 = DESeq2 + DE plots + heatmap; P6 (later) = single-cell + pseudobulk.
 - **Build mock-`dds` fixtures early** (`data-raw/`, used by `tests/`) so every phase has data to test against.
 - **Commit after each meaningful, self-contained change** with a descriptive message.
 - Heavy Bioconductor objects: don't print full matrices to logs; prefer `show()` / dimensions / `head()`.

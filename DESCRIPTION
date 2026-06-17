@@ -23,7 +23,8 @@ Imports:
     readr,
     readxl,
     shiny,
-    SummarizedExperiment
+    SummarizedExperiment,
+    thematic
 Suggests:
     ComplexHeatmap,
     GenomicRanges,

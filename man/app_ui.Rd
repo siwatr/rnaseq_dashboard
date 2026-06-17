@@ -4,7 +4,11 @@
 \alias{app_ui}
 \title{Dashboard UI}
 \usage{
-app_ui()
+app_ui(themer_mode = FALSE)
+}
+\arguments{
+\item{themer_mode}{If \code{TRUE}, append a "Themer" component-gallery tab for
+theme tuning (see \code{\link[=run_app]{run_app()}}). Default \code{FALSE}.}
 }
 \value{
 A bslib \code{page_navbar} UI definition.

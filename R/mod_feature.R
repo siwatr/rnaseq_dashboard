@@ -8,7 +8,7 @@
 # an existing numeric column; either unlocks TPM/FPKM on the Assay tab.
 
 .feature_editor_opts <- list(
-  slot = "rowData", title = "Feature information", row_noun = "feature",
+  slot = "rowData", title = tags$h4("Feature information", class = "fs-6"), row_noun = "feature",
   allow_merge = FALSE, allow_row_rename = FALSE, bulk_class = TRUE
 )
 
@@ -47,7 +47,7 @@ mod_feature_ui <- function(id) {
   # One navset: the metadata table and each annotation source are separate tabs,
   # so only one table + its sidebar is shown at a time.
   bslib::navset_card_pill(
-    title = "Feature info",
+    title = tags$h4("Feature info", class = "fs-6 mb-0 pe-3"),
     bslib::nav_panel(
       "Feature Metadata",
       meta_editor_ui(ns("editor"), .feature_editor_opts,

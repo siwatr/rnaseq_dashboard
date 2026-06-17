@@ -5,14 +5,14 @@
 # the Sample Metadata tab, mirroring how Feature info composes annotation.
 
 .sample_editor_opts <- list(
-  slot = "colData", title = "Sample metadata", row_noun = "sample",
+  slot = "colData", title = tags$h4("Sample metadata", class = "fs-6"), row_noun = "sample",
   allow_row_rename = TRUE, bulk_class = FALSE
 )
 
 mod_metadata_ui <- function(id) {
   ns <- NS(id)
   bslib::navset_card_pill(
-    title = "Sample info",
+    title = tags$h4("Sample info", class = "fs-6 mb-0 pe-3"),
     bslib::nav_panel("Sample Metadata", meta_editor_ui(ns("editor"), .sample_editor_opts)),
     bslib::nav_panel(
       "Additional Metadata",

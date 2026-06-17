@@ -12,7 +12,7 @@ mod_qc_ui <- function(id) {
       # TODO: metric selector, group-by column, filter thresholds
     ),
     bslib::card(
-      bslib::card_header("QC"),
+      bslib::card_header(tags$h3("QC", class = "fs-6 mb-0")),
       plotOutput(ns("qc_plot"))
     )
   )

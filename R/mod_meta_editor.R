@@ -70,7 +70,7 @@ meta_editor_ui <- function(id, opts, extra_sidebar = NULL, extra_main = NULL) {
   }
 
   sidebar <- bslib::sidebar(
-    title = paste("Edit", opts$row_noun, "info"), width = 360,
+    title = tags$h4(paste("Edit", opts$row_noun, "info"), class = "fs-6 mb-0"), width = 250,
     extra_sidebar,
     uiOutput(ns("protected_note")),
     do.call(bslib::accordion, c(list(open = FALSE), panels))
@@ -88,7 +88,7 @@ meta_editor_ui <- function(id, opts, extra_sidebar = NULL, extra_main = NULL) {
   # No inner card: the host wraps this editor in a navset card tab.
   header <- tagList(
     tags$strong(opts$title),
-    tags$span(class = "text-muted small", " - double-click a cell to edit; filters on top")
+    tags$span(class = "text-muted small", "Double-click a cell to edit; Filters on top")
   )
   do.call(bslib::layout_sidebar,
           c(Filter(Negate(is.null),

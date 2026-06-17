@@ -17,7 +17,7 @@ mod_de_ui <- function(id) {
       actionButton(ns("run"), "Run / render", class = "btn-primary")
     ),
     bslib::card(
-      bslib::card_header("DE plot"),
+      bslib::card_header(tags$h3("DE plot", class = "fs-6 mb-0")),
       plotOutput(ns("plot"))
     )
   )

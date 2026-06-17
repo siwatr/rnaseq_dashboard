@@ -13,7 +13,7 @@ mod_dimreduc_ui <- function(id) {
       actionButton(ns("render"), "Render", class = "btn-primary")
     ),
     bslib::card(
-      bslib::card_header("Reduced dimensions"),
+      bslib::card_header(tags$h3("Reduced dimensions", class = "fs-6 mb-0")),
       plotOutput(ns("plot"))
     )
   )
