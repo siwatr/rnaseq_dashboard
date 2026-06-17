@@ -11,6 +11,7 @@ dependencies:
   # App runtime (Imports)
   - r-shiny
   - r-bslib
+  - r-sass               # font_google() / SCSS compilation behind the bslib theme
   # UI / UX components
   - r-dt                 # editable metadata tables, results browsing
   - r-shinywidgets       # richer inputs

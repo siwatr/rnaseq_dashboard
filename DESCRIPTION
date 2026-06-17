@@ -19,9 +19,11 @@ Imports:
     bslib,
     DESeq2,
     DT,
+    ggplot2,
     methods,
     readr,
     readxl,
+    sass,
     shiny,
     SummarizedExperiment,
     thematic
