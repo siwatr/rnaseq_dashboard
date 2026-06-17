@@ -4,6 +4,10 @@
 // light-assuming CSS, so its surfaces/controls need to follow the Bootstrap
 // dark tokens. Bootstrap CSS variables (var(--bs-*)) are available at runtime.
 
+// h1, .h1 {
+//   font-family: "Caudex", "Unbounded", "Roboto", "system-ui"; // h1 override
+// }
+
 // --- (1) Denser tables, both modes ---------------------------------------
 table.dataTable td,
 table.dataTable th {

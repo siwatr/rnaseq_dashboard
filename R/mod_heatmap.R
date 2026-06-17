@@ -13,7 +13,7 @@ mod_heatmap_ui <- function(id) {
       # TODO: palette / range / annotation controls
     ),
     bslib::card(
-      bslib::card_header("Expression heatmap"),
+      bslib::card_header(tags$h3("Expression heatmap", class = "fs-6 mb-0")),
       plotOutput(ns("heatmap"))
     )
   )

@@ -11,12 +11,34 @@
 .app_theme <- function() {
   theme <- bslib::bs_theme(
     version = 5,
-    primary = "#2C7FB8",
-    "border-radius" = "0.5rem",
+    # primary = "#2C7FB8",
+    bg = "#fffefb", fg = "#111111", 
+    primary = "#14D1AF", secondary = "#41ebcc", info = "#C4A381",
+    success = "#14D1AF", warning = "#eaaa3c", danger = "#e34125",
+    dark = "#3a353f", light = "#FAFAF8",
+    "border-radius" = "0.5rem", 
+    heading_font = bslib::font_collection(
+      sass::font_google("Unbounded"), 
+      sass::font_google("Zain"), 
+      # sass::font_google("Julius Sans One"), 
+      # sass::font_google("Major Mono Display"), 
+      sass::font_google("Roboto"), 
+      sass::font_google("Noto Sans"), 
+      "system-ui", "-apple-system"
+    ),
     base_font = bslib::font_collection(
-      "system-ui", "-apple-system", "Segoe UI", "Roboto",
-      "Helvetica Neue", "Arial", "sans-serif"
-    )
+      sass::font_google("SUSE"), 
+      # sass::font_google("Vend Sans"),
+      sass::font_google("Nunito"), 
+      sass::font_google("Noto Sans"), 
+      sass::font_google("Roboto"),
+      "Helvetica Neue", "Arial",
+      "system-ui", "-apple-system", "Segoe UI", "sans-serif"
+    ),
+    code_font = bslib::font_collection(
+      sass::font_google("SUSE Mono"), 
+      "Menlo", "Monaco", "Consolas", "monospace"),
+    preset = "bootstrap"
   )
   scss <- system.file("www", "custom.scss", package = "ddsdashboard")
   if (nzchar(scss)) theme <- bslib::bs_add_rules(theme, readLines(scss))
@@ -34,7 +56,7 @@
   each <- function(fn) lapply(roles, fn)
   cap <- function(x) paste0(toupper(substring(x, 1, 1)), substring(x, 2))
   bslib::nav_panel(
-    "Themer",
+    tags$h2("Themer", class = "fs-6 mb-0"),
     bslib::layout_columns(
       col_widths = c(6, 6, 6, 6),
       bslib::card(
@@ -96,21 +118,21 @@ app_ui <- function(themer_mode = FALSE) {
   bslib::page_navbar(
     # Real heading element so it reads as the app title (distinct from the tab
     # labels) and picks up the theme's heading font; sized down to fit the navbar.
-    title = tags$h1("dds dashboard", class = "fs-4 fw-bold mb-0"),
+    title = tags$h1("DDS Dashboard", class = "fs-3 fw-bold text-warning mb-0 pb-0 pe-3"),
     theme = .app_theme(),
-    bslib::nav_panel("Input",
+    bslib::nav_panel(tags$h2("Input", class = "fs-6 mb-0"),
       bslib::navset_card_tab(
-        bslib::nav_panel("Load",         mod_input_ui("input")),
-        bslib::nav_panel("Sample info",  mod_metadata_ui("metadata")),
-        bslib::nav_panel("Feature info", mod_feature_ui("feature")),
-        bslib::nav_panel("Assay",        mod_assay_ui("assay"))
+        bslib::nav_panel(tags$h3("Dataset", class = "fs-6"),         mod_input_ui("input")),
+        bslib::nav_panel(tags$h3("Sample", class = "fs-6"),  mod_metadata_ui("metadata")),
+        bslib::nav_panel(tags$h3("Feature", class = "fs-6"), mod_feature_ui("feature")),
+        bslib::nav_panel(tags$h3("Assay", class = "fs-6"),        mod_assay_ui("assay"))
       )
     ),
-    bslib::nav_panel("QC",        mod_qc_ui("qc")),
-    bslib::nav_panel("DimReduc",  mod_dimreduc_ui("dimreduc")),
-    bslib::nav_panel("DE",        mod_de_ui("de")),
-    bslib::nav_panel("Heatmap",   mod_heatmap_ui("heatmap")),
-    bslib::nav_panel("Export",    mod_export_ui("export")),
+    bslib::nav_panel(tags$h2("QC", class = "fs-6 mb-0"),        mod_qc_ui("qc")),
+    bslib::nav_panel(tags$h2("DimReduc", class = "fs-6 mb-0"),  mod_dimreduc_ui("dimreduc")),
+    bslib::nav_panel(tags$h2("DE", class = "fs-6 mb-0"),        mod_de_ui("de")),
+    bslib::nav_panel(tags$h2("Heatmap", class = "fs-6 mb-0"),   mod_heatmap_ui("heatmap")),
+    bslib::nav_panel(tags$h2("Export", class = "fs-6 mb-0"),    mod_export_ui("export")),
     if (isTRUE(themer_mode)) .themer_ui(),
     bslib::nav_spacer(),
     bslib::nav_item(mod_statusbar_ui("statusbar")),

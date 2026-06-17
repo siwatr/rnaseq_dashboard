@@ -23,7 +23,7 @@ mod_input_ui <- function(id) {
   ns <- NS(id)
   bslib::layout_sidebar(
     sidebar = bslib::sidebar(
-      title = "Load data",
+      title = tags$h4("Load data", class="fs-6 mb-0"),
       radioButtons(ns("source"), "Source", inline = FALSE,
         choices = c("Demo dataset" = "demo", "R object (.rds)" = "rds",
                     "Counts + sample sheet" = "tabular")),
@@ -42,7 +42,7 @@ mod_input_ui <- function(id) {
       helpText("Set the feature unit (gene/transcript/...) on the Feature info tab.")
     ),
     bslib::card(
-      bslib::card_header("Dataset summary"),
+      bslib::card_header(tags$h4("Dataset summary", class = "fs-6")),
       verbatimTextOutput(ns("summary"))
     )
   )

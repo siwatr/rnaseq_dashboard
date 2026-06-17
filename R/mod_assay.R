@@ -7,12 +7,12 @@ mod_assay_ui <- function(id) {
   ns <- NS(id)
   bslib::layout_sidebar(
     sidebar = bslib::sidebar(
-      title = "Add assays", width = 320,
+      title = tags$h4("Add assays", class = "fs-6 mb-0"), width = 250,
       uiOutput(ns("controls")),
       actionButton(ns("apply"), "Add assays / update size factors", class = "btn-primary")
     ),
     bslib::card(
-      bslib::card_header("Assay information"),
+      bslib::card_header(tags$h4("Assay information", class = "fs-6 mb-0")),
       verbatimTextOutput(ns("info"))
     )
   )
