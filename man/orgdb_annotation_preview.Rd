@@ -2,13 +2,14 @@
 % Please edit documentation in R/annotation_helpers.R
 \name{orgdb_annotation_preview}
 \alias{orgdb_annotation_preview}
-\title{Preview the OrgDb annotation for the first features}
+\title{Preview what OrgDb annotation makes available to join}
 \usage{
 orgdb_annotation_preview(
   dds,
   organism = c("mouse", "human"),
   id_type = NULL,
   feature_type = "gene",
+  columns = c("SYMBOL", "GENENAME"),
   n = 20L
 )
 }
@@ -21,14 +22,17 @@ orgdb_annotation_preview(
 
 \item{feature_type}{Feature unit; sets the name column \verb{<feature_type>_name}.}
 
+\item{columns}{OrgDb keytype columns to import (default \code{c("SYMBOL", "GENENAME")}, reproducing the historical name + description behaviour).}
+
 \item{n}{Number of features to preview (default 20).}
 }
 \value{
-A data.frame with up to \code{n} rows.
+A data.frame with up to \code{n} rows: \code{id} plus one column per imported value.
 }
 \description{
-A small, non-committing table of what \code{\link[=annotate_with_orgdb]{annotate_with_orgdb()}} would add, for
-display before applying. Maps the first \code{n} feature ids and returns
-\code{id}, \verb{<feature_type>_name} (SYMBOL), \code{description} (GENENAME), and \code{in_orgdb}
-(whether a symbol was found).
+A small, non-committing table of the values \code{\link[=annotate_with_orgdb]{annotate_with_orgdb()}} would
+import for the first \code{n} features: the join key (\code{id}, the feature ids matched
+against the OrgDb) as the first column, followed by one column per requested
+OrgDb column (named by its \code{rowData} target). OrgDb is keyed by id, so the
+"available" rows are exactly your dataset's first \code{n} ids resolved against it.
 }

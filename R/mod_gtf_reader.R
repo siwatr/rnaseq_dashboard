@@ -14,15 +14,18 @@
 mod_gtf_reader_ui <- function(id, preview = TRUE) {
   ns <- NS(id)
   tagList(
+    tags$strong("GTF upload"),
     fileInput(ns("file"), "Upload GTF/GFF (gzip OK)",
               accept = c(".gtf", ".gff", ".gff3", ".gtf.gz", ".gff.gz", ".gff3.gz",
                          ".gz", "application/gzip", "application/x-gzip", "text/plain")),
     helpText("Large uncompressed GTFs may exceed the upload limit - upload gzipped, ",
              "or read a local file already on this machine:"),
     textInput(ns("path"), NULL, placeholder = "/path/to/annotation.gtf(.gz)"),
-    actionButton(ns("read"), "Read GTF"),
-    uiOutput(ns("select")),
+    div(class = "d-flex gap-2 align-items-start",
+        actionButton(ns("read"), "Read GTF"),
+        uiOutput(ns("remove_ui"), inline = TRUE)),
     uiOutput(ns("status")),
+    uiOutput(ns("select")),
     if (isTRUE(preview)) uiOutput(ns("preview_ui"))
   )
 }
@@ -64,24 +67,30 @@ mod_gtf_reader_server <- function(id) {
                                length(g), paste(gtf_feature_types(g), collapse = ", ")), type = "message")
     })
 
+    # Filtering stays available for the life of the loaded GTF (driven by the
+    # current object, raw or already-trimmed), so the user can keep narrowing it.
+    # Re-applying can only trim further; to recover a dropped column they Remove
+    # the GTF and re-read it.
     output$select <- renderUI({
-      g <- raw(); req(g)
+      g <- raw() %||% confirmed(); req(g)
       types <- gtf_feature_types(g)
       cols  <- available_gtf_columns(g)
+      def_types <- intersect(c("gene", "transcript", "exon"), types)
+      sel_types <- if (length(def_types)) def_types else types
       suggested <- intersect(c("gene_id", "gene_name", "transcript_id", "gene_biotype", "seqnames"), cols)
       tagList(
+        tags$hr(), tags$strong("GTF filtering"),
         selectizeInput(ns("keep_types"), "Feature types to keep", choices = types,
-                       selected = types, multiple = TRUE),
+                       selected = sel_types, multiple = TRUE),
         selectizeInput(ns("keep_cols"), "Columns to keep", choices = cols,
                        selected = if (length(suggested)) suggested else cols, multiple = TRUE),
         div(class = "form-text", "Leave a field empty to keep all. type and id/name keys are always kept."),
-        actionButton(ns("confirm"), "Confirm selection", class = "btn-primary"),
-        actionButton(ns("reset"), "Reset", class = "btn-outline-secondary")
+        actionButton(ns("confirm"), "Apply filter", class = "btn-primary")
       )
     })
 
     observeEvent(input$confirm, {
-      g <- raw(); req(g)
+      g <- raw() %||% confirmed(); req(g)            # filter whichever is current
       types <- if (length(input$keep_types)) input$keep_types else gtf_feature_types(g)
       g2 <- g[as.character(g$type) %in% types]
       md_cols <- colnames(S4Vectors::mcols(g2))
@@ -94,30 +103,30 @@ mod_gtf_reader_server <- function(id) {
       S4Vectors::mcols(g2) <- S4Vectors::mcols(g2)[, keep, drop = FALSE]
       confirmed(g2)
       raw(NULL); gc()                                  # release the full parse
-      showNotification(sprintf("Confirmed: %d records, %d column(s) kept.",
+      showNotification(sprintf("Filtered: %d records, %d column(s) kept.",
                                length(g2), length(keep)), type = "message")
     })
 
-    observeEvent(input$reset, { raw(NULL); confirmed(NULL); showNotification("GTF selection reset.") })
-
-    # Optional: drop the kept GTF once its annotation has been applied to rowData,
-    # so the session no longer holds it (re-read to use it again).
+    # Drop the loaded GTF entirely, freeing the session (re-read to use it again).
     observeEvent(input$remove, {
       confirmed(NULL); raw(NULL); gc()
       showNotification("GTF removed from session.", type = "message")
     })
 
+    # Remove button lives with the upload group, available whenever a GTF is loaded.
+    output$remove_ui <- renderUI({
+      req(raw() %||% confirmed())
+      bslib::tooltip(
+        actionButton(ns("remove"), "Remove GTF", class = "btn-outline-danger"),
+        "Free the session; re-read the GTF to use it again.")
+    })
+
     output$status <- renderUI({
-      if (!is.null(confirmed())) {
-        tagList(
-          div(class = "form-text text-success",
-              sprintf("GTF ready: %d records kept.", length(confirmed()))),
-          actionButton(ns("remove"), "Remove GTF from session", class = "btn-outline-danger btn-sm"),
-          helpText("Frees memory once the annotation is applied; re-read the GTF to use it again.")
-        )
-      } else if (!is.null(raw())) {
-        div(class = "form-text", "Select types/columns, then Confirm.")
-      }
+      g <- confirmed() %||% raw(); if (is.null(g)) return(NULL)
+      ready <- !is.null(confirmed())
+      div(class = if (ready) "form-text text-success" else "form-text",
+          sprintf("GTF loaded: %d records, %d column(s).",
+                  length(g), length(available_gtf_columns(g))))
     })
 
     # ~20-row preview of the loaded GTF (raw while selecting, else the trimmed
@@ -129,8 +138,10 @@ mod_gtf_reader_server <- function(id) {
     })
     output$preview <- DT::renderDT({
       g <- raw() %||% confirmed(); req(g)
-      DT::datatable(gtf_preview(g), rownames = FALSE,
-                    options = list(dom = "tp", pageLength = 5, scrollX = TRUE))
+      DT::datatable(gtf_preview(g, n = 100L), rownames = FALSE,
+                    options = list(dom = "ltp", pageLength = 10, scrollX = TRUE,
+                                   lengthMenu = list(c(10, 25, 50, 100),
+                                                     c("10", "25", "50", "100"))))
     })
 
     confirmed

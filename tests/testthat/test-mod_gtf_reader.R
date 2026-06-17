@@ -1,6 +1,6 @@
 gtf_demo <- function() system.file("extdata", "demo_annotation.gtf", package = "ddsdashboard")
 
-test_that("mod_gtf_reader reads, trims columns/types on Confirm, frees on Confirm/Reset", {
+test_that("mod_gtf_reader reads, trims columns/types on Apply filter, frees the parse", {
   skip_if_not_installed("rtracklayer")
   skip_if_not_installed("GenomicRanges")
   shiny::testServer(mod_gtf_reader_server, {
@@ -18,8 +18,23 @@ test_that("mod_gtf_reader reads, trims columns/types on Confirm, frees on Confir
     expect_true(all(c("type", "gene_id", "gene_name", "transcript_id") %in% md))  # protected kept
     expect_false("gene_biotype" %in% md)                   # not selected, not protected -> dropped
 
-    session$setInputs(reset = 1)
+    session$setInputs(remove = 1)
     expect_null(confirmed())
+  })
+})
+
+test_that("mod_gtf_reader filtering persists: a second Apply narrows the trimmed object", {
+  skip_if_not_installed("rtracklayer")
+  skip_if_not_installed("GenomicRanges")
+  shiny::testServer(mod_gtf_reader_server, {
+    session$setInputs(path = gtf_demo(), read = 1)
+    # First apply keeps everything; the parse is freed but filtering stays live.
+    session$setInputs(keep_types = character(0), keep_cols = character(0), confirm = 1)
+    expect_setequal(as.character(unique(confirmed()$type)), c("exon", "gene", "transcript"))
+    expect_null(raw())
+    # A second apply works on the already-trimmed object and narrows it further.
+    session$setInputs(keep_types = "gene", confirm = 2)
+    expect_setequal(as.character(unique(confirmed()$type)), "gene")
   })
 })
 

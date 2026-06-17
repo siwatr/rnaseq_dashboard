@@ -5,6 +5,22 @@
 
 .orgdb_pkg <- c(mouse = "org.Mm.eg.db", human = "org.Hs.eg.db")
 
+# OrgDb keytype columns offered for import, and the rowData column each becomes.
+# SYMBOL/GENENAME keep their established homes; the rest fall back to a lowercase
+# name. Used by both the annotate and preview paths so they stay in lockstep.
+.orgdb_targets <- function(feature_type = "gene") {
+  c(SYMBOL   = paste0(feature_type, "_name"),
+    GENENAME = "description",
+    ENSEMBL  = "ensembl_id",
+    ENTREZID = "entrez_id",
+    GENETYPE = "gene_biotype")
+}
+
+.orgdb_target <- function(col, feature_type = "gene") {
+  m <- .orgdb_targets(feature_type)
+  if (col %in% names(m)) unname(m[[col]]) else tolower(col)
+}
+
 #' Guess the feature id type
 #'
 #' @param ids Character vector of feature ids (rownames).
@@ -27,37 +43,54 @@ detect_id_type <- function(ids) {
   out
 }
 
+# Resolve an OrgDb, returning the package object; errors if the org pkg is absent.
+.orgdb_org <- function(organism, who) {
+  pkg <- .orgdb_pkg[[organism]]
+  for (p in c("AnnotationDbi", pkg)) {
+    if (!requireNamespace(p, quietly = TRUE)) {
+      stop(who, "() needs the '", p, "' package.", call. = FALSE)
+    }
+  }
+  getExportedValue(pkg, pkg)
+}
+
+# mapIds keytype for an id-type string.
+.orgdb_keytype <- function(id_type) {
+  switch(id_type, ensembl = "ENSEMBL", entrez = "ENTREZID", symbol = "SYMBOL",
+         stop("Unknown id_type: ", id_type, call. = FALSE))
+}
+
 #' Annotate features from a Bioconductor OrgDb
 #'
-#' Writes `rowData`: `<feature_type>_name` (SYMBOL) and `description` (GENENAME).
-#' Only fills where a mapping is found (keeps existing values otherwise);
-#' `feature_class` is left untouched. Chromosome is intentionally not taken from
-#' OrgDb (its `CHR` accessor is deprecated) — it comes from the GTF instead.
+#' Maps each requested OrgDb column onto `rowData`, filling where a mapping is
+#' found and keeping existing values otherwise; `feature_class` is left
+#' untouched. Each OrgDb column lands in a fixed `rowData` column: `SYMBOL` ->
+#' `<feature_type>_name`, `GENENAME` -> `description`, `ENSEMBL`/`ENTREZID` ->
+#' `ensembl_id`/`entrez_id`, `GENETYPE` -> `gene_biotype`. Columns not present in
+#' the OrgDb are skipped. Chromosome is intentionally not taken from OrgDb (its
+#' `CHR` accessor is deprecated) — it comes from the GTF instead.
 #'
 #' @param dds A `DESeqDataSet`.
 #' @param organism `"mouse"` (org.Mm.eg.db) or `"human"` (org.Hs.eg.db).
 #' @param id_type `"ensembl"`/`"entrez"`/`"symbol"`; auto-detected when `NULL`.
 #' @param feature_type Feature unit; sets the name column `<feature_type>_name`.
+#' @param columns OrgDb keytype columns to import (default `c("SYMBOL",
+#'   "GENENAME")`, reproducing the historical name + description behaviour).
 #' @param matched_col Optional name of a logical `rowData` column to write,
-#'   flagging which features were mapped in the OrgDb (`NULL` = none).
+#'   flagging which features were mapped in the OrgDb (`NULL` = none). The flag
+#'   tracks `SYMBOL` when imported, else the first requested column.
 #' @return The annotated `DESeqDataSet`.
 #' @export
 annotate_with_orgdb <- function(dds, organism = c("mouse", "human"),
                                 id_type = NULL, feature_type = "gene",
+                                columns = c("SYMBOL", "GENENAME"),
                                 matched_col = NULL) {
   organism <- match.arg(organism)
-  pkg <- .orgdb_pkg[[organism]]
-  for (p in c("AnnotationDbi", pkg)) {
-    if (!requireNamespace(p, quietly = TRUE)) {
-      stop("annotate_with_orgdb() needs the '", p, "' package.", call. = FALSE)
-    }
-  }
-  org <- getExportedValue(pkg, pkg)
+  org <- .orgdb_org(organism, "annotate_with_orgdb")
+  columns <- intersect(columns, AnnotationDbi::columns(org))
   ids <- rownames(dds)
   id_type <- id_type %||% detect_id_type(ids)
-  keytype <- switch(id_type,
-                    ensembl = "ENSEMBL", entrez = "ENTREZID", symbol = "SYMBOL",
-                    stop("Unknown id_type: ", id_type, call. = FALSE))
+  keytype <- .orgdb_keytype(id_type)
   keys <- if (keytype == "ENSEMBL") sub("\\..*$", "", ids) else ids  # drop version suffix
   pull <- function(col) {
     suppressMessages(tryCatch(
@@ -66,49 +99,45 @@ annotate_with_orgdb <- function(dds, organism = c("mouse", "human"),
       error = function(e) stats::setNames(rep(NA_character_, length(keys)), keys)
     ))
   }
-  symbol <- unname(pull("SYMBOL"))
   rd <- SummarizedExperiment::rowData(dds)
-  name_col <- paste0(feature_type, "_name")
-  rd[[name_col]]      <- .fill(rd[[name_col]],      symbol)
-  rd[["description"]] <- .fill(rd[["description"]], unname(pull("GENENAME")))
-  if (!is.null(matched_col)) rd[[matched_col]] <- !is.na(symbol)  # mapped in OrgDb?
+  primary <- if ("SYMBOL" %in% columns) "SYMBOL" else if (length(columns)) columns[[1]] else NULL
+  matched <- rep(FALSE, length(ids))
+  for (col in columns) {
+    vals <- unname(pull(col))
+    rd[[.orgdb_target(col, feature_type)]] <- .fill(rd[[.orgdb_target(col, feature_type)]], vals)
+    if (identical(col, primary)) matched <- !is.na(vals)
+  }
+  if (!is.null(matched_col)) rd[[matched_col]] <- matched  # mapped in OrgDb?
   SummarizedExperiment::rowData(dds) <- rd
   dds
 }
 
-#' Preview the OrgDb annotation for the first features
+#' Preview what OrgDb annotation makes available to join
 #'
-#' A small, non-committing table of what [annotate_with_orgdb()] would add, for
-#' display before applying. Maps the first `n` feature ids and returns
-#' `id`, `<feature_type>_name` (SYMBOL), `description` (GENENAME), and `in_orgdb`
-#' (whether a symbol was found).
+#' A small, non-committing table of the values [annotate_with_orgdb()] would
+#' import for the first `n` features: the join key (`id`, the feature ids matched
+#' against the OrgDb) as the first column, followed by one column per requested
+#' OrgDb column (named by its `rowData` target). OrgDb is keyed by id, so the
+#' "available" rows are exactly your dataset's first `n` ids resolved against it.
 #' @inheritParams annotate_with_orgdb
 #' @param n Number of features to preview (default 20).
-#' @return A data.frame with up to `n` rows.
+#' @return A data.frame with up to `n` rows: `id` plus one column per imported value.
 #' @export
 orgdb_annotation_preview <- function(dds, organism = c("mouse", "human"),
-                                     id_type = NULL, feature_type = "gene", n = 20L) {
+                                     id_type = NULL, feature_type = "gene",
+                                     columns = c("SYMBOL", "GENENAME"), n = 20L) {
   organism <- match.arg(organism)
-  pkg <- .orgdb_pkg[[organism]]
-  for (p in c("AnnotationDbi", pkg)) {
-    if (!requireNamespace(p, quietly = TRUE)) {
-      stop("orgdb_annotation_preview() needs the '", p, "' package.", call. = FALSE)
-    }
-  }
-  org <- getExportedValue(pkg, pkg)
+  org <- .orgdb_org(organism, "orgdb_annotation_preview")
+  columns <- intersect(columns, AnnotationDbi::columns(org))
   ids <- utils::head(rownames(dds), as.integer(n))
   id_type <- id_type %||% detect_id_type(ids)
-  keytype <- switch(id_type, ensembl = "ENSEMBL", entrez = "ENTREZID", symbol = "SYMBOL",
-                    stop("Unknown id_type: ", id_type, call. = FALSE))
+  keytype <- .orgdb_keytype(id_type)
   keys <- if (keytype == "ENSEMBL") sub("\\..*$", "", ids) else ids
   pull <- function(col) suppressMessages(tryCatch(
     AnnotationDbi::mapIds(org, keys = keys, column = col, keytype = keytype, multiVals = "first"),
     error = function(e) stats::setNames(rep(NA_character_, length(keys)), keys)))
-  sym <- unname(pull("SYMBOL"))
-  out <- data.frame(id = ids, stringsAsFactors = FALSE)
-  out[[paste0(feature_type, "_name")]] <- sym
-  out[["description"]] <- unname(pull("GENENAME"))
-  out[["in_orgdb"]]    <- !is.na(sym)
+  out <- data.frame(id = ids, stringsAsFactors = FALSE, check.names = FALSE)
+  for (col in columns) out[[.orgdb_target(col, feature_type)]] <- unname(pull(col))
   out
 }
 

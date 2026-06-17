@@ -9,6 +9,7 @@ annotate_with_orgdb(
   organism = c("mouse", "human"),
   id_type = NULL,
   feature_type = "gene",
+  columns = c("SYMBOL", "GENENAME"),
   matched_col = NULL
 )
 }
@@ -21,15 +22,21 @@ annotate_with_orgdb(
 
 \item{feature_type}{Feature unit; sets the name column \verb{<feature_type>_name}.}
 
+\item{columns}{OrgDb keytype columns to import (default \code{c("SYMBOL", "GENENAME")}, reproducing the historical name + description behaviour).}
+
 \item{matched_col}{Optional name of a logical \code{rowData} column to write,
-flagging which features were mapped in the OrgDb (\code{NULL} = none).}
+flagging which features were mapped in the OrgDb (\code{NULL} = none). The flag
+tracks \code{SYMBOL} when imported, else the first requested column.}
 }
 \value{
 The annotated \code{DESeqDataSet}.
 }
 \description{
-Writes \code{rowData}: \verb{<feature_type>_name} (SYMBOL) and \code{description} (GENENAME).
-Only fills where a mapping is found (keeps existing values otherwise);
-\code{feature_class} is left untouched. Chromosome is intentionally not taken from
-OrgDb (its \code{CHR} accessor is deprecated) — it comes from the GTF instead.
+Maps each requested OrgDb column onto \code{rowData}, filling where a mapping is
+found and keeping existing values otherwise; \code{feature_class} is left
+untouched. Each OrgDb column lands in a fixed \code{rowData} column: \code{SYMBOL} ->
+\verb{<feature_type>_name}, \code{GENENAME} -> \code{description}, \code{ENSEMBL}/\code{ENTREZID} ->
+\code{ensembl_id}/\code{entrez_id}, \code{GENETYPE} -> \code{gene_biotype}. Columns not present in
+the OrgDb are skipped. Chromosome is intentionally not taken from OrgDb (its
+\code{CHR} accessor is deprecated) — it comes from the GTF instead.
 }

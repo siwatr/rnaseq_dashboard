@@ -12,6 +12,16 @@
   allow_merge = FALSE, allow_row_rename = FALSE, bulk_class = TRUE
 )
 
+# OrgDb columns offered in the "Information to add" selector (values are OrgDb
+# keytypes; each maps to a fixed rowData column, see .orgdb_target()).
+.orgdb_col_choices <- c(
+  "Gene symbol (-> <unit>_name)" = "SYMBOL",
+  "Description (-> description)" = "GENENAME",
+  "Ensembl id (-> ensembl_id)"  = "ENSEMBL",
+  "Entrez id (-> entrez_id)"    = "ENTREZID",
+  "Gene type (-> gene_biotype)" = "GENETYPE"
+)
+
 # Notification text after an annotation step (how much of the table it touched).
 .append_msg <- function(source, matched, total) {
   pct <- if (total > 0L) round(100 * matched / total) else 0L
@@ -55,10 +65,13 @@ mod_feature_ui <- function(id) {
                       c("Auto-detect" = "auto", "Ensembl" = "ensembl",
                         "Entrez" = "entrez", "Symbol" = "symbol")),
           helpText(textOutput(ns("detected_id"), inline = TRUE)),
+          selectizeInput(ns("orgdb_cols"), "Information to add", multiple = TRUE,
+                         choices = .orgdb_col_choices, selected = c("SYMBOL", "GENENAME")),
           checkboxInput(ns("orgdb_flag"), "Flag mapped features (in_orgdb column)", value = TRUE),
           actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary")
         ),
-        tags$small(class = "text-muted", "Preview to be joined into rowData (first features):"),
+        tags$small(class = "text-muted",
+                   "Available to join (your feature ids resolved against the OrgDb):"),
         DT::DTOutput(ns("orgdb_preview"))
       )
     ),
@@ -66,7 +79,8 @@ mod_feature_ui <- function(id) {
       "GTF Annotation",
       bslib::layout_sidebar(
         sidebar = bslib::sidebar(
-          title = "GTF (overrides OrgDb on matches)", width = 320,
+          title = "GTF", width = 320,
+          helpText("GTF values override OrgDb where they match."),
           mod_gtf_reader_ui(ns("gtf"), preview = FALSE),
           uiOutput(ns("gtf_opts")),
           uiOutput(ns("gtf_len_ui"))
@@ -140,16 +154,25 @@ mod_feature_server <- function(id, state) {
       state$meta <- utils::modifyList(state$meta, list(feature_type = input$feature_type))
     }, ignoreInit = TRUE)
 
-    # Non-committing preview of what OrgDb annotation would add (first features).
+    # Columns the user picked, falling back to the historical default so the page
+    # works before the selectize input reports (and in headless tests).
+    orgdb_cols <- reactive(input$orgdb_cols %||% c("SYMBOL", "GENENAME"))
+
+    # Non-committing preview of what OrgDb makes available to join: the join key
+    # (id) plus one column per selected piece of information, for the first rows.
     output$orgdb_preview <- DT::renderDT({
       req(editor$draft())
       id_type <- if (identical(input$id_type, "auto")) NULL else input$id_type
       df <- tryCatch(
         orgdb_annotation_preview(editor$draft(), organism = input$organism,
-                                 id_type = id_type, feature_type = state_meta(state)$feature_type),
+                                 id_type = id_type, feature_type = state_meta(state)$feature_type,
+                                 columns = orgdb_cols(), n = 100L),
         error = function(e) NULL)
       req(df)
-      DT::datatable(df, rownames = FALSE, options = list(dom = "tp", pageLength = 5, scrollX = TRUE))
+      DT::datatable(df, rownames = FALSE,
+                    options = list(dom = "ltp", pageLength = 10, scrollX = TRUE,
+                                   lengthMenu = list(c(10, 25, 50, 100),
+                                                     c("10", "25", "50", "100"))))
     })
 
     observeEvent(input$annotate, {
@@ -157,16 +180,18 @@ mod_feature_server <- function(id, state) {
       organism <- input$organism
       id_type <- if (identical(input$id_type, "auto")) NULL else input$id_type
       ft <- state_meta(state)$feature_type
+      cols <- orgdb_cols()
       flag <- if (isTRUE(input$orgdb_flag)) "in_orgdb" else NULL
       do <- function() {
         res <- edit_draft(function(d)
           annotate_with_orgdb(d, organism = organism, id_type = id_type,
-                              feature_type = ft, matched_col = flag))
+                              feature_type = ft, columns = cols, matched_col = flag))
         req(res)
         cov <- annotation_coverage(res, paste0(detect_feature_type(res)$feature_type, "_name"))
         showNotification(.append_msg("OrgDb", cov$matched, cov$total), type = "message")
       }
-      guarded(c(paste0(ft, "_name"), "description"), do)
+      targets <- vapply(cols, .orgdb_target, character(1), feature_type = ft)
+      guarded(unname(targets), do)
     })
 
     # --- GTF attribute import (draft) ----------------------------------------
@@ -174,12 +199,13 @@ mod_feature_server <- function(id, state) {
       g <- gtf_obj(); req(g)
       cols <- available_gtf_columns(g)
       tagList(
+        tags$hr(), tags$strong("Import GTF attributes"),
         selectInput(ns("gtf_match"), "Match dds rows by",
                     c("Auto (id, then name)" = "auto", stats::setNames(cols, cols))),
         selectizeInput(ns("gtf_import"), "Import columns", choices = cols, multiple = TRUE,
                        selected = intersect(c("gene_name", "seqnames", "gene_biotype"), cols)),
         checkboxInput(ns("gtf_flag"), "Flag matched features (in_gtf column)", value = TRUE),
-        actionButton(ns("apply_gtf"), "Apply GTF annotation", class = "btn-primary")
+        actionButton(ns("apply_gtf"), "Import into features", class = "btn-primary")
       )
     })
 
@@ -230,7 +256,8 @@ mod_feature_server <- function(id, state) {
       g <- gtf_obj(); req(g)
       types <- gtf_feature_types(g)
       tagList(
-        helpText("Or compute union length from the loaded GTF over a feature type:"),
+        tags$hr(), tags$strong("Compute feature length"),
+        helpText("Union length over a feature type (exon for mature mRNA):"),
         selectInput(ns("gtf_len_type"), NULL, choices = types,
                     selected = if ("exon" %in% types) "exon" else types[[1]]),
         actionButton(ns("compute_len"), "Compute length from GTF")
