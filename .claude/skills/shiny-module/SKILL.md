@@ -1,9 +1,9 @@
 ---
 name: shiny-module
-description: Scaffold a new page/feature in this RNA-seq dashboard as a Shiny module following the project's conventions — paired mod_<name>_ui/server functions, the shared app-state object (original/working/derived/data_version/history), versioned cached derivations, bslib layout, and deferred (button-gated) rendering. Use when adding a new page, splitting a page into sub-modules, or refactoring inline server logic into a module.
+description: Scaffold a new page/feature in this RNA-seq dashboard as a Shiny module following the project's conventions — paired mod_<name>_ui/server functions, the shared app-state object (original/working/data_version/history/undo_stack/meta + a derived cache), versioned cached derivations, bslib layout, deferred (button-gated) rendering, and the composable sub-module / draft-editor patterns. Use when adding a new page, splitting a page into sub-modules, or refactoring inline server logic into a module.
 metadata:
   type: project
-  version: "2.0"
+  version: "2.1"
 ---
 
 # Scaffolding a dashboard module
@@ -14,7 +14,8 @@ Every page in this app is a Shiny module so state and namespacing stay isolated.
 
 The canonical store is **not** a bare `dds` reactive — it's one `reactiveValues` (`state`) threaded into every module (see `CLAUDE.md` → State model). Modules interact with it through a small helper API (lives in `R/state.R`):
 
-- `state$working` — current `dds`; `state$original` — immutable load; `state$derived` — cached heavy artifacts; `state$data_version` — bumped on any data edit; `state$history` — action log.
+- `state$working` — current `dds`; `state$original` — immutable load; `state$data_version` — bumped on any data edit; `state$history` — action log; `state$undo_stack` — short snapshot stack (depth 5); `state$meta` — app-level flags (`data_type`, `feature_type`, `sce_per_cell`) not stored on the `dds`. `state$derived` — cached heavy artifacts, a plain **environment** (not a reactive field), staleness keyed on `data_version`.
+- `state_meta(state)` — summary list for the status bar (`loaded`, `data_type`, `feature_type`, `n_features`/`n_samples`, `assays`, `design`, `n_edits`, `data_version`). Read `meta$feature_type` here for adaptive `<unit>_name` labels.
 - `state_dds(state)` — reactive read of `state$working` (use this where the old code read `dds()`).
 - `state_mutate(state, fn, action)` — apply `fn(working)` → new `dds`, **bump `data_version`**, append `action` (name + params) to `history`. The single entry point for edits (filters, metadata, annotation).
 - `state_derive(state, key, params, expr)` — get-or-compute a cached artifact (VST, PCA, DESeq fit, DE table) stamped with the current `data_version`; recomputes only when stale. Wrap heavy work behind the render button **and** this helper.
@@ -29,6 +30,23 @@ This keeps invalidation in one place: a module never hand-rolls staleness — mu
 - **Edits go through `state_mutate`**; derived results go through `state_derive`. Modules return `invisible(NULL)` — they mutate shared `state`, they don't pass a `dds` back.
 - **Deferred rendering:** expensive work is gated behind an "apply/render" button (`bindEvent()`/`eventReactive()`), never live on every control.
 - **Stale-aware UI:** show a stale badge / disable "use" when a needed `derived` artifact is stale; gate on prerequisites (e.g. DE needs a design) with a banner.
+
+## Composable sub-modules (established patterns)
+
+A page can embed a reusable sub-module (`mod_<shared>.R`) that, unlike a page, **returns a
+value** instead of `invisible(NULL)`:
+
+- **Reader / picker → a settable `reactiveVal`.** `mod_gtf_reader_server()` returns its `gtf`
+  `reactiveVal`; the host reads it (`gtf_obj()`) and tests inject by *setting* it
+  (`gtf_obj(<GRanges>)`) instead of driving the file input. Keep it settable for testability.
+
+- **Draft editor → `list(draft, set)` (compose-then-commit).** `mod_meta_editor_server()` keeps
+  edits in a local `draft` `reactiveVal` and commits them in **one** `state_mutate()` on Save.
+  It returns `list(draft = <reactive>, set = function(dds))`, so a host page composes extra edits
+  (OrgDb/GTF annotation, sheet merge) onto the *same* draft via `editor$set(fn(editor$draft()))`
+  — no `data_version` bump until Save. **Never write those composed edits straight to
+  `state$working`:** the editor re-seeds its draft from `state$working`, so doing so silently
+  drops the user's unsaved edits (a real bug we hit). Edits flow draft → Save → `state_mutate`.
 
 ## Template
 
@@ -79,15 +97,17 @@ mod_<page>_server <- function(id, state) {
 ```r
 # R/run_app.R
 server <- function(input, output, session) {
-  state <- new_app_state()           # reactiveValues: original/working/derived/data_version/history
-  mod_input_server("input",       state)   # populates original + working
-  mod_qc_server("qc",             state)
-  mod_process_server("process",   state)
-  mod_dimreduc_server("dimreduc", state)
-  mod_de_server("de",             state)
-  mod_heatmap_server("heatmap",   state)
-  mod_export_server("export",     state)   # reads working + history for the report
-  mod_statusbar_server("statusbar", state) # persistent data-type / n / stale badges
+  state <- new_app_state()           # original/working/data_version/history/undo_stack/meta + derived env
+  mod_input_server("input",         state)   # Load: populates original + working
+  mod_metadata_server("metadata",   state)   # Sample info (uses mod_meta_editor)
+  mod_feature_server("feature",     state)   # Feature info: annotation (mod_gtf_reader + mod_meta_editor)
+  mod_assay_server("assay",         state)   # normalized assays / size factors / feature_length
+  mod_qc_server("qc",               state)
+  mod_dimreduc_server("dimreduc",   state)
+  mod_de_server("de",               state)
+  mod_heatmap_server("heatmap",     state)
+  mod_export_server("export",       state)   # reads working + history for the report
+  mod_statusbar_server("statusbar", state)   # persistent data-type / n / stale badges
 }
 ```
 

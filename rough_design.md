@@ -94,7 +94,7 @@ __Note__ on feature length, the effective feature length may not comming from th
 >
 > **Implemented (2026-06):** **GTF annotation** in the **Feature info** tab (`gtf_helpers.R`): upload a GTF/GFF, match dds rows by an auto-resolved column (Ensembl `gene_id` else `gene_name`, version-stripped; overridable), and import selected `mcols` columns into `rowData` — **authoritative over OrgDb** (`gene_name`→`<feature_type>_name`, `seqnames`→`chromosome`), filling where matched and never wiping unmatched features. **`feature_length` is an explicit, optional action** with two sources: adopt an existing numeric `rowData` column, or compute the union length over a **user-chosen feature `type`** (default `exon`; `gene`/`transcript` for whole-body/nascent quantification) via `import()`→subset `type`→split→`reduce()`→`sum(width())`. Partial GTF coverage leaves `feature_length` incomplete (NA for unmatched), so `has_feature_length()` stays FALSE and TPM/FPKM remain off until complete.
 >
-> **Implemented (2026-06) — closes Phase 2:** GTF memory minimization (a reader/filter submodule that trims the parse on Confirm + frees it on demand; columnar `gtf_attribute_table`) and a session-memory (RSS) status-bar badge. Then the **Feature-info UI redesign**: a two-card layout (editable `rowData` table on top; an "Annotation" card below with OrgDb + GTF reader + feature_length + the feature-unit selector — moved here from Load — and **GTF/OrgDb preview tables**); Save/Reset relocated to an icon toolbar above each metadata table (Sample + Feature). Annotation applies to the editor draft with an overwrite-confirm modal and optional `in_gtf`/`in_orgdb` match-flag columns. Still to come (later phases): **ERCC concentration**/dose–response (Phase 3 QC, using real ERCC92 values); **theming** (dark-mode toggle + `thematic`, before the Phase-4 plots).
+> **Implemented (2026-06) — closes Phase 2:** GTF memory minimization (a reader/filter submodule, `mod_gtf_reader`, that reads into one usable `GRanges` reactiveVal; **optional, repeatable filtering** trims feature types / mcols columns in place to shrink the session, and a Remove button frees it; columnar `gtf_attribute_table` avoids materializing the whole object) and a session-memory (RSS) status-bar badge. Then the **Feature-info UI redesign**, settling on **one `navset_card_pill` per page** (one table + its sidebar at a time): Sample info = *Sample Metadata* / *Additional Metadata*; Feature info = *Feature Metadata* / *OrgDb Annotation* / *GTF Annotation*, the feature-unit selector and "set length from column" living in the Feature Metadata sidebar (moved here from Load). Each annotation tab carries its own sidebar + preview and a colour-coded **match-coverage banner** ("X of Y feature IDs found"). Save/Reset are an icon toolbar above each metadata table. Annotation composes onto the editor draft (commits on Save) with an overwrite-confirm modal and optional `in_gtf`/`in_orgdb` match-flag columns. Still to come (later phases): **ERCC concentration**/dose–response (Phase 3 QC, using real ERCC92 values); **theming** (dark-mode toggle + `thematic`, before the Phase-4 plots).
 
 <!--
 MARK: 2nd page 
@@ -270,11 +270,11 @@ The project is implemented in phases, **bulk-first** (revised in review). Cross-
 * Data import (1st page): `.rds` **and** counts-matrix + sample-sheet tabular input; show `show(dds)`
 * Data export page shell
 
-### Phase 2 (annotation & normalization)
+### Phase 2 (annotation & normalization — done)
 * Metadata manipulation (editable tables); annotation (OrgDb-first, then GTF); `feature_class` flags
 * Normalization assays (CPM/TPM/FPKM; size factors on endogenous)
-* GTF memory minimization (reader/filter submodule that trims + frees the parse) + session memory monitor
-* Feature-info annotation UI redesign (two-card layout + GTF/OrgDb preview tables) — **closes Phase 2**
+* GTF memory minimization (reader/filter submodule with optional, repeatable filtering + Remove) + session memory monitor
+* Feature-info annotation UI redesign (one `navset_card_pill` per page; per-tab sidebar, preview + match-coverage banner) — **closes Phase 2**
 
 ### Phase 3 (QC & filtering)
 * QC (unified bulk/single-cell page) + sample/feature filtering (`filterByExpr`, manual `rowSums`, drop all-zero)
