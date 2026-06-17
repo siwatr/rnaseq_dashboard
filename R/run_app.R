@@ -23,27 +23,80 @@
   theme
 }
 
+# A static component gallery shown as the last navbar tab when
+# run_app(themer_mode = TRUE). Pair with bslib::run_with_themer() to watch theme
+# / colour choices apply to headings, body text, and the Bootstrap role colours
+# (primary/secondary/success/info/warning/danger/light/dark) across buttons,
+# badges, and alerts. Static UI only -- no server logic.
+.themer_ui <- function() {
+  roles <- c("primary", "secondary", "success", "info",
+             "warning", "danger", "light", "dark")
+  each <- function(fn) lapply(roles, fn)
+  cap <- function(x) paste0(toupper(substring(x, 1, 1)), substring(x, 2))
+  bslib::nav_panel(
+    "Themer",
+    bslib::layout_columns(
+      col_widths = c(6, 6, 6, 6),
+      bslib::card(
+        bslib::card_header("Typography"),
+        tags$h1("Heading 1"), tags$h2("Heading 2"), tags$h3("Heading 3"),
+        tags$h4("Heading 4"), tags$h5("Heading 5"), tags$h6("Heading 6"),
+        tags$p("Body text - the quick brown fox jumps over the lazy dog."),
+        tags$p(class = "mb-0",
+               tags$a(href = "#", "a link"), " | ", tags$code("inline code"),
+               " | ", tags$small(class = "text-muted", "small muted text"))
+      ),
+      bslib::card(
+        bslib::card_header("Buttons"),
+        div(class = "d-flex flex-wrap gap-2 mb-2",
+            each(function(r) tags$button(type = "button",
+                                         class = paste0("btn btn-", r), cap(r)))),
+        div(class = "d-flex flex-wrap gap-2",
+            each(function(r) tags$button(type = "button",
+                                         class = paste0("btn btn-outline-", r), cap(r))))
+      ),
+      bslib::card(
+        bslib::card_header("Badges"),
+        div(class = "d-flex flex-wrap gap-2",
+            each(function(r) tags$span(class = paste("badge rounded-pill",
+                                                     paste0("text-bg-", r)), cap(r))))
+      ),
+      bslib::card(
+        bslib::card_header("Alerts"),
+        each(function(r) div(class = paste0("alert alert-", r), role = "alert",
+                             paste(cap(r), "alert")))
+      )
+    )
+  )
+}
+
 #' Launch the dds dashboard
 #'
 #' @param max_upload_mb Maximum size (in MB) for a single browser upload — covers
 #'   the `.rds` object and the counts/sample-sheet tables. Sets the global
 #'   `shiny.maxRequestSize` option. Raise it for very large datasets.
+#' @param themer_mode If `TRUE`, add a "Themer" tab (a component gallery for
+#'   tuning the theme); pair with [bslib::run_with_themer()]. Default `FALSE`.
 #' @param ... Passed to [shiny::shinyApp()].
 #' @return A Shiny app object (invisibly when run interactively).
 #' @export
-run_app <- function(max_upload_mb = .default_max_upload_mb, ...) {
+run_app <- function(max_upload_mb = .default_max_upload_mb, themer_mode = FALSE, ...) {
   options(shiny.maxRequestSize = max_upload_mb * 1024^2)
-  shiny::shinyApp(ui = app_ui(), server = app_server, ...)
+  shiny::shinyApp(ui = app_ui(themer_mode = themer_mode), server = app_server, ...)
 }
 
 #' Dashboard UI
 #'
 #' The multi-page shell. Each page is a Shiny module (see `R/mod_*.R`).
+#' @param themer_mode If `TRUE`, append a "Themer" component-gallery tab for
+#'   theme tuning (see [run_app()]). Default `FALSE`.
 #' @return A bslib `page_navbar` UI definition.
 #' @export
-app_ui <- function() {
+app_ui <- function(themer_mode = FALSE) {
   bslib::page_navbar(
-    title = "dds dashboard",
+    # Real heading element so it reads as the app title (distinct from the tab
+    # labels) and picks up the theme's heading font; sized down to fit the navbar.
+    title = tags$h1("dds dashboard", class = "fs-4 fw-bold mb-0"),
     theme = .app_theme(),
     bslib::nav_panel("Input",
       bslib::navset_card_tab(
@@ -58,6 +111,7 @@ app_ui <- function() {
     bslib::nav_panel("DE",        mod_de_ui("de")),
     bslib::nav_panel("Heatmap",   mod_heatmap_ui("heatmap")),
     bslib::nav_panel("Export",    mod_export_ui("export")),
+    if (isTRUE(themer_mode)) .themer_ui(),
     bslib::nav_spacer(),
     bslib::nav_item(mod_statusbar_ui("statusbar")),
     # Light/dark switch; no `mode` arg => follows the OS prefers-color-scheme and
