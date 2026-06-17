@@ -141,6 +141,30 @@ orgdb_annotation_preview <- function(dds, organism = c("mouse", "human"),
   out
 }
 
+#' Count how many feature ids resolve in an OrgDb
+#'
+#' Non-committing tally for a coverage banner: how many of the dataset's feature
+#' ids map via the primary column (`SYMBOL` when requested, else the first
+#' requested column). Covers all features, not just the preview rows.
+#' @inheritParams annotate_with_orgdb
+#' @return list(`matched`, `total`).
+#' @export
+orgdb_match_count <- function(dds, organism = c("mouse", "human"), id_type = NULL,
+                              columns = c("SYMBOL", "GENENAME")) {
+  organism <- match.arg(organism)
+  org <- .orgdb_org(organism, "orgdb_match_count")
+  columns <- intersect(columns, AnnotationDbi::columns(org))
+  ids <- rownames(dds)
+  primary <- if ("SYMBOL" %in% columns) "SYMBOL" else if (length(columns)) columns[[1]] else "SYMBOL"
+  id_type <- id_type %||% detect_id_type(ids)
+  keytype <- .orgdb_keytype(id_type)
+  keys <- if (keytype == "ENSEMBL") sub("\\..*$", "", ids) else ids
+  mapped <- suppressMessages(tryCatch(
+    AnnotationDbi::mapIds(org, keys = keys, column = primary, keytype = keytype, multiVals = "first"),
+    error = function(e) stats::setNames(rep(NA_character_, length(keys)), keys)))
+  list(matched = sum(!is.na(mapped)), total = length(ids))
+}
+
 #' Annotation coverage over endogenous features
 #'
 #' @param dds A `DESeqDataSet`.

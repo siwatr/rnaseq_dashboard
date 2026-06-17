@@ -70,6 +70,7 @@ mod_feature_ui <- function(id) {
           checkboxInput(ns("orgdb_flag"), "Flag mapped features (in_orgdb column)", value = TRUE),
           actionButton(ns("annotate"), "Annotate from OrgDb", class = "btn-primary")
         ),
+        uiOutput(ns("orgdb_cov")),
         tags$small(class = "text-muted",
                    "Available to join (your feature ids resolved against the OrgDb):"),
         DT::DTOutput(ns("orgdb_preview"))
@@ -85,7 +86,7 @@ mod_feature_ui <- function(id) {
           uiOutput(ns("gtf_opts")),
           uiOutput(ns("gtf_len_ui"))
         ),
-        tags$small(class = "text-muted", "GTF preview (first rows):"),
+        uiOutput(ns("gtf_cov")),
         mod_gtf_reader_preview_ui(ns("gtf"))
       )
     )
@@ -157,6 +158,26 @@ mod_feature_server <- function(id, state) {
     # Columns the user picked, falling back to the historical default so the page
     # works before the selectize input reports (and in headless tests).
     orgdb_cols <- reactive(input$orgdb_cols %||% c("SYMBOL", "GENENAME"))
+
+    # Match-coverage banners above each preview (how many of the user's feature
+    # ids the source resolves), coloured red/amber/green by completeness.
+    output$orgdb_cov <- renderUI({
+      req(editor$draft())
+      id_type <- if (identical(input$id_type, "auto")) NULL else input$id_type
+      cnt <- tryCatch(orgdb_match_count(editor$draft(), organism = input$organism,
+                                        id_type = id_type, columns = orgdb_cols()),
+                      error = function(e) NULL)
+      req(cnt)
+      .coverage_banner(cnt$matched, cnt$total, "feature IDs", "OrgDb")
+    })
+
+    output$gtf_cov <- renderUI({
+      g <- gtf_obj(); req(g, editor$draft())
+      cnt <- tryCatch(gtf_match_count(editor$draft(), g, match_col = input$gtf_match %||% "auto"),
+                      error = function(e) NULL)
+      req(cnt)
+      .coverage_banner(cnt$matched, cnt$total, "feature IDs", "the GTF")
+    })
 
     # Non-committing preview of what OrgDb makes available to join: the join key
     # (id) plus one column per selected piece of information, for the first rows.

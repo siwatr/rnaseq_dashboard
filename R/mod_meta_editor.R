@@ -6,6 +6,18 @@
 # compose extra edits (annotation, sheet merge) onto the same draft. Parameterized
 # by `opts`: slot, title, row_noun, allow_row_rename, bulk_class.
 
+# A coloured one-line match-coverage banner shared by the annotation/merge
+# previews: how many of the user's rows were found in the reference source.
+# Red when nothing matched, amber when partial, green when every row matched.
+.coverage_banner <- function(matched, total, noun, where) {
+  matched <- as.integer(matched); total <- as.integer(total)
+  pct <- if (total > 0L) round(100 * matched / total) else 0L
+  cls <- if (matched == 0L) "text-danger" else if (pct < 100L) "text-warning" else "text-success"
+  tags$div(class = paste("small fw-semibold mb-1", cls),
+           sprintf("%d out of %d (%d%%) of your %s can be found in %s.",
+                   matched, total, pct, noun, where))
+}
+
 # Build the display data.frame for the table: the row id (sample/feature name)
 # prepended as a real first column so `filter = "top"` gives it a search box
 # (DT skips the rownames column). The id name is made unique against existing

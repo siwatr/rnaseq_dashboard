@@ -1,25 +1,24 @@
 gtf_demo <- function() system.file("extdata", "demo_annotation.gtf", package = "ddsdashboard")
 
-test_that("mod_gtf_reader reads, trims columns/types on Apply filter, frees the parse", {
+test_that("mod_gtf_reader reads into a usable object and trims on Apply filter", {
   skip_if_not_installed("rtracklayer")
   skip_if_not_installed("GenomicRanges")
   shiny::testServer(mod_gtf_reader_server, {
     session$setInputs(path = gtf_demo(), read = 1)
-    expect_false(is.null(raw()))
-    expect_setequal(gtf_feature_types(raw()), c("exon", "gene", "transcript"))
+    # Loaded GTF is immediately available (annotation works before any filtering).
+    expect_false(is.null(gtf()))
+    expect_setequal(gtf_feature_types(gtf()), c("exon", "gene", "transcript"))
 
     # Keep only gene rows and the gene_name column.
     session$setInputs(keep_types = "gene", keep_cols = "gene_name", confirm = 1)
-    g <- confirmed()
-    expect_false(is.null(g))
+    g <- gtf()
     expect_setequal(as.character(g$type), "gene")          # rows trimmed to chosen type
-    expect_null(raw())                                     # full parse released
     md <- colnames(S4Vectors::mcols(g))
     expect_true(all(c("type", "gene_id", "gene_name", "transcript_id") %in% md))  # protected kept
     expect_false("gene_biotype" %in% md)                   # not selected, not protected -> dropped
 
     session$setInputs(remove = 1)
-    expect_null(confirmed())
+    expect_null(gtf())
   })
 })
 
@@ -28,13 +27,12 @@ test_that("mod_gtf_reader filtering persists: a second Apply narrows the trimmed
   skip_if_not_installed("GenomicRanges")
   shiny::testServer(mod_gtf_reader_server, {
     session$setInputs(path = gtf_demo(), read = 1)
-    # First apply keeps everything; the parse is freed but filtering stays live.
+    # First apply keeps everything; filtering stays live afterwards.
     session$setInputs(keep_types = character(0), keep_cols = character(0), confirm = 1)
-    expect_setequal(as.character(unique(confirmed()$type)), c("exon", "gene", "transcript"))
-    expect_null(raw())
+    expect_setequal(as.character(unique(gtf()$type)), c("exon", "gene", "transcript"))
     # A second apply works on the already-trimmed object and narrows it further.
     session$setInputs(keep_types = "gene", confirm = 2)
-    expect_setequal(as.character(unique(confirmed()$type)), "gene")
+    expect_setequal(as.character(unique(gtf()$type)), "gene")
   })
 })
 
@@ -48,25 +46,24 @@ test_that("reader UI can split controls from the preview output", {
   expect_true(any(grepl("gtf-read", without_preview)))         # controls still present
 })
 
-test_that("mod_gtf_reader Remove frees the confirmed object", {
+test_that("mod_gtf_reader Remove frees the loaded object", {
   skip_if_not_installed("rtracklayer")
   skip_if_not_installed("GenomicRanges")
   shiny::testServer(mod_gtf_reader_server, {
     session$setInputs(path = gtf_demo(), read = 1)
-    session$setInputs(keep_types = character(0), keep_cols = character(0), confirm = 1)
-    expect_false(is.null(confirmed()))
+    expect_false(is.null(gtf()))
     session$setInputs(remove = 1)
-    expect_null(confirmed())
+    expect_null(gtf())
   })
 })
 
-test_that("mod_gtf_reader keeps all columns/types when selections are empty", {
+test_that("mod_gtf_reader keeps all columns/types when filter selections are empty", {
   skip_if_not_installed("rtracklayer")
   skip_if_not_installed("GenomicRanges")
   shiny::testServer(mod_gtf_reader_server, {
     session$setInputs(path = gtf_demo(), read = 1)
     session$setInputs(keep_types = character(0), keep_cols = character(0), confirm = 1)
-    g <- confirmed()
+    g <- gtf()
     expect_setequal(as.character(unique(g$type)), c("exon", "gene", "transcript"))
     expect_true("gene_biotype" %in% colnames(S4Vectors::mcols(g)))
   })

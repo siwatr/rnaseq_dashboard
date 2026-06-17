@@ -25,6 +25,7 @@ mod_metadata_ui <- function(id) {
           actionButton(ns("merge"), "Bind into draft", class = "btn-primary"),
           helpText("Joins by sample id; switch to Sample Metadata and Save to keep.")
         ),
+        uiOutput(ns("sheet_cov")),
         tags$small(class = "text-muted", "Uploaded sheet preview:"),
         DT::DTOutput(ns("sheet_preview"))
       )
@@ -47,7 +48,20 @@ mod_metadata_server <- function(id, state) {
 
     output$sheet_preview <- DT::renderDT({
       tbl <- sheet(); req(tbl)
-      DT::datatable(tbl, rownames = FALSE, options = list(pageLength = 5, scrollX = TRUE))
+      DT::datatable(tbl, rownames = FALSE,
+                    options = list(dom = "ltp", pageLength = 10, scrollX = TRUE,
+                                   lengthMenu = list(c(10, 25, 50, 100),
+                                                     c("10", "25", "50", "100"))))
+    })
+
+    # How many of the dataset's samples are present in the uploaded sheet.
+    output$sheet_cov <- renderUI({
+      d <- editor$draft(); tbl <- sheet(); req(d, tbl)
+      id_col <- if (nzchar(input$id_col)) input$id_col else NULL
+      keys <- tryCatch(.table_ids(tbl, id_col), error = function(e) NULL)
+      req(keys)
+      ids <- colnames(d)
+      .coverage_banner(sum(ids %in% keys), length(ids), "samples", "the uploaded sheet")
     })
 
     observeEvent(input$merge, {

@@ -91,6 +91,14 @@ test_that("annotate_with_gtf can flag matched features", {
   expect_equal(fl, c(TRUE, TRUE, TRUE, FALSE))   # 4th gene absent from the GTF
 })
 
+test_that("gtf_match_count tallies dds features present in the GTF", {
+  skip_if_not_installed("rtracklayer"); skip_if_not_installed("GenomicRanges")
+  gtf <- import_gtf(gtf_path())
+  cnt <- gtf_match_count(mk_gtf_dds(extra_absent = TRUE), gtf)
+  expect_equal(cnt$total, 4)
+  expect_equal(cnt$matched, 3)   # 4th gene absent from the GTF
+})
+
 test_that("set_feature_length_from_column adopts a numeric column, rejects non-numeric", {
   skip_if_not_installed("DESeq2")
   dds <- mk_gtf_dds()

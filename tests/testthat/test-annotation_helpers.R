@@ -70,6 +70,15 @@ test_that("annotate_with_orgdb imports the requested column set", {
   expect_false("description" %in% colnames(rd))   # GENENAME not requested
 })
 
+test_that("orgdb_match_count tallies resolvable feature ids", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("org.Mm.eg.db")
+  dds <- mk_ens_dds(c("ENSMUSG00000000001", "NOTAGENE2"))
+  cnt <- orgdb_match_count(dds, "mouse", id_type = "ensembl")
+  expect_equal(cnt$total, 2)
+  expect_equal(cnt$matched, 1)   # only the first id resolves (Gnai3)
+})
+
 test_that("annotation_overwrites flags only existing, populated targets", {
   skip_if_not_installed("DESeq2")
   dds <- make_mock_dds(n_genes = 6, n_per_group = 2, n_spike = 1, seed = 1)  # gene_name populated

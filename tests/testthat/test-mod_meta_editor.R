@@ -3,6 +3,18 @@ sample_opts <- list(slot = "colData", title = "Sample", row_noun = "sample",
 feature_opts <- list(slot = "rowData", title = "Feature", row_noun = "feature",
                      allow_row_rename = FALSE, bulk_class = TRUE)
 
+test_that(".coverage_banner colours by completeness", {
+  none    <- as.character(.coverage_banner(0, 10, "feature IDs", "OrgDb"))
+  partial <- as.character(.coverage_banner(7, 10, "feature IDs", "OrgDb"))
+  full    <- as.character(.coverage_banner(10, 10, "feature IDs", "OrgDb"))
+  expect_true(grepl("text-danger", none))
+  expect_true(grepl("0 out of 10 \\(0%\\)", none))
+  expect_true(grepl("text-warning", partial))
+  expect_true(grepl("7 out of 10 \\(70%\\)", partial))
+  expect_true(grepl("text-success", full))
+  expect_true(grepl("10 out of 10 \\(100%\\)", full))
+})
+
 test_that(".meta_display_df gives the id a unique name, even when it collides", {
   # No collision: id column takes the plain row_noun name and holds the rownames.
   df <- data.frame(condition = c("a", "b"), row.names = c("S1", "S2"))
