@@ -1,9 +1,10 @@
 # Reusable draft editor for sample (colData) or feature (rowData) metadata.
 # Edits accumulate in a local draft DESeqDataSet (cell edits, add/remove/rename
-# columns, optional row rename / sheet merge / bulk feature_class) and commit in
-# one state_mutate() on Save. Backed by the slot-agnostic helpers in
-# R/metadata_helpers.R. Parameterized by `opts`:
-#   slot, title, row_noun, allow_merge, allow_row_rename, bulk_class.
+# columns, optional row rename / bulk feature_class) and commit in one
+# state_mutate() on Save. Backed by the slot-agnostic helpers in
+# R/metadata_helpers.R. The server returns list(draft, set) so a host page can
+# compose extra edits (annotation, sheet merge) onto the same draft. Parameterized
+# by `opts`: slot, title, row_noun, allow_row_rename, bulk_class.
 
 # Build the display data.frame for the table: the row id (sample/feature name)
 # prepended as a real first column so `filter = "top"` gives it a search box
@@ -47,14 +48,6 @@ meta_editor_ui <- function(id, opts, extra_sidebar = NULL, extra_main = NULL) {
       actionButton(ns("rename_row"), paste("Rename", opts$row_noun))
     )))
   }
-  if (isTRUE(opts$allow_merge)) {
-    panels <- c(panels, list(bslib::accordion_panel(
-      "Merge a sample sheet",
-      fileInput(ns("sheet"), NULL, accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls")),
-      textInput(ns("id_col"), "Sample-id column (blank = row names / first col)", ""),
-      actionButton(ns("merge"), "Merge into draft")
-    )))
-  }
   if (isTRUE(opts$bulk_class)) {
     panels <- c(panels, list(bslib::accordion_panel(
       "Set feature class (bulk)",
@@ -80,13 +73,15 @@ meta_editor_ui <- function(id, opts, extra_sidebar = NULL, extra_main = NULL) {
                                 class = "btn-outline-danger"),
                    "Reset to original")
   )
-  card <- bslib::card(
-    bslib::card_header(paste(opts$title, "(double-click a cell to edit; filters on top)")),
-    toolbar,
-    DT::DTOutput(ns("table"))
+  # No inner card: the host wraps this editor in a navset card tab.
+  header <- tagList(
+    tags$strong(opts$title),
+    tags$span(class = "text-muted small", " - double-click a cell to edit; filters on top")
   )
   do.call(bslib::layout_sidebar,
-          c(Filter(Negate(is.null), list(extra_main, card)), list(sidebar = sidebar)))
+          c(Filter(Negate(is.null),
+              list(extra_main, header, toolbar, DT::DTOutput(ns("table")))),
+            list(sidebar = sidebar)))
 }
 
 #' @param opts editor configuration (slot/title/row_noun/allow_*/bulk_class).
@@ -173,23 +168,6 @@ meta_editor_server <- function(id, state, opts) {
       req(draft(), nzchar(input$rn_row_old), nzchar(input$rn_row_new))
       .apply(rename_samples(draft(), input$rn_row_old, input$rn_row_new))
       updateTextInput(session, "rn_row_new", value = "")
-    })
-
-    if (isTRUE(opts$allow_merge)) observeEvent(input$merge, {
-      req(draft(), input$sheet)
-      tbl <- tryCatch(.read_user_table(input$sheet$datapath, input$sheet$name),
-                      error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
-      req(tbl)
-      id_col <- if (nzchar(input$id_col)) input$id_col else NULL
-      res <- tryCatch(merge_sample_metadata(draft(), tbl, id_col),
-                      error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
-      req(res)
-      draft(res$dds); bump()
-      ow <- res$report$overwritten
-      msg <- sprintf("Merged %d sample(s); %d upload row(s) matched nothing.",
-                     res$report$matched, length(res$report$unmatched_in_table))
-      if (length(ow)) msg <- paste0(msg, " Overwrote: ", paste(ow, collapse = ", "), ".")
-      showNotification(paste(msg, "Click Save to keep."), type = "warning")
     })
 
     if (isTRUE(opts$bulk_class)) observeEvent(input$bulk_apply, {

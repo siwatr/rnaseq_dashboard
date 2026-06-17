@@ -34,13 +34,18 @@ mod_feature_ui <- function(id) {
     actionButton(ns("set_len"), "Set length from column"),
     hr()
   )
-  # Bottom card: two annotation tabs, each with its own sidebar controls and a
-  # preview of the data it would join into rowData above.
-  annotation_card <- bslib::navset_card_pill(
-    title = "Annotation (edits land in the draft above - Save to keep)",
-    height = "25vh", full_screen = TRUE,
+  # One navset: the metadata table and each annotation source are separate tabs,
+  # so only one table + its sidebar is shown at a time.
+  bslib::navset_card_pill(
+    title = "Feature info",
     bslib::nav_panel(
-      "OrgDb",
+      "Feature Metadata",
+      meta_editor_ui(ns("editor"), .feature_editor_opts,
+                     extra_sidebar = feature_settings,
+                     extra_main = div(class = "mb-2", textOutput(ns("coverage"))))
+    ),
+    bslib::nav_panel(
+      "OrgDb Annotation",
       bslib::layout_sidebar(
         sidebar = bslib::sidebar(
           title = "OrgDb", width = 320,
@@ -58,7 +63,7 @@ mod_feature_ui <- function(id) {
       )
     ),
     bslib::nav_panel(
-      "GTF",
+      "GTF Annotation",
       bslib::layout_sidebar(
         sidebar = bslib::sidebar(
           title = "GTF (overrides OrgDb on matches)", width = 320,
@@ -70,12 +75,6 @@ mod_feature_ui <- function(id) {
         mod_gtf_reader_preview_ui(ns("gtf"))
       )
     )
-  )
-  tagList(
-    meta_editor_ui(ns("editor"), .feature_editor_opts,
-                   extra_sidebar = feature_settings,
-                   extra_main = div(class = "mb-2", textOutput(ns("coverage")))),
-    annotation_card
   )
 }
 

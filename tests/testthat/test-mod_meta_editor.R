@@ -1,7 +1,7 @@
 sample_opts <- list(slot = "colData", title = "Sample", row_noun = "sample",
-                    allow_merge = TRUE, allow_row_rename = TRUE, bulk_class = FALSE)
+                    allow_row_rename = TRUE, bulk_class = FALSE)
 feature_opts <- list(slot = "rowData", title = "Feature", row_noun = "feature",
-                     allow_merge = FALSE, allow_row_rename = FALSE, bulk_class = TRUE)
+                     allow_row_rename = FALSE, bulk_class = TRUE)
 
 test_that(".meta_display_df gives the id a unique name, even when it collides", {
   # No collision: id column takes the plain row_noun name and holds the rownames.
