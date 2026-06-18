@@ -3,11 +3,29 @@
 #   - "Sample QC"           - per-sample pills: General QC / RLE / Expression
 #                             density / QC Matrix.
 #   - "Sample Correlation"  - pills: Heatmap / Within-group correlation.
-#   - "Filtering"           - feature/sample filtering (P3c; later).
-# Diagnostics are pure (R/qc_helpers.R). Removing samples/features later must
-# invalidate downstream derived (rnaseq-bioc); heavy artifacts (metric table,
-# VST, correlation) are cached via state_derive() keyed on data_version. Each
-# diagnostic carries a "How to read this" note below it (.qc_diag_help).
+#   - "Filtering"           - pills: Samples / Features. The app *suggests*
+#                             low-quality items (R/filter_helpers.R); the user
+#                             builds a removal pool (DT selection + buttons) and
+#                             Applies it via state_mutate (real, undoable removal).
+# Diagnostics are pure (R/qc_helpers.R). Removing samples/features invalidates
+# downstream derived (rnaseq-bioc); heavy artifacts (metric table, VST,
+# correlation, flag tables) are cached via state_derive() keyed on data_version.
+# A page-level "Showing:" control hides samples from the sample plots + the
+# correlation heatmap without touching the data (view-only; no data_version bump).
+# Each diagnostic carries a "How to read this" note below it (.qc_diag_help).
+
+# Semantic 3-colour scheme for the "Removal status" colour-by (reason-aware):
+# green = QC pass, yellow = suggested for some other reason, red = suggested for
+# the reason of the current plot. A fixed scale (not the qualitative palette);
+# the Palette page will later own these values.
+.removal_palette <- c(pass = "#2CA02C", suggested_other = "#E6B800",
+                      suggested_this = "#D62728")
+.removal_labels <- c(pass = "QC pass", suggested_other = "Suggested drop (other)",
+                     suggested_this = "Suggested drop (this reason)")
+# Sample QC metric -> the flag_samples() reason column it corresponds to (used to
+# pick the "this reason" highlight). % spike-in has no drop reason.
+.metric_reason <- c(library_size = "low_lib_size", detected = "low_detected",
+                    pct_mito = "high_mito")
 
 # Metric -> axis label. Library size is reported in millions on its axis.
 .qc_metric_labels <- c(
@@ -51,11 +69,15 @@
 
 # Build the per-sample QC plot. x_var = "sample" (discrete bar of the metric per
 # sample, optionally sorted by value) or another metric name (numeric scatter,
-# metric vs metric). Colour/fill by `group`.
+# metric vs metric). Colour/fill by `group`. When `palette` (a named colour
+# vector over the group levels) is supplied, a fixed manual scale is used instead
+# of the qualitative palette (for the semantic removal-status colouring).
 .qc_metric_plot <- function(tbl, x_var, metric, group_lab = NULL,
-                            sort = "none", dark_theme = FALSE) {
+                            sort = "none", dark_theme = FALSE,
+                            palette = NULL, palette_labels = NULL) {
   yy <- .qc_axis(tbl, metric)
-  if (identical(x_var, "sample")) {
+  bar <- identical(x_var, "sample")
+  if (bar) {
     lvls <- if (identical(sort, "none")) {
       tbl$sample
     } else {
@@ -73,7 +95,28 @@
       ggplot2::geom_point(size = 2) +
       ggplot2::labs(x = xx$lab, y = yy$lab, colour = group_lab %||% "group")
   }
+  if (!is.null(palette)) {
+    labs_arg <- if (is.null(palette_labels)) ggplot2::waiver() else palette_labels
+    scale_fn <- if (bar) ggplot2::scale_fill_manual else ggplot2::scale_colour_manual
+    p <- p + scale_fn(values = palette, labels = labs_arg, drop = FALSE,
+                      name = group_lab %||% "group")
+  }
   p + .qc_theme(dark_theme)
+}
+
+# Before/after feature-filter density (limma/edgeR RNAseq123 style): the
+# distribution of log-expression over endogenous features, before vs after the
+# proposed filter. A cleaner after-curve (less low-expression mass) means the
+# filter is doing its job. df from qc_filter_density() (sample, value, status).
+.qc_filter_density_plot <- function(df, dark_theme = FALSE) {
+  ggplot2::ggplot(df, ggplot2::aes(x = .data$value,
+                                   group = interaction(.data$sample, .data$status),
+                                   colour = .data$status)) +
+    ggplot2::geom_density(linewidth = 0.4, alpha = 0.7) +
+    ggplot2::scale_colour_manual(values = c(before = "#9aa0a6", after = "#1f77b4"),
+                                 name = NULL) +
+    ggplot2::labs(x = "log2 expression", y = "density") +
+    .qc_theme(dark_theme)
 }
 
 # ---- Dataset-level diagnostic plot builders --------------------------------
@@ -234,7 +277,12 @@
     "For each sample, the mean correlation to the other samples in the same",
     "group (by the chosen column). Points are samples; one sitting clearly",
     "below its group's box correlates poorly with its replicates and is a",
-    "candidate outlier. Single-sample groups are omitted.")
+    "candidate outlier. Single-sample groups are omitted."),
+  filter_density = paste(
+    "Distribution of log2 expression over endogenous features, before vs after",
+    "the proposed filter. The tall low-value peak is near-zero genes; a good",
+    "filter removes most of it, leaving a cleaner unimodal 'after' curve.",
+    "Spike-in / exogenous features are exempt and never removed here.")
 )
 
 # A subtle "How to read this" note placed below a diagnostic plot.
@@ -259,6 +307,18 @@
 # Spinner-wrapped plot output (busy indicator for slow renders).
 .qc_plot <- function(id) shinycssloaders::withSpinner(plotOutput(id), proxy.height = "300px")
 
+# A blank numericInput reads back as NA; map that to NULL so the flag helpers
+# fall back to their auto (robust-fence) thresholds.
+.blank_na <- function(x) if (is.null(x) || length(x) != 1L || is.na(x)) NULL else x
+
+# Pool summary badges: suggested / in-pool / kept-of-total.
+.pool_counts <- function(suggested, pooled, total) {
+  tags$div(class = "small mb-2",
+    tags$span(class = "badge text-bg-warning me-1", paste("Suggested:", suggested)),
+    tags$span(class = "badge text-bg-danger me-1", paste("In pool:", pooled)),
+    tags$span(class = "text-muted", sprintf("Keep %d of %d", total - pooled, total)))
+}
+
 # Choices shared by the X-axis and metric selectors.
 .qc_metric_choices <- c("Library size" = "library_size",
                         "Detected features" = "detected",
@@ -267,6 +327,25 @@
 
 mod_qc_ui <- function(id) {
   ns <- NS(id)
+  # The removal-pool action buttons, shared by the Samples and Features pills.
+  pool_buttons <- function(prefix) {
+    tags$div(
+      class = "d-grid gap-1 mb-2",
+      tags$div(class = "btn-group", role = "group",
+        actionButton(ns(paste0(prefix, "_add")), "Add selected",
+                     class = "btn-sm btn-outline-primary"),
+        actionButton(ns(paste0(prefix, "_remove")), "Remove selected",
+                     class = "btn-sm btn-outline-secondary")),
+      actionButton(ns(paste0(prefix, "_add_view")), "Add all in current view",
+                   icon = icon("filter"), class = "btn-sm btn-outline-primary"),
+      actionButton(ns(paste0(prefix, "_adopt")), "Adopt suggestions",
+                   icon = icon("wand-magic-sparkles"), class = "btn-sm btn-outline-primary"),
+      actionButton(ns(paste0(prefix, "_clear")), "Clear pool",
+                   icon = icon("arrows-rotate"), class = "btn-sm btn-outline-secondary")
+    )
+  }
+  tagList(
+  uiOutput(ns("showing_bar")),
   bslib::navset_card_tab(
     title = tags$h3("QC & filtering", class = "fs-6 mb-0 pe-3"),
 
@@ -381,7 +460,74 @@ mod_qc_ui <- function(id) {
           )
         )
       )
+    ),
+
+    # ---- Filtering -----------------------------------------------------------
+    bslib::nav_panel(
+      tags$h4("Filtering", class = "fs-6"),
+      bslib::navset_pill(
+        bslib::nav_panel(
+          "Samples",
+          bslib::layout_sidebar(
+            sidebar = bslib::sidebar(
+              title = tags$h4("Sample filtering", class = "fs-6 mb-0"), width = 300,
+              helpText("Flags are advisory. Build a removal pool, then Apply."),
+              uiOutput(ns("samp_group_ui")),
+              numericInput(ns("samp_lib_min"), "Min library size (blank = auto)",
+                           value = NA, min = 0),
+              numericInput(ns("samp_detected_min"), "Min detected features (blank = auto)",
+                           value = NA, min = 0),
+              numericInput(ns("samp_mito_max"), "Max % mitochondrial (blank = auto)",
+                           value = NA, min = 0, max = 100),
+              numericInput(ns("samp_wg_z"), "Within-group outlier z-cutoff",
+                           value = 2, min = 0, step = 0.5),
+              tags$hr(),
+              pool_buttons("samp"),
+              uiOutput(ns("samp_counts")),
+              actionButton(ns("samp_apply"), "Apply removal",
+                           icon = icon("trash"), class = "btn-danger w-100")
+            ),
+            tags$small(class = "text-muted",
+                       "Select rows to stage them, then use the buttons. Flagged samples are highlighted but never pre-pooled."),
+            shinycssloaders::withSpinner(DT::DTOutput(ns("samp_tbl")), proxy.height = "300px")
+          )
+        ),
+        bslib::nav_panel(
+          "Features",
+          bslib::layout_sidebar(
+            sidebar = bslib::sidebar(
+              title = tags$h4("Feature filtering", class = "fs-6 mb-0"), width = 300,
+              helpText("Expression filters run on endogenous features only; spike-in / exogenous are exempt."),
+              checkboxInput(ns("feat_use_fbe"), "Use filterByExpr (edgeR)", value = TRUE),
+              conditionalPanel(
+                "input.feat_use_fbe", ns = ns,
+                uiOutput(ns("feat_group_ui"))
+              ),
+              conditionalPanel(
+                "!input.feat_use_fbe", ns = ns,
+                numericInput(ns("feat_min_count"), "Min total count", value = 10, min = 0),
+                checkboxInput(ns("feat_use_min_samples"), "Also require min detected samples",
+                              value = FALSE),
+                conditionalPanel(
+                  "input.feat_use_min_samples", ns = ns,
+                  numericInput(ns("feat_min_samples"), "Min detected samples", value = 2, min = 1)
+                )
+              ),
+              tags$hr(),
+              pool_buttons("feat"),
+              uiOutput(ns("feat_counts")),
+              actionButton(ns("feat_apply"), "Apply removal",
+                           icon = icon("trash"), class = "btn-danger w-100")
+            ),
+            tags$small(class = "text-muted",
+                       "The removal pool is pre-seeded with the suggestion; filter the table and 'Add all in current view' for bulk edits."),
+            shinycssloaders::withSpinner(DT::DTOutput(ns("feat_tbl")), proxy.height = "300px"),
+            .qc_plot(ns("feat_density")), .qc_help_note("filter_density")
+          )
+        )
+      )
     )
+  )
   )
 }
 
@@ -426,6 +572,52 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     output$dtype_badge <- renderUI(.dtype_badge_ui(state))
     output$diag_badge  <- renderUI(.dtype_badge_ui(state))
 
+    # --- "Showing:" display subset (view-only; never mutates the dds) --------
+    output$showing_bar <- renderUI({
+      req(state$working)
+      cols <- colnames(SummarizedExperiment::colData(state$working))
+      bslib::card(class = "mb-2", bslib::card_body(class = "py-2",
+        tags$div(class = "d-flex flex-wrap gap-2 align-items-end",
+          tags$div(
+            tags$label(class = "form-label small mb-1", "Showing (display only)"),
+            selectInput(ns("show_by"), NULL,
+                        choices = c("All samples" = "__all__",
+                                    stats::setNames(cols, cols),
+                                    "Individual samples" = "__samples__"),
+                        selected = "__all__", width = "210px")),
+          uiOutput(ns("show_values_ui")),
+          actionButton(ns("show_reset"), "Reset", icon = icon("arrows-rotate"),
+                       class = "btn-sm btn-outline-secondary"),
+          tags$span(class = "text-muted small ms-auto",
+                    "Hides samples from the sample plots & correlation heatmap; does not remove data.")
+        )))
+    })
+    output$show_values_ui <- renderUI({
+      req(state$working, input$show_by)
+      if (identical(input$show_by, "__all__")) return(NULL)
+      choices <- if (identical(input$show_by, "__samples__")) {
+        colnames(state$working)
+      } else {
+        cd <- as.data.frame(SummarizedExperiment::colData(state$working))
+        sort(unique(as.character(cd[[input$show_by]])))
+      }
+      selectizeInput(ns("show_values"), "Keep", choices = choices, selected = choices,
+                     multiple = TRUE, width = "320px")
+    })
+    observeEvent(input$show_reset, updateSelectInput(session, "show_by", selected = "__all__"))
+    # Samples currently shown (always non-empty: empty selection falls back to all).
+    showing_samples <- reactive({
+      req(state$working)
+      all_s <- colnames(state$working)
+      sb <- input$show_by %||% "__all__"
+      if (identical(sb, "__all__")) return(all_s)
+      vals <- input$show_values
+      if (is.null(vals) || !length(vals)) return(all_s)
+      if (identical(sb, "__samples__")) return(intersect(all_s, vals))
+      cd <- as.data.frame(SummarizedExperiment::colData(state$working))
+      all_s[as.character(cd[[sb]]) %in% vals]
+    })
+
     # --- Sample QC: General QC + Matrix -------------------------------------
     qc_tbl <- reactive({
       req(state$working)
@@ -433,21 +625,45 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                    expr = function() qc_per_sample_metrics(state$working))
     })
 
-    output$group_ui <- group_box("group")
+    # General QC colour-by gains the removal-status / pool options.
+    output$group_ui <- renderUI({
+      req(state$working)
+      cols <- colnames(SummarizedExperiment::colData(state$working))
+      selectInput(ns("group"), "Group / colour by",
+                  choices = c(stats::setNames(cols, cols),
+                              "Removal status (this metric)" = "__removal__",
+                              "In removal pool" = "__pool__"),
+                  selected = default_group_col())
+    })
     output$auto_ui  <- auto_box("auto")
+
+    # Colour aesthetic for the General QC plot: a colData column, the reason-aware
+    # removal status (green/yellow/red), or removal-pool membership.
+    sample_aes <- function(col, metric, samples) {
+      if (identical(col, "__removal__")) {
+        fl <- samp_flags(); i <- match(samples, fl$sample)
+        rcol <- .metric_reason[[metric]]
+        this <- if (!is.null(rcol)) fl[[rcol]][i] else NULL
+        list(values = removal_status(fl$flagged[i], this), lab = "Removal status",
+             palette = .removal_palette, labels = .removal_labels)
+      } else if (identical(col, "__pool__")) {
+        inp <- samples %in% samp_pool()
+        list(values = factor(ifelse(inp, "in removal pool", "kept"),
+                             levels = c("kept", "in removal pool")),
+             lab = "Removal pool",
+             palette = c(kept = "#9aa0a6", "in removal pool" = "#D62728"), labels = NULL)
+      } else {
+        cd <- as.data.frame(SummarizedExperiment::colData(state$working))
+        v <- if (!is.null(col) && col %in% colnames(cd)) as.factor(cd[samples, col])
+             else factor(rep("all", length(samples)))
+        list(values = v, lab = col, palette = NULL, labels = NULL)
+      }
+    }
 
     current_spec <- reactive({
       req(state$working, input$x_axis, input$metric)
-      tbl <- qc_tbl()
-      grp <- input$group
-      cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      tbl$group <- if (!is.null(grp) && grp %in% colnames(cd)) {
-        as.factor(cd[tbl$sample, grp])
-      } else {
-        factor(rep("all", nrow(tbl)))
-      }
-      list(tbl = tbl, x_axis = input$x_axis, metric = input$metric,
-           group_lab = grp, sort = input$sort %||% "none")
+      list(tbl = qc_tbl(), x_axis = input$x_axis, metric = input$metric,
+           sort = input$sort %||% "none")
     })
     gen_shown <- deferred("auto", "render", current_spec)
 
@@ -455,8 +671,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(!is.null(gen_shown()),
                     "Click Render (or enable auto-render) to draw the plot."))
       s <- gen_shown()
-      .qc_metric_plot(s$tbl, s$x_axis, s$metric, s$group_lab, sort = s$sort,
-                      dark_theme = dark())
+      tbl <- s$tbl[s$tbl$sample %in% showing_samples(), , drop = FALSE]
+      validate(need(nrow(tbl) > 0, "No samples in the current 'Showing' selection."))
+      ae <- sample_aes(input$group %||% default_group_col(), s$metric, tbl$sample)
+      tbl$group <- ae$values
+      .qc_metric_plot(tbl, s$x_axis, s$metric, ae$lab, sort = s$sort,
+                      dark_theme = dark(), palette = ae$palette, palette_labels = ae$labels)
     })
 
     output$tbl <- DT::renderDT({
@@ -494,7 +714,11 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     rle_shown <- deferred("rle_auto", "rle_render", rle_spec)
     output$diag_rle <- renderPlot({
       validate(need(!is.null(rle_shown()), "Click Render (or enable auto-render)."))
-      .qc_rle_plot(rle_shown()$df, dark(), rle_shown()$n)
+      d <- rle_shown()$df
+      d <- d[d$sample %in% showing_samples(), , drop = FALSE]
+      d$sample <- droplevels(d$sample)
+      validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
+      .qc_rle_plot(d, dark(), length(levels(d$sample)))
     })
 
     dens_spec <- reactive({
@@ -508,7 +732,11 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     dens_shown <- deferred("dens_auto", "dens_render", dens_spec)
     output$diag_density <- renderPlot({
       validate(need(!is.null(dens_shown()), "Click Render (or enable auto-render)."))
-      .qc_density_plot(dens_shown()$df, dark(), dens_shown()$n)
+      d <- dens_shown()$df
+      d <- d[d$sample %in% showing_samples(), , drop = FALSE]
+      d$sample <- droplevels(d$sample)
+      validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
+      .qc_density_plot(d, dark(), length(levels(d$sample)))
     })
 
     # --- Dataset diagnostics: Mean-SD ---------------------------------------
@@ -568,8 +796,13 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(requireNamespace("ComplexHeatmap", quietly = TRUE),
                     "Install 'ComplexHeatmap' to show the correlation heatmap."))
       s <- cor_shown()
+      show <- intersect(colnames(s$cm), showing_samples())
+      validate(need(length(show) > 1,
+                    "Need at least two samples in the current 'Showing' selection."))
+      cm <- s$cm[show, show, drop = FALSE]
+      anno <- if (is.null(s$anno_df)) NULL else s$anno_df[show, , drop = FALSE]
       ComplexHeatmap::draw(.qc_correlation_heatmap(
-        s$cm, s$anno_df, dark_theme = dark(), n_samples = s$n, method = s$method))
+        cm, anno, dark_theme = dark(), n_samples = length(show), method = s$method))
     })
 
     # --- Sample Correlation: Within-group -----------------------------------
@@ -582,7 +815,170 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     wg_shown <- deferred("wg_auto", "wg_render", wg_spec)
     output$wg_plot <- renderPlot({
       validate(need(!is.null(wg_shown()), "Click Render (or enable auto-render)."))
-      .qc_within_group_plot(wg_shown(), dark_theme = dark())
+      d <- wg_shown()
+      d <- d[d$sample %in% showing_samples(), , drop = FALSE]
+      .qc_within_group_plot(d, dark_theme = dark())
+    })
+
+    # --- Filtering: shared flags + removal pools ----------------------------
+    samp_pool <- reactiveVal(character(0))
+    feat_pool <- reactiveVal(character(0))
+
+    # Advisory flags, cached on data_version + the rule inputs. Shared by the
+    # Filtering tables and the General QC "Removal status" colour-by.
+    samp_flags <- reactive({
+      req(state$working)
+      params <- list(group = input$samp_group, lib = input$samp_lib_min,
+                     det = input$samp_detected_min, mito = input$samp_mito_max,
+                     z = input$samp_wg_z %||% 2)
+      state_derive(state, "samp_flags", params = params, expr = function() {
+        flag_samples(state$working, group = input$samp_group,
+                     lib_size_min = .blank_na(input$samp_lib_min),
+                     detected_min = .blank_na(input$samp_detected_min),
+                     pct_mito_max = .blank_na(input$samp_mito_max),
+                     within_group_z = input$samp_wg_z %||% 2)
+      })
+    })
+    feat_flags <- reactive({
+      req(state$working)
+      ms <- if (isTRUE(input$feat_use_min_samples)) input$feat_min_samples else NULL
+      params <- list(fbe = isTRUE(input$feat_use_fbe), group = input$feat_group,
+                     mc = input$feat_min_count %||% 10, ms = ms)
+      state_derive(state, "feat_flags", params = params, expr = function() {
+        flag_features(state$working, use_filter_by_expr = isTRUE(input$feat_use_fbe),
+                      group = input$feat_group, min_count = input$feat_min_count %||% 10,
+                      min_samples = ms)
+      })
+    })
+
+    output$samp_group_ui <- group_box("samp_group", label = "Within-group grouping")
+    output$feat_group_ui <- renderUI({
+      req(state$working)
+      cols <- colnames(SummarizedExperiment::colData(state$working))
+      selectInput(ns("feat_group"), "filterByExpr grouping", choices = cols,
+                  selected = default_group_col())
+    })
+
+    # Features default to adopting the suggestion (re-seeded when rules change);
+    # samples stay opt-in (highlight only). Both pools reset on any data change.
+    observeEvent(feat_flags(), {
+      feat_pool(feat_flags()$feature_id[feat_flags()$suggested_drop])
+    })
+    observeEvent(state$data_version, samp_pool(character(0)))
+
+    # Tables: a read-only "Suggested" column + a separate "In pool" column; native
+    # row-selection is transient staging the buttons act on.
+    samp_display <- function(fl, pool) data.frame(
+      Sample = fl$sample, `Library size (M)` = round(fl$library_size / 1e6, 3),
+      Detected = fl$detected, `% mito` = round(fl$pct_mito, 2),
+      `Within-grp corr` = round(fl$within_group_corr, 3),
+      Suggested = ifelse(fl$flagged, "flag", ""), Reason = fl$reason,
+      `In pool` = ifelse(fl$sample %in% pool, "yes", ""),
+      check.names = FALSE, stringsAsFactors = FALSE)
+    feat_display <- function(fl, pool) data.frame(
+      Feature = fl$feature_id, Class = fl$feature_class,
+      `Total count` = round(fl$total_count), Detected = fl$n_detected,
+      `Mean log` = round(fl$mean_logcounts, 2),
+      Suggested = ifelse(fl$suggested_drop, "drop", ""), Reason = fl$reason,
+      `In pool` = ifelse(fl$feature_id %in% pool, "yes", ""),
+      check.names = FALSE, stringsAsFactors = FALSE)
+
+    output$samp_tbl <- DT::renderDT({
+      validate(need(!is.null(state$working), "No dataset loaded."))
+      dt_table(samp_display(samp_flags(), isolate(samp_pool())),
+               selection = list(mode = "multiple"))
+    }, server = TRUE)
+    output$feat_tbl <- DT::renderDT({
+      validate(need(!is.null(state$working), "No dataset loaded."))
+      dt_table(feat_display(feat_flags(), isolate(feat_pool())),
+               selection = list(mode = "multiple"))
+    }, server = TRUE)
+    samp_proxy <- DT::dataTableProxy("samp_tbl")
+    feat_proxy <- DT::dataTableProxy("feat_tbl")
+    # Refresh only the "In pool" column on pool change (keeps paging + filter).
+    observeEvent(samp_pool(), DT::replaceData(
+      samp_proxy, samp_display(samp_flags(), samp_pool()),
+      resetPaging = FALSE, clearSelection = "none", rownames = FALSE), ignoreInit = TRUE)
+    observeEvent(feat_pool(), DT::replaceData(
+      feat_proxy, feat_display(feat_flags(), feat_pool()),
+      resetPaging = FALSE, clearSelection = "none", rownames = FALSE), ignoreInit = TRUE)
+
+    # Map DT row indices (selected / matching the live filter) back to ids.
+    samp_sel  <- reactive(samp_flags()$sample[input$samp_tbl_rows_selected])
+    samp_view <- reactive(samp_flags()$sample[input$samp_tbl_rows_all])
+    feat_sel  <- reactive(feat_flags()$feature_id[input$feat_tbl_rows_selected])
+    feat_view <- reactive(feat_flags()$feature_id[input$feat_tbl_rows_all])
+
+    observeEvent(input$samp_add,      samp_pool(union(samp_pool(), samp_sel())))
+    observeEvent(input$samp_remove,   samp_pool(setdiff(samp_pool(), samp_sel())))
+    observeEvent(input$samp_add_view, samp_pool(union(samp_pool(), samp_view())))
+    observeEvent(input$samp_adopt,    samp_pool(union(samp_pool(),
+                   samp_flags()$sample[samp_flags()$flagged])))
+    observeEvent(input$samp_clear,    samp_pool(character(0)))
+    observeEvent(input$feat_add,      feat_pool(union(feat_pool(), feat_sel())))
+    observeEvent(input$feat_remove,   feat_pool(setdiff(feat_pool(), feat_sel())))
+    observeEvent(input$feat_add_view, feat_pool(union(feat_pool(), feat_view())))
+    observeEvent(input$feat_adopt,    feat_pool(union(feat_pool(),
+                   feat_flags()$feature_id[feat_flags()$suggested_drop])))
+    observeEvent(input$feat_clear,    feat_pool(character(0)))
+
+    output$samp_counts <- renderUI({
+      req(state$working)
+      .pool_counts(sum(samp_flags()$flagged), length(samp_pool()), ncol(state$working))
+    })
+    output$feat_counts <- renderUI({
+      req(state$working)
+      .pool_counts(sum(feat_flags()$suggested_drop), length(feat_pool()), nrow(state$working))
+    })
+
+    # Before/after filtering density: keep = everything not in the removal pool.
+    output$feat_density <- renderPlot({
+      req(state$working)
+      keep <- setdiff(rownames(state$working), feat_pool())
+      .qc_filter_density_plot(qc_filter_density(state$working, keep), dark_theme = dark())
+    })
+
+    # Apply removal: confirm, then a single state_mutate (undoable, logged).
+    confirm_modal <- function(ok_id, msg) showModal(modalDialog(
+      title = "Confirm removal", msg, easyClose = TRUE,
+      footer = tagList(modalButton("Cancel"),
+                       actionButton(ns(ok_id), "Remove", class = "btn-danger"))))
+    observeEvent(input$samp_apply, {
+      req(length(samp_pool()) > 0)
+      confirm_modal("samp_apply_ok",
+        sprintf("Remove %d sample(s) from the dataset? This can be undone.",
+                length(samp_pool())))
+    })
+    observeEvent(input$feat_apply, {
+      req(length(feat_pool()) > 0)
+      confirm_modal("feat_apply_ok",
+        sprintf("Remove %d feature(s) from the dataset? This can be undone.",
+                length(feat_pool())))
+    })
+    observeEvent(input$samp_apply_ok, {
+      ids <- samp_pool(); removeModal(); req(length(ids) > 0)
+      state_mutate(state, function(d) drop_samples(d, ids),
+                   action = list(action = "filter_samples", n_dropped = length(ids),
+                                 dropped = ids))
+    })
+    observeEvent(input$feat_apply_ok, {
+      ids <- feat_pool(); removeModal(); req(length(ids) > 0)
+      # Guard: a removal that zeroes a sample's library would make CPM/logcounts
+      # undefined (cpm() errors on a zero-total sample). Block with a clear note.
+      keep <- setdiff(rownames(state$working), ids)
+      lib <- colSums(as.matrix(SummarizedExperiment::assay(state$working, "counts"))[keep, , drop = FALSE])
+      if (any(lib == 0)) {
+        showNotification(
+          sprintf("Removal would empty %d sample(s) to zero counts (%s). Trim the pool or drop those samples first.",
+                  sum(lib == 0), paste(colnames(state$working)[lib == 0], collapse = ", ")),
+          type = "error", duration = NULL)
+        return(invisible())
+      }
+      state_mutate(state, function(d) drop_features(d, ids),
+                   action = list(action = "filter_features",
+                                 method = if (isTRUE(input$feat_use_fbe)) "filterByExpr" else "manual",
+                                 min_count = input$feat_min_count %||% 10,
+                                 n_dropped = length(ids), dropped = ids))
     })
 
     invisible(NULL)

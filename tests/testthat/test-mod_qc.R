@@ -122,3 +122,86 @@ test_that("QC module caches VST and sample correlation keyed on data_version", {
     expect_equal(get("sample_cor", envir = state$derived)$version, state$data_version)
   })
 })
+
+# ---- Filtering (P3c) --------------------------------------------------------
+
+test_that("applying a feature removal shrinks the dataset and logs the action", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3,
+                                                      n_spike = 2, seed = 1)), source = "demo")
+    session$setInputs(feat_use_fbe = FALSE, feat_min_count = 0, feat_use_min_samples = FALSE)
+    session$flushReact()
+    drop <- rownames(state$working)[1:3]
+    feat_pool(drop)
+    n0 <- nrow(state$working); v0 <- state$data_version
+    session$setInputs(feat_apply_ok = 1)                    # confirm-modal OK
+    expect_equal(nrow(state$working), n0 - 3L)
+    expect_false(any(drop %in% rownames(state$working)))
+    expect_gt(state$data_version, v0)
+    last <- state$history[[length(state$history)]]
+    expect_equal(last$action, "filter_features")
+    expect_equal(last$n_dropped, 3L)
+  })
+})
+
+test_that("feature pool buttons adopt suggestions (union) and clear", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3,
+                                                      n_spike = 2, seed = 2)), source = "demo")
+    total <- rowSums(as.matrix(SummarizedExperiment::assay(state$working, "counts")))
+    session$setInputs(feat_use_fbe = FALSE, feat_min_count = stats::median(total),
+                      feat_use_min_samples = FALSE)
+    session$flushReact()
+    sugg <- feat_flags()$feature_id[feat_flags()$suggested_drop]
+    expect_gt(length(sugg), 0)
+    feat_pool(character(0))
+    session$setInputs(feat_adopt = 1)
+    expect_setequal(feat_pool(), sugg)                      # union with empty = suggestions
+    session$setInputs(feat_clear = 1)
+    expect_length(feat_pool(), 0)
+  })
+})
+
+test_that("flagged samples are highlight-only (pool starts empty)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3,
+                                                      n_spike = 1, seed = 3)), source = "demo")
+    session$flushReact()
+    expect_length(samp_pool(), 0)
+    # samp_flags still computes the per-reason schema.
+    expect_true(all(c("flagged", "within_group_outlier") %in% colnames(samp_flags())))
+  })
+})
+
+test_that("Showing subset filters plotted samples without bumping data_version", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 3,
+                                                      n_spike = 1, seed = 4)), source = "demo")
+    session$flushReact()
+    v0 <- state$data_version
+    session$setInputs(show_by = "condition", show_values = "control")
+    session$flushReact()
+    shown <- showing_samples()
+    cd <- as.data.frame(SummarizedExperiment::colData(state$working))
+    expect_true(all(as.character(cd[shown, "condition"]) == "control"))
+    expect_lt(length(shown), ncol(state$working))
+    expect_equal(state$data_version, v0)                    # view-only: no bump
+  })
+})
+
+test_that("QC UI exposes the Filtering tab, pool actions, and the Showing control", {
+  html <- paste(as.character(mod_qc_ui("qc")), collapse = " ")
+  expect_match(html, "Filtering")
+  expect_match(html, "Samples")
+  expect_match(html, "Features")
+  expect_match(html, "Apply removal")
+  expect_match(html, "showing_bar")          # the page-level Showing control mount
+})
