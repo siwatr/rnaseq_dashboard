@@ -152,6 +152,15 @@ test_that("qc_within_group_correlation summarizes per-sample within-group simila
   expect_false(isTRUE(all.equal(wg$mean_corr, wg_p$mean_corr)))
 })
 
+test_that(".qc_default_group prefers a discrete column over a continuous one", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 1, seed = 9))
+  SummarizedExperiment::colData(dds)$rin <- runif(ncol(dds), 6, 10)  # continuous covariate
+  g <- ddsdashboard:::.qc_default_group(dds)
+  cd <- as.data.frame(SummarizedExperiment::colData(dds))
+  expect_true(is.factor(cd[[g]]) || is.character(cd[[g]]))  # not the numeric 'rin'
+})
+
 test_that("qc_within_group_correlation returns NA for singleton groups", {
   skip_if_not_installed("DESeq2")
   dds <- ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 1, seed = 8))

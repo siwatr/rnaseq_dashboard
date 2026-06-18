@@ -185,14 +185,19 @@ qc_sample_correlation <- function(dds, method = c("spearman", "pearson"),
   stats::cor(.qc_diagnostic_matrix(dds, assay), method = method)
 }
 
-# Default grouping column: a design variable if available, else the first
-# colData column (mirrors the module's choice; pure so helpers can reuse it).
+# Default grouping column for within-group correlation: prefer a *discrete*
+# design variable (factor/character) so a continuous covariate does not collapse
+# every sample into its own singleton group; fall back to the first discrete
+# column, then the first column. Pure so helpers/tests can reuse it.
 .qc_default_group <- function(dds) {
-  cd_cols <- colnames(SummarizedExperiment::colData(dds))
-  if (!length(cd_cols)) return(NULL)
+  cd <- as.data.frame(SummarizedExperiment::colData(dds))
+  if (!ncol(cd)) return(NULL)
+  is_discrete <- vapply(cd, function(x) is.factor(x) || is.character(x) ||
+                          is.logical(x), logical(1))
+  pool <- if (any(is_discrete)) names(cd)[is_discrete] else names(cd)
   dv <- tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0))
-  hit <- intersect(dv, cd_cols)
-  if (length(hit)) hit[1] else cd_cols[1]
+  hit <- intersect(dv, pool)
+  if (length(hit)) hit[1] else pool[1]
 }
 
 #' Within-group sample correlation
@@ -221,7 +226,11 @@ qc_within_group_correlation <- function(dds, method = c("spearman", "pearson"),
   }
   mean_corr <- vapply(seq_along(samples), function(i) {
     same <- setdiff(which(g == g[i]), i)
-    if (!length(same)) NA_real_ else mean(cm[i, same])
+    if (!length(same)) return(NA_real_)
+    # na.rm so a degenerate neighbour (constant row -> NA correlation) does not
+    # blank out an otherwise-healthy sample; all-NA neighbours -> NA.
+    m <- mean(cm[i, same], na.rm = TRUE)
+    if (is.nan(m)) NA_real_ else m
   }, numeric(1))
   data.frame(sample = samples, group = factor(g, levels = unique(g)),
              mean_corr = mean_corr, row.names = NULL, stringsAsFactors = FALSE)
