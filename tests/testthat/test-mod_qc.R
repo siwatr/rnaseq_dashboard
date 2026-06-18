@@ -82,14 +82,21 @@ test_that("dataset-diagnostic ggplot builders return ggplots (light + dark)", {
   expect_s3_class(ddsdashboard:::.qc_density_plot(expr_long, TRUE, ncol(dds)), "ggplot")
 })
 
-test_that(".qc_correlation_heatmap returns a Heatmap", {
+test_that(".qc_correlation_heatmap handles multi-column and no annotation", {
   skip_if_not_installed("DESeq2")
   skip_if_not_installed("ComplexHeatmap")
   dds <- ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 2, n_spike = 1, seed = 2))
   cm <- qc_sample_correlation(dds)
-  anno <- stats::setNames(as.character(SummarizedExperiment::colData(dds)$condition), colnames(dds))
-  ht <- ddsdashboard:::.qc_correlation_heatmap(cm, anno, "condition", n_samples = ncol(dds))
-  expect_s4_class(ht, "Heatmap")
+  cd <- as.data.frame(SummarizedExperiment::colData(dds))
+
+  # Multiple annotation columns (e.g. ~ condition + bio_rep).
+  ht_multi <- ddsdashboard:::.qc_correlation_heatmap(
+    cm, cd[, c("condition", "bio_rep"), drop = FALSE], n_samples = ncol(dds))
+  expect_s4_class(ht_multi, "Heatmap")
+
+  # No annotation.
+  ht_none <- ddsdashboard:::.qc_correlation_heatmap(cm, NULL, n_samples = ncol(dds))
+  expect_s4_class(ht_none, "Heatmap")
 })
 
 test_that("QC module caches VST and sample correlation keyed on data_version", {
@@ -101,7 +108,8 @@ test_that("QC module caches VST and sample correlation keyed on data_version", {
                source = "demo")
     session$flushReact()
     session$setInputs(diag_auto = FALSE, diag_render = 1,
-                      cor_method = "spearman", cor_anno = "condition",
+                      cor_method = "spearman", cor_no_anno = FALSE,
+                      cor_anno = c("condition", "bio_rep"),
                       cor_auto = FALSE, cor_render = 1)
     expect_true(exists("vst", envir = state$derived, inherits = FALSE))
     expect_equal(get("vst", envir = state$derived)$version, state$data_version)

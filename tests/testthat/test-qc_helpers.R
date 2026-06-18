@@ -104,3 +104,25 @@ test_that("qc_expression_long has one row per feature x sample", {
   expect_setequal(colnames(long), c("sample", "value"))
   expect_setequal(levels(long$sample), colnames(dds))
 })
+
+test_that("qc_annotation_colors maps discrete and continuous columns, stably", {
+  df <- data.frame(
+    condition = factor(c("control", "treated", "control", "treated")),
+    score     = c(1.5, 2.0, 3.0, 4.0)
+  )
+  cols <- qc_annotation_colors(df)
+  expect_setequal(names(cols), c("condition", "score"))
+  # Discrete -> named colour vector, one entry per level.
+  expect_setequal(names(cols$condition), c("control", "treated"))
+  expect_type(cols$condition, "character")
+  # Continuous -> a colour-mapping function (circlize::colorRamp2).
+  skip_if_not_installed("circlize")
+  expect_type(cols$score, "closure")
+  # Deterministic across calls (the whole point - ComplexHeatmap randomizes).
+  expect_identical(cols$condition, qc_annotation_colors(df)$condition)
+})
+
+test_that("qc_annotation_colors returns NULL for NULL/empty input", {
+  expect_null(qc_annotation_colors(NULL))
+  expect_null(qc_annotation_colors(data.frame()))
+})

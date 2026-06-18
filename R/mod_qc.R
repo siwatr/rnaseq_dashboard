@@ -118,8 +118,10 @@
 
 # Sample-sample correlation heatmap (ComplexHeatmap). Returns a Heatmap, or NULL
 # when ComplexHeatmap is unavailable (the module shows a message instead).
-# Placeholder palette - tune candidates via the Themer "Heatmap" sub-tab.
-.qc_correlation_heatmap <- function(cor_mat, anno = NULL, anno_lab = NULL,
+# `anno_df` is a samples-by-columns data.frame of metadata to annotate (or NULL
+# for none); colours come from qc_annotation_colors() so they stay stable across
+# re-renders. Placeholder body palette - tune via the Themer "Heatmap" sub-tab.
+.qc_correlation_heatmap <- function(cor_mat, anno_df = NULL,
                                     dark_theme = FALSE, n_samples = ncol(cor_mat)) {
   if (!requireNamespace("ComplexHeatmap", quietly = TRUE)) return(NULL)
   fg <- if (isTRUE(dark_theme)) "grey90" else "grey10"
@@ -131,10 +133,9 @@
     NULL
   }
   top <- NULL
-  if (!is.null(anno)) {
-    adf <- data.frame(x = factor(anno[colnames(cor_mat)]))
-    names(adf) <- anno_lab %||% "group"
-    top <- ComplexHeatmap::HeatmapAnnotation(df = adf)
+  if (!is.null(anno_df) && ncol(as.data.frame(anno_df)) > 0) {
+    adf <- as.data.frame(anno_df)[colnames(cor_mat), , drop = FALSE]
+    top <- ComplexHeatmap::HeatmapAnnotation(df = adf, col = qc_annotation_colors(adf))
   }
   show_names <- n_samples <= 30
   gp <- grid::gpar(col = fg)
@@ -271,7 +272,11 @@ mod_qc_ui <- function(id) {
           selectInput(ns("cor_method"), "Correlation method",
                       choices = c("Spearman" = "spearman", "Pearson" = "pearson"),
                       selected = "spearman"),
-          uiOutput(ns("cor_anno_ui")),
+          uiOutput(ns("cor_no_anno_ui")),
+          conditionalPanel(
+            "!input.cor_no_anno", ns = ns,
+            uiOutput(ns("cor_anno_ui"))
+          ),
           uiOutput(ns("cor_auto_ui")),
           actionButton(ns("cor_render"), "Render", class = "btn-primary")
         ),
@@ -407,11 +412,27 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
 
     # ---- Sample Correlation (P3b) ------------------------------------------
+    # Design variable(s) make a sensible default annotation (handles ~ a + b).
+    design_cols <- function() {
+      cd_cols <- colnames(SummarizedExperiment::colData(state$working))
+      dv <- tryCatch(all.vars(DESeq2::design(state$working)),
+                     error = function(e) character(0))
+      hit <- intersect(dv, cd_cols)
+      if (length(hit)) hit else utils::head(cd_cols, 1)
+    }
+
+    # "No annotation" defaults ON when there are no colData columns (e.g. a bare
+    # SummarizedExperiment), OFF otherwise.
+    output$cor_no_anno_ui <- renderUI({
+      req(state$working)
+      no_cols <- ncol(SummarizedExperiment::colData(state$working)) == 0L
+      checkboxInput(ns("cor_no_anno"), "No annotation", value = no_cols)
+    })
     output$cor_anno_ui <- renderUI({
       req(state$working)
       cols <- colnames(SummarizedExperiment::colData(state$working))
-      selectInput(ns("cor_anno"), "Annotate by", choices = cols,
-                  selected = default_group_col())
+      selectizeInput(ns("cor_anno"), "Annotate by (one or more)", choices = cols,
+                     selected = design_cols(), multiple = TRUE)
     })
     output$cor_auto_ui <- renderUI({
       req(state$working)
@@ -424,13 +445,13 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cm <- state_derive(state, "sample_cor", params = list(method = method),
                          expr = function() qc_sample_correlation(state$working, method = method))
       cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      anno_col <- input$cor_anno
-      anno <- if (!is.null(anno_col) && anno_col %in% colnames(cd)) {
-        stats::setNames(as.character(cd[[anno_col]]), rownames(cd))
-      } else {
+      cols <- intersect(input$cor_anno, colnames(cd))
+      anno_df <- if (isTRUE(input$cor_no_anno) || !length(cols)) {
         NULL
+      } else {
+        cd[, cols, drop = FALSE]
       }
-      list(cm = cm, anno = anno, anno_lab = anno_col, n = ncol(state$working))
+      list(cm = cm, anno_df = anno_df, n = ncol(state$working))
     })
 
     cor_shown <- reactiveVal(NULL)
@@ -442,7 +463,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(requireNamespace("ComplexHeatmap", quietly = TRUE),
                     "Install 'ComplexHeatmap' to show the correlation heatmap."))
       s <- cor_shown()
-      ht <- .qc_correlation_heatmap(s$cm, s$anno, s$anno_lab,
+      ht <- .qc_correlation_heatmap(s$cm, s$anno_df,
                                     dark_theme = isTRUE(dark_mode()), n_samples = s$n)
       ComplexHeatmap::draw(ht)
     })
