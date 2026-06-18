@@ -48,10 +48,7 @@ mod_metadata_server <- function(id, state) {
 
     output$sheet_preview <- DT::renderDT({
       tbl <- sheet(); req(tbl)
-      DT::datatable(tbl, rownames = FALSE,
-                    options = list(dom = "ltp", pageLength = 10, scrollX = TRUE,
-                                   lengthMenu = list(c(10, 25, 50, 100),
-                                                     c("10", "25", "50", "100"))))
+      dt_table(tbl)
     })
 
     # How many of the dataset's samples are present in the uploaded sheet.

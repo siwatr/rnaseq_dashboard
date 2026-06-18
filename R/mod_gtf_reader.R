@@ -136,10 +136,7 @@ mod_gtf_reader_server <- function(id) {
     })
     output$preview <- DT::renderDT({
       g <- gtf(); req(g)
-      DT::datatable(gtf_preview(g, n = 100L), rownames = FALSE,
-                    options = list(dom = "ltp", pageLength = 10, scrollX = TRUE,
-                                   lengthMenu = list(c(10, 25, 50, 100),
-                                                     c("10", "25", "50", "100"))))
+      dt_table(gtf_preview(g, n = 100L))
     })
 
     gtf

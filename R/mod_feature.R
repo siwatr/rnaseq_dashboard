@@ -190,10 +190,7 @@ mod_feature_server <- function(id, state) {
                                  columns = orgdb_cols(), n = 100L),
         error = function(e) NULL)
       req(df)
-      DT::datatable(df, rownames = FALSE,
-                    options = list(dom = "ltp", pageLength = 10, scrollX = TRUE,
-                                   lengthMenu = list(c(10, 25, 50, 100),
-                                                     c("10", "25", "50", "100"))))
+      dt_table(df)
     })
 
     observeEvent(input$annotate, {

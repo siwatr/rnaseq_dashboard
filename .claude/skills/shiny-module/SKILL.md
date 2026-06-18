@@ -30,6 +30,7 @@ This keeps invalidation in one place: a module never hand-rolls staleness — mu
 - **Edits go through `state_mutate`**; derived results go through `state_derive`. Modules return `invisible(NULL)` — they mutate shared `state`, they don't pass a `dds` back.
 - **Deferred rendering:** expensive work is gated behind an "apply/render" button (`bindEvent()`/`eventReactive()`), never live on every control.
 - **Stale-aware UI:** show a stale badge / disable "use" when a needed `derived` artifact is stale; gate on prerequisites (e.g. DE needs a design) with a banner.
+- **Read-only tables go through `dt_table()`** (`R/utils_table.R`) — the standard `DT::datatable()` wrapper (per-column filters, rows-per-page selector, search, horizontal scroll, `rownames = FALSE`). Extend it via its `options=`/`...` passthrough rather than hand-rolling options. The editable metadata editor (`mod_meta_editor`) keeps its own `editable`/`selection` config and is the exception.
 
 ## Composable sub-modules (established patterns)
 
