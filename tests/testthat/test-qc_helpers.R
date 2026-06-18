@@ -137,3 +137,26 @@ test_that("qc_annotation_colors returns NULL for NULL/empty input", {
   expect_null(qc_annotation_colors(NULL))
   expect_null(qc_annotation_colors(data.frame()))
 })
+
+test_that("qc_within_group_correlation summarizes per-sample within-group similarity", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3, n_spike = 2, seed = 7))
+  wg <- qc_within_group_correlation(dds, group = "condition")
+  expect_setequal(colnames(wg), c("sample", "group", "mean_corr"))
+  expect_equal(nrow(wg), ncol(dds))
+  ok <- !is.na(wg$mean_corr)
+  expect_true(all(wg$mean_corr[ok] >= -1 & wg$mean_corr[ok] <= 1))
+  expect_true(any(ok))                                  # multi-sample groups summarized
+  # honors method (rank vs linear correlation generally differ)
+  wg_p <- qc_within_group_correlation(dds, method = "pearson", group = "condition")
+  expect_false(isTRUE(all.equal(wg$mean_corr, wg_p$mean_corr)))
+})
+
+test_that("qc_within_group_correlation returns NA for singleton groups", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 1, seed = 8))
+  # Give every sample a unique group -> no within-group neighbours.
+  SummarizedExperiment::colData(dds)$solo <- factor(colnames(dds))
+  wg <- qc_within_group_correlation(dds, group = "solo")
+  expect_true(all(is.na(wg$mean_corr)))
+})

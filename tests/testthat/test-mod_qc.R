@@ -61,14 +61,13 @@ test_that(".qc_metric_plot sorts the discrete x-axis by the metric value", {
 
 # ---- Dataset diagnostics (P3b) ---------------------------------------------
 
-test_that("dataset-diagnostic ggplot builders return ggplots (light + dark)", {
+test_that("dataset/sample ggplot builders return ggplots (light + dark)", {
   skip_if_not_installed("DESeq2")
-  skip_if_not_installed("vsn")
   dds <- ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 2, n_spike = 2, seed = 1))
+  # Mean-SD is now a point-density scatter (MASS-based), no vsn/hexbin.
   vst_mat <- SummarizedExperiment::assay(qc_vst(dds))
-  # vsn emits a benign upstream aes_string() deprecation; not our concern here.
-  expect_s3_class(suppressWarnings(ddsdashboard:::.qc_meansd_plot(vst_mat, FALSE)), "ggplot")
-  expect_s3_class(suppressWarnings(ddsdashboard:::.qc_meansd_plot(vst_mat, TRUE)), "ggplot")
+  expect_s3_class(ddsdashboard:::.qc_meansd_plot(vst_mat, FALSE), "ggplot")
+  expect_s3_class(ddsdashboard:::.qc_meansd_plot(vst_mat, TRUE), "ggplot")
 
   cond <- factor(SummarizedExperiment::colData(dds)$condition)
   rle <- qc_rle_matrix(dds)              # endogenous-only -> nrow(rle) <= nrow(dds)
@@ -81,19 +80,24 @@ test_that("dataset-diagnostic ggplot builders return ggplots (light + dark)", {
   expr_long <- qc_expression_long(dds)
   expr_long$group <- rep(cond, each = nrow(expr_long) / ncol(dds))
   expect_s3_class(ddsdashboard:::.qc_density_plot(expr_long, TRUE, ncol(dds)), "ggplot")
+
+  wg <- qc_within_group_correlation(dds)
+  expect_s3_class(ddsdashboard:::.qc_within_group_plot(wg, TRUE), "ggplot")
 })
 
-test_that(".qc_correlation_heatmap handles multi-column and no annotation", {
+test_that(".qc_correlation_heatmap handles annotation variants + labels the method", {
   skip_if_not_installed("DESeq2")
   skip_if_not_installed("ComplexHeatmap")
   dds <- ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 2, n_spike = 1, seed = 2))
   cm <- qc_sample_correlation(dds)
   cd <- as.data.frame(SummarizedExperiment::colData(dds))
 
-  # Multiple annotation columns (e.g. ~ condition + bio_rep).
+  # Multiple annotation columns (e.g. ~ condition + bio_rep); method label set.
   ht_multi <- ddsdashboard:::.qc_correlation_heatmap(
-    cm, cd[, c("condition", "bio_rep"), drop = FALSE], n_samples = ncol(dds))
+    cm, cd[, c("condition", "bio_rep"), drop = FALSE], n_samples = ncol(dds),
+    method = "pearson")
   expect_s4_class(ht_multi, "Heatmap")
+  expect_match(as.character(ht_multi@column_title), "Pearson")  # method shown in title
 
   # No annotation.
   ht_none <- ddsdashboard:::.qc_correlation_heatmap(cm, NULL, n_samples = ncol(dds))
@@ -109,7 +113,7 @@ test_that("QC module caches VST and sample correlation keyed on data_version", {
                source = "demo")
     session$flushReact()
     session$setInputs(diag_auto = FALSE, diag_render = 1,
-                      cor_method = "spearman", cor_no_anno = FALSE,
+                      cor_method = "spearman",
                       cor_anno = c("condition", "bio_rep"),
                       cor_auto = FALSE, cor_render = 1)
     expect_true(exists("vst", envir = state$derived, inherits = FALSE))

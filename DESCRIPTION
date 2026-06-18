@@ -25,14 +25,15 @@ Imports:
     readxl,
     sass,
     shiny,
+    shinycssloaders,
     SummarizedExperiment,
     thematic
 Suggests:
     circlize,
     ComplexHeatmap,
     GenomicRanges,
-    hexbin,
     IRanges,
+    MASS,
     matrixStats,
     org.Hs.eg.db,
     org.Mm.eg.db,
@@ -41,7 +42,6 @@ Suggests:
     S4Vectors,
     scater,
     SingleCellExperiment,
-    testthat (>= 3.0.0),
-    vsn
+    testthat (>= 3.0.0)
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.0.0

@@ -51,8 +51,6 @@ dependencies:
   - bioconductor-edger             # filterByExpr feature filtering
   - bioconductor-apeglm            # LFC shrinkage (lfcShrink)
   - r-ashr                         # LFC shrinkage (alternative; CRAN pkg)
-  - bioconductor-vsn               # meanSdPlot (variance stabilization)
-  - r-hexbin                       # geom_hex backing for meanSdPlot
   - bioconductor-matrixgenerics    # rowVars on SE/dds assays
   - bioconductor-annotationdbi     # OrgDb querying
   - bioconductor-org.mm.eg.db      # mouse annotation

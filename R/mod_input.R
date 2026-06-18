@@ -54,6 +54,7 @@ mod_input_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
 
     observeEvent(input$load, {
+      withProgress(message = "Loading dataset...", value = 0.1, {
       obj <- tryCatch(
         switch(input$source,
           demo    = make_mock_dds(),
@@ -74,6 +75,7 @@ mod_input_server <- function(id, state) {
       )
       req(obj)
 
+      setProgress(0.6, message = "Preparing object (feature class, logcounts)...")
       res <- tryCatch({
         meta <- input_meta(obj)
         dds  <- ensure_logcounts(ensure_feature_class(as_input_dds(obj)))
@@ -91,6 +93,7 @@ mod_input_server <- function(id, state) {
                      "statistically unreliable; pseudobulk support is coming.")
       }
       showNotification(msg, type = if (isTRUE(res$meta$sce_per_cell)) "warning" else "message")
+      })
     })
 
     output$summary <- renderPrint({

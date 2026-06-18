@@ -185,6 +185,48 @@ qc_sample_correlation <- function(dds, method = c("spearman", "pearson"),
   stats::cor(.qc_diagnostic_matrix(dds, assay), method = method)
 }
 
+# Default grouping column: a design variable if available, else the first
+# colData column (mirrors the module's choice; pure so helpers can reuse it).
+.qc_default_group <- function(dds) {
+  cd_cols <- colnames(SummarizedExperiment::colData(dds))
+  if (!length(cd_cols)) return(NULL)
+  dv <- tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0))
+  hit <- intersect(dv, cd_cols)
+  if (length(hit)) hit[1] else cd_cols[1]
+}
+
+#' Within-group sample correlation
+#'
+#' For each sample, the mean correlation to the *other* samples that share its
+#' value of `group` (a `colData` column). A sample sitting well below its
+#' group-mates is a candidate outlier. Samples in a singleton group get `NA`.
+#'
+#' @param dds A `DESeqDataSet`.
+#' @param method Correlation method passed to [qc_sample_correlation()].
+#' @param group `colData` column defining groups; defaults to a design variable
+#'   (else the first `colData` column).
+#' @return A `data.frame` with columns `sample`, `group` (factor), `mean_corr`.
+#' @export
+qc_within_group_correlation <- function(dds, method = c("spearman", "pearson"),
+                                        group = NULL) {
+  method <- match.arg(method)
+  cm <- qc_sample_correlation(dds, method = method)
+  samples <- colnames(cm)
+  grp_col <- group %||% .qc_default_group(dds)
+  cd <- as.data.frame(SummarizedExperiment::colData(dds))
+  g <- if (!is.null(grp_col) && grp_col %in% colnames(cd)) {
+    as.character(cd[samples, grp_col])
+  } else {
+    rep("all", length(samples))
+  }
+  mean_corr <- vapply(seq_along(samples), function(i) {
+    same <- setdiff(which(g == g[i]), i)
+    if (!length(same)) NA_real_ else mean(cm[i, same])
+  }, numeric(1))
+  data.frame(sample = samples, group = factor(g, levels = unique(g)),
+             mean_corr = mean_corr, row.names = NULL, stringsAsFactors = FALSE)
+}
+
 #' Relative log expression (RLE) matrix
 #'
 #' Each value is its assay value minus that feature's median across samples; a
