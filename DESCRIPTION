@@ -28,9 +28,12 @@ Imports:
     SummarizedExperiment,
     thematic
 Suggests:
+    circlize,
     ComplexHeatmap,
     GenomicRanges,
+    hexbin,
     IRanges,
+    matrixStats,
     org.Hs.eg.db,
     org.Mm.eg.db,
     ps,
@@ -38,6 +41,7 @@ Suggests:
     S4Vectors,
     scater,
     SingleCellExperiment,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    vsn
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.0.0

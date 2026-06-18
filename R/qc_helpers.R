@@ -105,3 +105,91 @@ qc_per_sample_metrics <- function(dds) {
     check.names  = FALSE
   )
 }
+
+# ---- Dataset-level diagnostics (P3b) ---------------------------------------
+
+# A samples-by-? value matrix: the named assay when present, else log2(counts+1).
+# Returns features x samples with colnames = sample ids.
+.qc_assay_matrix <- function(dds, assay = "logcounts") {
+  m <- if (assay %in% SummarizedExperiment::assayNames(dds)) {
+    SummarizedExperiment::assay(dds, assay)
+  } else {
+    log2(as.matrix(SummarizedExperiment::assay(dds, "counts")) + 1)
+  }
+  m <- as.matrix(m)
+  colnames(m) <- colnames(dds)
+  m
+}
+
+#' Variance-stabilizing transform for QC
+#'
+#' Returns a [DESeq2::DESeqTransform] for the mean-SD diagnostic. Uses the fast
+#' [DESeq2::vst()] approximation when the dataset is large enough, falling back
+#' to [DESeq2::varianceStabilizingTransformation()] (which works on small or
+#' low-count data, where `vst()` errors on its `nsub` requirement).
+#'
+#' @param dds A `DESeqDataSet`.
+#' @param blind Estimate dispersions blind to the design (default `TRUE` for QC).
+#' @return A `DESeqTransform`.
+#' @export
+qc_vst <- function(dds, blind = TRUE) {
+  tryCatch(
+    DESeq2::vst(dds, blind = blind),
+    error = function(e) DESeq2::varianceStabilizingTransformation(dds, blind = blind)
+  )
+}
+
+#' Sample-to-sample correlation matrix
+#'
+#' Correlation between samples on a value assay (default `logcounts`, falling
+#' back to `log2(counts + 1)`). Drives the sample-correlation heatmap.
+#'
+#' @param dds A `DESeqDataSet`.
+#' @param method Correlation method, `"spearman"` (default) or `"pearson"`.
+#' @param assay Assay to correlate on; falls back to `log2(counts + 1)` if absent.
+#' @return A symmetric samples-by-samples correlation matrix.
+#' @export
+qc_sample_correlation <- function(dds, method = c("spearman", "pearson"),
+                                  assay = "logcounts") {
+  method <- match.arg(method)
+  stats::cor(.qc_assay_matrix(dds, assay), method = method)
+}
+
+#' Relative log expression (RLE) matrix
+#'
+#' Each value is its assay value minus that feature's median across samples; a
+#' well-normalized sample has RLE values centered on 0 with small spread. All-NA
+#' / zero-variance rows contribute 0.
+#'
+#' @param dds A `DESeqDataSet`.
+#' @param assay Assay to use; falls back to `log2(counts + 1)` if absent.
+#' @return A features-by-samples matrix of median-centered values.
+#' @export
+qc_rle_matrix <- function(dds, assay = "logcounts") {
+  m <- .qc_assay_matrix(dds, assay)
+  med <- if (requireNamespace("matrixStats", quietly = TRUE)) {
+    matrixStats::rowMedians(m)
+  } else {
+    apply(m, 1, stats::median)
+  }
+  m - med
+}
+
+#' Per-sample expression values in long form
+#'
+#' Long `data.frame` of the value assay (default `logcounts`) for the per-sample
+#' expression-density diagnostic.
+#'
+#' @param dds A `DESeqDataSet`.
+#' @param assay Assay to use; falls back to `log2(counts + 1)` if absent.
+#' @return A `data.frame` with columns `sample` (factor) and `value`, one row per
+#'   feature x sample.
+#' @export
+qc_expression_long <- function(dds, assay = "logcounts") {
+  m <- .qc_assay_matrix(dds, assay)
+  data.frame(
+    sample = factor(rep(colnames(m), each = nrow(m)), levels = colnames(m)),
+    value  = as.numeric(m),
+    stringsAsFactors = FALSE
+  )
+}
