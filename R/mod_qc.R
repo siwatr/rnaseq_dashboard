@@ -28,11 +28,13 @@
 # (incl. dark mode) at draw time; `dark_theme` is the explicit lever for element
 # choices thematic does not manage (here, gridline contrast on a dark panel).
 .qc_theme <- function(dark_theme = FALSE) {
-  base <- ggplot2::theme_minimal(base_size = 13)
+  base <- ggplot2::theme() # Placeholder for now
   grid <- if (isTRUE(dark_theme)) "grey35" else "grey85"
+  text <- if (isTRUE(dark_theme)) "grey90" else "grey25"
   base + ggplot2::theme(
     panel.grid.major = ggplot2::element_line(colour = grid),
-    panel.grid.minor = ggplot2::element_blank(),
+    panel.grid.minor = ggplot2::element_blank(), 
+    text = ggplot2::element_text(size=14, color=text),
     legend.position  = "bottom"
   )
 }
@@ -187,7 +189,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         `% spike`          = round(df$pct_spike, 2),
         check.names = FALSE
       )
-      DT::datatable(disp, rownames = FALSE, options = list(pageLength = 10, dom = "tp"))
+      dt_table(disp)
     })
 
     # Reading dark_mode() here (not in `shown`) makes the plot re-theme immediately

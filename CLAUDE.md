@@ -34,6 +34,7 @@ R/
   <topic>_helpers.R       # pure, exported, tested helpers (annotation_, gtf_, metadata_, assay_, load_)
   utils_normalization.R   # cpm(), tpm(), fpkm(), logcounts_from_counts() — pure, dependency-free, tested
   utils_lookup.R          # lookup_feature() — feature id <-> name resolution
+  utils_table.R           # dt_table() — the standard read-only DT wrapper (filters + rows-per-page)
   mock_data.R             # make_mock_dds() etc. — fixtures used by tests + the demo
 data-raw/                 # scripts that build mock dds/sce fixtures for tests + demo
 dev_ref/                  # developer reference notes (e.g. normalization-scran-vs-deseq.md)
@@ -110,6 +111,7 @@ Pages (navbar order). The first navbar entry, **Input**, is itself a sub-tabbed 
   - `sig`/`DEG` and `sig_shrunk`/`DEG_shrunk` — `sig` rule: `!is.na(padj) & padj < 0.05 & abs(<chosen LFC>) >= log2(2)`; `padj` is shared. `DEG` factor levels `up`/`down`/`no_change`. Thresholds user-adjustable; the shrinkage toggle selects which column set drives plots.
 - **Feature lookup & adaptive labels:** `lookup_feature()` resolves a query against `rowData`, defaulting to `<feature_type>_name` (e.g. `gene_name`), falling back to `rownames`. The feature unit (gene/transcript/…) is detected and relabeled dynamically; prompt when unknown; let the user correct it.
 - **Heading hierarchy in the UI:** `h1` = app title (navbar); `h2` = top-level `nav_panel` labels ("Input", "QC", …); `h3` = Input sub-tab labels ("Dataset", "Sample", "Feature", "Assay") and `card_header` titles on non-Input pages; `h4` = `card_header` titles inside Input sub-tabs and `navset_card_pill` titles. All are visually scaled with `fs-*` to fit their context. Tab/pill navigation labels (plain strings in `nav_panel`) are not headings.
+- **Read-only tables render via `dt_table()`** (`R/utils_table.R`) — the standard DT wrapper giving per-column filters, a rows-per-page selector, a search box, and horizontal scroll. Don't hand-roll `DT::datatable()` options for display tables; extend via its `options=`/`...` passthrough. The editable metadata editor (`mod_meta_editor`) is the deliberate exception (it has its own editable/selection config).
 - **Deferred rendering:** plots can be slow. Gate re-rendering behind an explicit "apply / render" button (`bindEvent()` / `eventReactive()`), not live reactivity on every input.
 - **Caching is the `derived` store** (see State model): VST/PCA/DESeq fit are version-stamped and invalidated when `data_version` changes. `bindCache()` or keyed entries both work.
 
