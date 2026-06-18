@@ -45,48 +45,81 @@
   theme
 }
 
+# Candidate ComplexHeatmap palettes (low -> high) shown as gradient swatches on
+# the Themer "Heatmap" sub-tab, so a palette can be chosen for the QC sample-
+# correlation heatmap (and later the expression heatmap). Pure reference data.
+.heatmap_palettes <- list(
+  "Blues (sequential)"        = c("#fff7fb", "#74a9cf", "#023858"),
+  "Viridis"                   = c("#440154", "#21908C", "#FDE725"),
+  "Magma"                     = c("#000004", "#B63679", "#FCFDBF"),
+  "Blue-White-Red (diverging)" = c("#2166AC", "#F7F7F7", "#B2182B")
+)
+
 # A static component gallery shown as the last navbar tab when
 # run_app(themer_mode = TRUE). Pair with bslib::run_with_themer() to watch theme
-# / colour choices apply to headings, body text, and the Bootstrap role colours
-# (primary/secondary/success/info/warning/danger/light/dark) across buttons,
-# badges, and alerts. Static UI only -- no server logic.
+# / colour choices apply to headings, body text, the Bootstrap role colours
+# (primary/secondary/success/info/warning/danger/light/dark) across buttons /
+# badges / alerts, and candidate heatmap palettes. Static UI only -- no server.
 .themer_ui <- function() {
   roles <- c("primary", "secondary", "success", "info",
              "warning", "danger", "light", "dark")
   each <- function(fn) lapply(roles, fn)
   cap <- function(x) paste0(toupper(substring(x, 1, 1)), substring(x, 2))
+  swatch <- function(name, cols) {
+    grad <- paste(cols, collapse = ", ")
+    tags$div(class = "mb-3",
+      tags$div(class = "small fw-semibold mb-1", name),
+      tags$div(style = sprintf(
+        "height:28px;border-radius:0.25rem;background:linear-gradient(to right, %s);",
+        grad)))
+  }
   bslib::nav_panel(
     tags$h2("Themer", class = "fs-6 mb-0"),
-    bslib::layout_columns(
-      col_widths = c(6, 6, 6, 6),
-      bslib::card(
-        bslib::card_header("Typography"),
-        tags$h1("Heading 1"), tags$h2("Heading 2"), tags$h3("Heading 3"),
-        tags$h4("Heading 4"), tags$h5("Heading 5"), tags$h6("Heading 6"),
-        tags$p("Body text - the quick brown fox jumps over the lazy dog."),
-        tags$p(class = "mb-0",
-               tags$a(href = "#", "a link"), " | ", tags$code("inline code"),
-               " | ", tags$small(class = "text-muted", "small muted text"))
+    bslib::navset_pill(
+      bslib::nav_panel(
+        "Components",
+        bslib::layout_columns(
+          col_widths = c(6, 6, 6, 6),
+          bslib::card(
+            bslib::card_header("Typography"),
+            tags$h1("Heading 1"), tags$h2("Heading 2"), tags$h3("Heading 3"),
+            tags$h4("Heading 4"), tags$h5("Heading 5"), tags$h6("Heading 6"),
+            tags$p("Body text - the quick brown fox jumps over the lazy dog."),
+            tags$p(class = "mb-0",
+                   tags$a(href = "#", "a link"), " | ", tags$code("inline code"),
+                   " | ", tags$small(class = "text-muted", "small muted text"))
+          ),
+          bslib::card(
+            bslib::card_header("Buttons"),
+            div(class = "d-flex flex-wrap gap-2 mb-2",
+                each(function(r) tags$button(type = "button",
+                                             class = paste0("btn btn-", r), cap(r)))),
+            div(class = "d-flex flex-wrap gap-2",
+                each(function(r) tags$button(type = "button",
+                                             class = paste0("btn btn-outline-", r), cap(r))))
+          ),
+          bslib::card(
+            bslib::card_header("Badges"),
+            div(class = "d-flex flex-wrap gap-2",
+                each(function(r) tags$span(class = paste("badge rounded-pill",
+                                                         paste0("text-bg-", r)), cap(r))))
+          ),
+          bslib::card(
+            bslib::card_header("Alerts"),
+            each(function(r) div(class = paste0("alert alert-", r), role = "alert",
+                                 paste(cap(r), "alert")))
+          )
+        )
       ),
-      bslib::card(
-        bslib::card_header("Buttons"),
-        div(class = "d-flex flex-wrap gap-2 mb-2",
-            each(function(r) tags$button(type = "button",
-                                         class = paste0("btn btn-", r), cap(r)))),
-        div(class = "d-flex flex-wrap gap-2",
-            each(function(r) tags$button(type = "button",
-                                         class = paste0("btn btn-outline-", r), cap(r))))
-      ),
-      bslib::card(
-        bslib::card_header("Badges"),
-        div(class = "d-flex flex-wrap gap-2",
-            each(function(r) tags$span(class = paste("badge rounded-pill",
-                                                     paste0("text-bg-", r)), cap(r))))
-      ),
-      bslib::card(
-        bslib::card_header("Alerts"),
-        each(function(r) div(class = paste0("alert alert-", r), role = "alert",
-                             paste(cap(r), "alert")))
+      bslib::nav_panel(
+        "Heatmap",
+        bslib::card(
+          bslib::card_header("Candidate heatmap palettes"),
+          tags$p(class = "text-muted small",
+                 "Reference swatches for the ComplexHeatmap colormap (QC sample correlation, later the expression heatmap)."),
+          lapply(names(.heatmap_palettes),
+                 function(nm) swatch(nm, .heatmap_palettes[[nm]]))
+        )
       )
     )
   )
@@ -132,6 +165,7 @@ app_ui <- function(themer_mode = FALSE) {
     bslib::nav_panel(tags$h2("DimReduc", class = "fs-6 mb-0"),  mod_dimreduc_ui("dimreduc")),
     bslib::nav_panel(tags$h2("DE", class = "fs-6 mb-0"),        mod_de_ui("de")),
     bslib::nav_panel(tags$h2("Heatmap", class = "fs-6 mb-0"),   mod_heatmap_ui("heatmap")),
+    bslib::nav_panel(tags$h2("Palette", class = "fs-6 mb-0"),   mod_palette_ui("palette")),
     bslib::nav_panel(tags$h2("Export", class = "fs-6 mb-0"),    mod_export_ui("export")),
     if (isTRUE(themer_mode)) .themer_ui(),
     bslib::nav_spacer(),
@@ -167,6 +201,7 @@ app_server <- function(input, output, session) {
   mod_dimreduc_server("dimreduc", state)
   mod_de_server("de", state)
   mod_heatmap_server("heatmap", state)
+  mod_palette_server("palette", state)
   mod_export_server("export", state)
   mod_statusbar_server("statusbar", state)
   invisible(NULL)

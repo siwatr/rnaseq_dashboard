@@ -57,3 +57,115 @@ test_that("percentages are zero when a feature subset is empty", {
   expect_true(all(m$pct_mito == 0))
   expect_true(all(m$pct_spike == 0))
 })
+
+# ---- Dataset-level diagnostics (P3b) ---------------------------------------
+
+test_that("qc_vst returns a DESeqTransform on the small mock (vst fallback)", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 100, n_per_group = 3, n_spike = 3, seed = 1)
+  v <- qc_vst(dds)
+  expect_s4_class(v, "DESeqTransform")
+  expect_equal(ncol(SummarizedExperiment::assay(v)), ncol(dds))
+})
+
+test_that("qc_sample_correlation is a symmetric n x n matrix with unit diagonal", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 2, n_spike = 2, seed = 2))
+  cm <- qc_sample_correlation(dds, method = "spearman")
+  expect_equal(dim(cm), c(ncol(dds), ncol(dds)))
+  expect_equal(unname(diag(cm)), rep(1, ncol(dds)), tolerance = 1e-8)
+  expect_equal(cm, t(cm), tolerance = 1e-8)
+  # method argument is honored (Pearson differs from Spearman in general).
+  cp <- qc_sample_correlation(dds, method = "pearson")
+  expect_false(isTRUE(all.equal(cm, cp)))
+})
+
+test_that("qc_sample_correlation falls back to log2(counts+1) without logcounts", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 1, seed = 3)
+  expect_false("logcounts" %in% SummarizedExperiment::assayNames(dds))
+  cm <- qc_sample_correlation(dds)
+  expect_equal(dim(cm), c(ncol(dds), ncol(dds)))
+})
+
+test_that("qc_rle_matrix is median-centered per gene over endogenous features", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 2, n_spike = 1, seed = 4))
+  n_endo <- sum(SummarizedExperiment::rowData(dds)$feature_class == "endogenous")
+  rle <- qc_rle_matrix(dds)
+  # Endogenous-only (spike-in/exogenous excluded, like variable-gene selection).
+  expect_equal(dim(rle), c(n_endo, ncol(dds)))
+  expect_true(all(abs(apply(rle, 1, stats::median)) < 1e-8))
+})
+
+test_that("qc_expression_long has one row per endogenous feature x sample", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 2, seed = 5))
+  n_endo <- sum(SummarizedExperiment::rowData(dds)$feature_class == "endogenous")
+  long <- qc_expression_long(dds)
+  expect_equal(nrow(long), n_endo * ncol(dds))
+  expect_setequal(colnames(long), c("sample", "value"))
+  expect_setequal(levels(long$sample), colnames(dds))
+})
+
+test_that("sample diagnostics exclude spike-in / exogenous features", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 5, seed = 6))
+  n_endo <- sum(SummarizedExperiment::rowData(dds)$feature_class == "endogenous")
+  expect_lt(n_endo, nrow(dds))                       # fixture has non-endogenous rows
+  expect_equal(nrow(qc_rle_matrix(dds)), n_endo)     # they are dropped from diagnostics
+})
+
+test_that("qc_annotation_colors maps discrete and continuous columns, stably", {
+  df <- data.frame(
+    condition = factor(c("control", "treated", "control", "treated")),
+    score     = c(1.5, 2.0, 3.0, 4.0)
+  )
+  cols <- qc_annotation_colors(df)
+  expect_setequal(names(cols), c("condition", "score"))
+  # Discrete -> named colour vector, one entry per level.
+  expect_setequal(names(cols$condition), c("control", "treated"))
+  expect_type(cols$condition, "character")
+  # Continuous -> a colour-mapping function (circlize::colorRamp2).
+  skip_if_not_installed("circlize")
+  expect_type(cols$score, "closure")
+  # Deterministic across calls (the whole point - ComplexHeatmap randomizes).
+  expect_identical(cols$condition, qc_annotation_colors(df)$condition)
+})
+
+test_that("qc_annotation_colors returns NULL for NULL/empty input", {
+  expect_null(qc_annotation_colors(NULL))
+  expect_null(qc_annotation_colors(data.frame()))
+})
+
+test_that("qc_within_group_correlation summarizes per-sample within-group similarity", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3, n_spike = 2, seed = 7))
+  wg <- qc_within_group_correlation(dds, group = "condition")
+  expect_setequal(colnames(wg), c("sample", "group", "mean_corr"))
+  expect_equal(nrow(wg), ncol(dds))
+  ok <- !is.na(wg$mean_corr)
+  expect_true(all(wg$mean_corr[ok] >= -1 & wg$mean_corr[ok] <= 1))
+  expect_true(any(ok))                                  # multi-sample groups summarized
+  # honors method (rank vs linear correlation generally differ)
+  wg_p <- qc_within_group_correlation(dds, method = "pearson", group = "condition")
+  expect_false(isTRUE(all.equal(wg$mean_corr, wg_p$mean_corr)))
+})
+
+test_that(".qc_default_group prefers a discrete column over a continuous one", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 1, seed = 9))
+  SummarizedExperiment::colData(dds)$rin <- runif(ncol(dds), 6, 10)  # continuous covariate
+  g <- ddsdashboard:::.qc_default_group(dds)
+  cd <- as.data.frame(SummarizedExperiment::colData(dds))
+  expect_true(is.factor(cd[[g]]) || is.character(cd[[g]]))  # not the numeric 'rin'
+})
+
+test_that("qc_within_group_correlation returns NA for singleton groups", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 1, seed = 8))
+  # Give every sample a unique group -> no within-group neighbours.
+  SummarizedExperiment::colData(dds)$solo <- factor(colnames(dds))
+  wg <- qc_within_group_correlation(dds, group = "solo")
+  expect_true(all(is.na(wg$mean_corr)))
+})

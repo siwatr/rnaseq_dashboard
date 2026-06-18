@@ -43,6 +43,7 @@ dependencies:
   - bioconductor-singlecellexperiment
   - bioconductor-scater
   - bioconductor-complexheatmap
+  - r-circlize                      # colorRamp2 palettes for ComplexHeatmap
   - bioconductor-rtracklayer        # read GTF/GFF annotation
   - bioconductor-genomicranges      # union-exon feature_length (reduce/width)
   - bioconductor-iranges            # width() on reduced ranges
@@ -50,7 +51,6 @@ dependencies:
   - bioconductor-edger             # filterByExpr feature filtering
   - bioconductor-apeglm            # LFC shrinkage (lfcShrink)
   - r-ashr                         # LFC shrinkage (alternative; CRAN pkg)
-  - bioconductor-vsn               # meanSdPlot (variance stabilization)
   - bioconductor-matrixgenerics    # rowVars on SE/dds assays
   - bioconductor-annotationdbi     # OrgDb querying
   - bioconductor-org.mm.eg.db      # mouse annotation

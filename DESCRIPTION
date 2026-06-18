@@ -25,12 +25,16 @@ Imports:
     readxl,
     sass,
     shiny,
+    shinycssloaders,
     SummarizedExperiment,
     thematic
 Suggests:
+    circlize,
     ComplexHeatmap,
     GenomicRanges,
     IRanges,
+    MASS,
+    matrixStats,
     org.Hs.eg.db,
     org.Mm.eg.db,
     ps,
