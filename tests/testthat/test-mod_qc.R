@@ -70,15 +70,16 @@ test_that("dataset-diagnostic ggplot builders return ggplots (light + dark)", {
   expect_s3_class(suppressWarnings(ddsdashboard:::.qc_meansd_plot(vst_mat, FALSE)), "ggplot")
   expect_s3_class(suppressWarnings(ddsdashboard:::.qc_meansd_plot(vst_mat, TRUE)), "ggplot")
 
-  rle <- qc_rle_matrix(dds)
+  cond <- factor(SummarizedExperiment::colData(dds)$condition)
+  rle <- qc_rle_matrix(dds)              # endogenous-only -> nrow(rle) <= nrow(dds)
   rle_long <- data.frame(
     sample = factor(rep(colnames(dds), each = nrow(rle)), levels = colnames(dds)),
-    group  = rep(factor(SummarizedExperiment::colData(dds)$condition), each = nrow(rle)),
+    group  = rep(cond, each = nrow(rle)),
     value  = as.numeric(rle))
   expect_s3_class(ddsdashboard:::.qc_rle_plot(rle_long, FALSE, ncol(dds)), "ggplot")
 
   expr_long <- qc_expression_long(dds)
-  expr_long$group <- rep(factor(SummarizedExperiment::colData(dds)$condition), each = nrow(dds))
+  expr_long$group <- rep(cond, each = nrow(expr_long) / ncol(dds))
   expect_s3_class(ddsdashboard:::.qc_density_plot(expr_long, TRUE, ncol(dds)), "ggplot")
 })
 

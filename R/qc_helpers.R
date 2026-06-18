@@ -108,17 +108,36 @@ qc_per_sample_metrics <- function(dds) {
 
 # ---- Dataset-level diagnostics (P3b) ---------------------------------------
 
-# A samples-by-? value matrix: the named assay when present, else log2(counts+1).
-# Returns features x samples with colnames = sample ids.
+# A features x samples value matrix: the named assay when present, else the
+# app's logcounts definition log2(CPM + 1) (NOT log2(counts+1) - the latter
+# carries library-size differences and would confound the depth-sensitive
+# diagnostics below). colnames = sample ids.
 .qc_assay_matrix <- function(dds, assay = "logcounts") {
   m <- if (assay %in% SummarizedExperiment::assayNames(dds)) {
     SummarizedExperiment::assay(dds, assay)
   } else {
-    log2(as.matrix(SummarizedExperiment::assay(dds, "counts")) + 1)
+    logcounts_from_counts(as.matrix(SummarizedExperiment::assay(dds, "counts")))
   }
   m <- as.matrix(m)
   colnames(m) <- colnames(dds)
   m
+}
+
+# Rows used for sample-level diagnostics: endogenous only (spike-in/exogenous are
+# technical and would inflate sample similarity, mirroring the variable-gene and
+# size-factor conventions). Falls back to all rows when feature_class is absent
+# or would leave nothing. (All-zero-feature dropping is deferred to filtering, P3c.)
+.qc_diagnostic_rows <- function(dds) {
+  rd <- SummarizedExperiment::rowData(dds)
+  if (!"feature_class" %in% colnames(rd)) return(rep(TRUE, nrow(dds)))
+  keep <- as.character(rd$feature_class) == "endogenous"
+  if (!any(keep)) rep(TRUE, nrow(dds)) else keep
+}
+
+# The endogenous value matrix the sample diagnostics (correlation/RLE/density)
+# operate on.
+.qc_diagnostic_matrix <- function(dds, assay = "logcounts") {
+  .qc_assay_matrix(dds, assay)[.qc_diagnostic_rows(dds), , drop = FALSE]
 }
 
 #' Variance-stabilizing transform for QC
@@ -133,9 +152,19 @@ qc_per_sample_metrics <- function(dds) {
 #' @return A `DESeqTransform`.
 #' @export
 qc_vst <- function(dds, blind = TRUE) {
+  dds <- dds[.qc_diagnostic_rows(dds), , drop = FALSE]
+  # vst() is the fast subset approximation but errors when too few features pass
+  # its `nsub` count filter (small / low-count data). Fall back to the full
+  # parametric transform only for that case; re-raise anything else.
   tryCatch(
     DESeq2::vst(dds, blind = blind),
-    error = function(e) DESeq2::varianceStabilizingTransformation(dds, blind = blind)
+    error = function(e) {
+      if (grepl("nsub|less than", conditionMessage(e), ignore.case = TRUE)) {
+        DESeq2::varianceStabilizingTransformation(dds, blind = blind)
+      } else {
+        stop(e)
+      }
+    }
   )
 }
 
@@ -146,13 +175,14 @@ qc_vst <- function(dds, blind = TRUE) {
 #'
 #' @param dds A `DESeqDataSet`.
 #' @param method Correlation method, `"spearman"` (default) or `"pearson"`.
-#' @param assay Assay to correlate on; falls back to `log2(counts + 1)` if absent.
+#' @param assay Assay to correlate on; falls back to `log2(CPM + 1)` if absent.
+#'   Computed over endogenous features only.
 #' @return A symmetric samples-by-samples correlation matrix.
 #' @export
 qc_sample_correlation <- function(dds, method = c("spearman", "pearson"),
                                   assay = "logcounts") {
   method <- match.arg(method)
-  stats::cor(.qc_assay_matrix(dds, assay), method = method)
+  stats::cor(.qc_diagnostic_matrix(dds, assay), method = method)
 }
 
 #' Relative log expression (RLE) matrix
@@ -162,11 +192,12 @@ qc_sample_correlation <- function(dds, method = c("spearman", "pearson"),
 #' / zero-variance rows contribute 0.
 #'
 #' @param dds A `DESeqDataSet`.
-#' @param assay Assay to use; falls back to `log2(counts + 1)` if absent.
+#' @param assay Assay to use; falls back to `log2(CPM + 1)` if absent. Computed
+#'   over endogenous features only.
 #' @return A features-by-samples matrix of median-centered values.
 #' @export
 qc_rle_matrix <- function(dds, assay = "logcounts") {
-  m <- .qc_assay_matrix(dds, assay)
+  m <- .qc_diagnostic_matrix(dds, assay)
   med <- if (requireNamespace("matrixStats", quietly = TRUE)) {
     matrixStats::rowMedians(m)
   } else {
@@ -181,12 +212,13 @@ qc_rle_matrix <- function(dds, assay = "logcounts") {
 #' expression-density diagnostic.
 #'
 #' @param dds A `DESeqDataSet`.
-#' @param assay Assay to use; falls back to `log2(counts + 1)` if absent.
+#' @param assay Assay to use; falls back to `log2(CPM + 1)` if absent. Computed
+#'   over endogenous features only.
 #' @return A `data.frame` with columns `sample` (factor) and `value`, one row per
-#'   feature x sample.
+#'   endogenous feature x sample.
 #' @export
 qc_expression_long <- function(dds, assay = "logcounts") {
-  m <- .qc_assay_matrix(dds, assay)
+  m <- .qc_diagnostic_matrix(dds, assay)
   data.frame(
     sample = factor(rep(colnames(m), each = nrow(m)), levels = colnames(m)),
     value  = as.numeric(m),
@@ -222,7 +254,7 @@ qc_annotation_colors <- function(df) {
   if (is.null(df) || ncol(as.data.frame(df)) == 0L) return(NULL)
   df <- as.data.frame(df)
   stats::setNames(lapply(df, function(x) {
-    if (is.numeric(x)) {
+    if (is.numeric(x) && any(is.finite(x))) {
       rng <- range(x, na.rm = TRUE)
       if (!is.finite(diff(rng)) || diff(rng) == 0) rng <- c(rng[1] - 0.5, rng[1] + 0.5)
       if (!requireNamespace("circlize", quietly = TRUE)) return(NULL)

@@ -378,15 +378,17 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       vst_mat <- SummarizedExperiment::assay(
         state_derive(state, "vst", params = list(), expr = function() qc_vst(dds)))
       cd <- as.data.frame(SummarizedExperiment::colData(dds))
-      grp <- factor(cd[[default_group_col()]])
-      n_feat <- nrow(dds)
+      # Per-sample group, mapped by sample id so it stays aligned regardless of
+      # how many features the (endogenous-only) diagnostics return.
+      grp_by_sample <- stats::setNames(as.character(cd[[default_group_col()]]), rownames(cd))
+      add_group <- function(df) { df$group <- factor(grp_by_sample[as.character(df$sample)]); df }
+
       rle <- qc_rle_matrix(dds)
-      rle_long <- data.frame(
-        sample = factor(rep(colnames(dds), each = n_feat), levels = colnames(dds)),
-        group  = rep(grp, each = n_feat),
-        value  = as.numeric(rle))
-      expr_long <- qc_expression_long(dds)
-      expr_long$group <- rep(grp, each = n_feat)
+      nf <- nrow(rle)
+      rle_long <- add_group(data.frame(
+        sample = factor(rep(colnames(rle), each = nf), levels = colnames(rle)),
+        value  = as.numeric(rle)))
+      expr_long <- add_group(qc_expression_long(dds))
       list(vst = vst_mat, rle = rle_long, expr = expr_long, n = ncol(dds))
     })
 

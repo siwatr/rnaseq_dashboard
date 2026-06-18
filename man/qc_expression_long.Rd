@@ -9,11 +9,12 @@ qc_expression_long(dds, assay = "logcounts")
 \arguments{
 \item{dds}{A \code{DESeqDataSet}.}
 
-\item{assay}{Assay to use; falls back to \code{log2(counts + 1)} if absent.}
+\item{assay}{Assay to use; falls back to \code{log2(CPM + 1)} if absent. Computed
+over endogenous features only.}
 }
 \value{
 A \code{data.frame} with columns \code{sample} (factor) and \code{value}, one row per
-feature x sample.
+endogenous feature x sample.
 }
 \description{
 Long \code{data.frame} of the value assay (default \code{logcounts}) for the per-sample

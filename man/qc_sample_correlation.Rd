@@ -15,7 +15,8 @@ qc_sample_correlation(
 
 \item{method}{Correlation method, \code{"spearman"} (default) or \code{"pearson"}.}
 
-\item{assay}{Assay to correlate on; falls back to \code{log2(counts + 1)} if absent.}
+\item{assay}{Assay to correlate on; falls back to \code{log2(CPM + 1)} if absent.
+Computed over endogenous features only.}
 }
 \value{
 A symmetric samples-by-samples correlation matrix.

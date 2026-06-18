@@ -88,21 +88,32 @@ test_that("qc_sample_correlation falls back to log2(counts+1) without logcounts"
   expect_equal(dim(cm), c(ncol(dds), ncol(dds)))
 })
 
-test_that("qc_rle_matrix is median-centered per gene", {
+test_that("qc_rle_matrix is median-centered per gene over endogenous features", {
   skip_if_not_installed("DESeq2")
   dds <- ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 2, n_spike = 1, seed = 4))
+  n_endo <- sum(SummarizedExperiment::rowData(dds)$feature_class == "endogenous")
   rle <- qc_rle_matrix(dds)
-  expect_equal(dim(rle), c(nrow(dds), ncol(dds)))
+  # Endogenous-only (spike-in/exogenous excluded, like variable-gene selection).
+  expect_equal(dim(rle), c(n_endo, ncol(dds)))
   expect_true(all(abs(apply(rle, 1, stats::median)) < 1e-8))
 })
 
-test_that("qc_expression_long has one row per feature x sample", {
+test_that("qc_expression_long has one row per endogenous feature x sample", {
   skip_if_not_installed("DESeq2")
   dds <- ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 2, seed = 5))
+  n_endo <- sum(SummarizedExperiment::rowData(dds)$feature_class == "endogenous")
   long <- qc_expression_long(dds)
-  expect_equal(nrow(long), nrow(dds) * ncol(dds))
+  expect_equal(nrow(long), n_endo * ncol(dds))
   expect_setequal(colnames(long), c("sample", "value"))
   expect_setequal(levels(long$sample), colnames(dds))
+})
+
+test_that("sample diagnostics exclude spike-in / exogenous features", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 5, seed = 6))
+  n_endo <- sum(SummarizedExperiment::rowData(dds)$feature_class == "endogenous")
+  expect_lt(n_endo, nrow(dds))                       # fixture has non-endogenous rows
+  expect_equal(nrow(qc_rle_matrix(dds)), n_endo)     # they are dropped from diagnostics
 })
 
 test_that("qc_annotation_colors maps discrete and continuous columns, stably", {

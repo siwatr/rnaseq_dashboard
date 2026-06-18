@@ -9,7 +9,8 @@ qc_rle_matrix(dds, assay = "logcounts")
 \arguments{
 \item{dds}{A \code{DESeqDataSet}.}
 
-\item{assay}{Assay to use; falls back to \code{log2(counts + 1)} if absent.}
+\item{assay}{Assay to use; falls back to \code{log2(CPM + 1)} if absent. Computed
+over endogenous features only.}
 }
 \value{
 A features-by-samples matrix of median-centered values.
