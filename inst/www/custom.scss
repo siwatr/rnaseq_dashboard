@@ -20,6 +20,18 @@ table.dataTable th {
   font-size: 0.8rem;
 }
 
+// Selected rows follow the theme primary colour (app-wide DT selection style).
+// DataTables paints selection via `tr.selected > *` with an inset box-shadow, so
+// override both that and the background to get a solid primary highlight.
+table.dataTable tbody tr.selected,
+table.dataTable tbody tr.selected td,
+table.dataTable tbody td.selected,
+table.dataTable tbody tr.selected > * {
+  background-color: var(--bs-primary) !important;
+  box-shadow: inset 0 0 0 9999px var(--bs-primary) !important;
+  color: #fff !important;
+}
+
 // --- (2) Dark-mode DataTables fixes --------------------------------------
 [data-bs-theme="dark"] {
   // Table body: follow the Bootstrap dark surface + text tokens.

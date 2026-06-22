@@ -122,3 +122,148 @@ test_that("QC module caches VST and sample correlation keyed on data_version", {
     expect_equal(get("sample_cor", envir = state$derived)$version, state$data_version)
   })
 })
+
+# ---- Filtering (P3c) --------------------------------------------------------
+
+test_that("applying a feature removal shrinks the dataset and logs the action", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3,
+                                                      n_spike = 2, seed = 1)), source = "demo")
+    session$setInputs(feat_use_fbe = FALSE, feat_min_count = 0, feat_use_min_samples = FALSE)
+    session$flushReact()
+    drop <- rownames(state$working)[1:3]
+    feat_pool(drop)
+    n0 <- nrow(state$working); v0 <- state$data_version
+    session$setInputs(feat_apply_ok = 1)                    # confirm-modal OK
+    expect_equal(nrow(state$working), n0 - 3L)
+    expect_false(any(drop %in% rownames(state$working)))
+    expect_gt(state$data_version, v0)
+    last <- state$history[[length(state$history)]]
+    expect_equal(last$action, "filter_features")
+    expect_equal(last$n_dropped, 3L)
+  })
+})
+
+test_that("feature pool buttons adopt suggestions (union) and clear", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3,
+                                                      n_spike = 2, seed = 2)), source = "demo")
+    total <- rowSums(as.matrix(SummarizedExperiment::assay(state$working, "counts")))
+    session$setInputs(feat_use_fbe = FALSE, feat_min_count = stats::median(total),
+                      feat_use_min_samples = FALSE)
+    session$flushReact()
+    sugg <- feat_flags()$feature_id[feat_flags()$suggested_drop]
+    expect_gt(length(sugg), 0)
+    feat_pool(character(0))
+    session$setInputs(feat_adopt = 1)
+    expect_setequal(feat_pool(), sugg)                      # union with empty = suggestions
+    session$setInputs(feat_clear = 1)
+    expect_length(feat_pool(), 0)
+  })
+})
+
+test_that("flagged samples are highlight-only (pool starts empty)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3,
+                                                      n_spike = 1, seed = 3)), source = "demo")
+    session$flushReact()
+    expect_length(samp_pool(), 0)
+    # samp_flags still computes the per-reason schema.
+    expect_true(all(c("flagged", "within_group_outlier") %in% colnames(samp_flags())))
+  })
+})
+
+test_that("Showing subset filters plotted samples without bumping data_version", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 3,
+                                                      n_spike = 1, seed = 4)), source = "demo")
+    session$flushReact()
+    v0 <- state$data_version
+    # Edit one tab's control; the canonical state + showing_samples() follow.
+    session$setInputs(gen_show_by = "condition")
+    session$setInputs(gen_show_values = "control")
+    session$flushReact()
+    shown <- showing_samples()
+    cd <- as.data.frame(SummarizedExperiment::colData(state$working))
+    expect_true(all(as.character(cd[shown, "condition"]) == "control"))
+    expect_lt(length(shown), ncol(state$working))
+    expect_equal(state$data_version, v0)                    # view-only: no bump
+  })
+})
+
+test_that("Showing controls share one canonical selection across tabs", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 3,
+                                                      n_spike = 1, seed = 5)), source = "demo")
+    session$flushReact()
+    session$setInputs(rle_show_by = "condition")            # edit via the RLE tab
+    session$setInputs(rle_show_values = "treated")
+    session$flushReact()
+    # The General-QC plot honors the same selection (canonical, not per-tab).
+    cd <- as.data.frame(SummarizedExperiment::colData(state$working))
+    expect_setequal(showing_samples(), rownames(cd)[cd$condition == "treated"])
+  })
+})
+
+test_that("a deferred plot reports stale when a setting changes before re-render", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2,
+                                                      n_spike = 1, seed = 6)), source = "demo")
+    session$setInputs(x_axis = "sample", metric = "library_size", group = "condition",
+                      sort = "none", auto = FALSE, render = 1)
+    session$flushReact()
+    expect_false(isTRUE(gen_shown$stale()))           # just rendered
+    session$setInputs(metric = "detected")            # a deferred setting changes
+    session$flushReact()
+    expect_true(isTRUE(gen_shown$stale()))            # stale until re-render
+    session$setInputs(render = 2)
+    session$flushReact()
+    expect_false(isTRUE(gen_shown$stale()))
+  })
+})
+
+test_that("Filtering tables use boolean columns; selection moves ids in/out of the pool", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2,
+                                                      n_spike = 1, seed = 7)), source = "demo")
+    session$setInputs(feat_use_fbe = FALSE, feat_min_count = 0, feat_use_min_samples = FALSE)
+    session$flushReact()
+    disp <- feat_display(feat_flags(), character(0))
+    expect_type(disp[["Suggested Removal"]], "logical")
+    expect_type(disp[["In Removal Pool"]], "logical")
+    ids <- feat_flags()$feature_id
+    session$setInputs(feat_tbl_rows_selected = 1:3)
+    session$setInputs(feat_add = 1)
+    expect_setequal(feat_pool(), ids[1:3])
+    session$setInputs(feat_remove = 1)
+    expect_length(feat_pool(), 0)
+  })
+})
+
+test_that("QC UI exposes the Filtering tab, pool actions, and per-sidebar Showing", {
+  html <- paste(as.character(mod_qc_ui("qc")), collapse = " ")
+  expect_match(html, "Filtering")
+  expect_match(html, "Removal Pool")                 # pool-button section header
+  expect_match(html, "Select all")
+  expect_match(html, "Add selected to pool")
+  expect_match(html, "Remove Samples")               # renamed apply buttons
+  expect_match(html, "Remove Features")
+  expect_match(html, "Set auto threshold for all settings")
+  expect_match(html, "Showing \\(display only\\)")   # the per-sidebar Showing control
+  expect_match(html, "gen_show_by")                  # one of the synced controls
+  expect_match(html, "samp_lib_auto")                # a per-field Auto button
+})
