@@ -25,6 +25,7 @@ new_app_state <- function() {
     data_version = 0L,
     history      = list(),
     undo_stack   = list(),
+    n_edits      = 0L,      # net edits applied vs original (load/reset -> 0, undo -1)
     meta         = list()
   )
   # A plain environment so writing cache entries does not trigger reactivity
@@ -69,6 +70,7 @@ state_load <- function(state, obj, source = "rds", meta = list()) {
   state$undo_stack   <- list()
   .clear_derived(state)
   state$history      <- list()
+  state$n_edits      <- 0L
   state$data_version <- state$data_version + 1L
   .log(state, list(action = "load", source = source))
   invisible(state)
@@ -91,6 +93,7 @@ state_mutate <- function(state, fn, action = list()) {
   state$undo_stack   <- utils::head(c(list(cur), state$undo_stack), .undo_depth)
   state$working      <- fn(cur)
   .clear_derived(state)
+  state$n_edits      <- state$n_edits + 1L
   state$data_version <- state$data_version + 1L
   .log(state, action)
   invisible(state)
@@ -130,6 +133,7 @@ state_reset <- function(state) {
   state$working      <- state$original
   state$undo_stack   <- list()
   .clear_derived(state)
+  state$n_edits      <- 0L
   state$data_version <- state$data_version + 1L
   .log(state, list(action = "reset"))
   invisible(state)
@@ -144,6 +148,7 @@ state_undo <- function(state) {
   state$working      <- state$undo_stack[[1L]]
   state$undo_stack   <- state$undo_stack[-1L]
   .clear_derived(state)
+  state$n_edits      <- max(0L, state$n_edits - 1L)
   state$data_version <- state$data_version + 1L
   .log(state, list(action = "undo"))
   invisible(state)
@@ -170,7 +175,7 @@ state_meta <- function(state) {
     assays       = SummarizedExperiment::assayNames(dds),
     design       = tryCatch(paste(deparse(DESeq2::design(dds)), collapse = " "),
                             error = function(e) NA_character_),
-    n_edits      = sum(vapply(state$history, function(h) !identical(h$action, "load"), logical(1))),
+    n_edits      = state$n_edits %||% 0L,
     data_version = state$data_version
   )
 }
