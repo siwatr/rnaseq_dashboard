@@ -215,11 +215,55 @@ test_that("Showing controls share one canonical selection across tabs", {
   })
 })
 
+test_that("a deferred plot reports stale when a setting changes before re-render", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2,
+                                                      n_spike = 1, seed = 6)), source = "demo")
+    session$setInputs(x_axis = "sample", metric = "library_size", group = "condition",
+                      sort = "none", auto = FALSE, render = 1)
+    session$flushReact()
+    expect_false(isTRUE(gen_shown$stale()))           # just rendered
+    session$setInputs(metric = "detected")            # a deferred setting changes
+    session$flushReact()
+    expect_true(isTRUE(gen_shown$stale()))            # stale until re-render
+    session$setInputs(render = 2)
+    session$flushReact()
+    expect_false(isTRUE(gen_shown$stale()))
+  })
+})
+
+test_that("Filtering tables use boolean columns; selection moves ids in/out of the pool", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2,
+                                                      n_spike = 1, seed = 7)), source = "demo")
+    session$setInputs(feat_use_fbe = FALSE, feat_min_count = 0, feat_use_min_samples = FALSE)
+    session$flushReact()
+    disp <- feat_display(feat_flags(), character(0))
+    expect_type(disp[["Suggested Removal"]], "logical")
+    expect_type(disp[["In Removal Pool"]], "logical")
+    ids <- feat_flags()$feature_id
+    session$setInputs(feat_tbl_rows_selected = 1:3)
+    session$setInputs(feat_add = 1)
+    expect_setequal(feat_pool(), ids[1:3])
+    session$setInputs(feat_remove = 1)
+    expect_length(feat_pool(), 0)
+  })
+})
+
 test_that("QC UI exposes the Filtering tab, pool actions, and per-sidebar Showing", {
   html <- paste(as.character(mod_qc_ui("qc")), collapse = " ")
   expect_match(html, "Filtering")
-  expect_match(html, "Apply removal")
+  expect_match(html, "Removal Pool")                 # pool-button section header
+  expect_match(html, "Select all")
+  expect_match(html, "Add selected to pool")
+  expect_match(html, "Remove Samples")               # renamed apply buttons
+  expect_match(html, "Remove Features")
+  expect_match(html, "Set auto threshold for all settings")
   expect_match(html, "Showing \\(display only\\)")   # the per-sidebar Showing control
   expect_match(html, "gen_show_by")                  # one of the synced controls
-  expect_match(html, "samp_auto")                    # the sample-threshold Auto button
+  expect_match(html, "samp_lib_auto")                # a per-field Auto button
 })

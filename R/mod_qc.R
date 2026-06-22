@@ -311,11 +311,12 @@
 # treat that threshold as "rule disabled" (no flag).
 .blank_na <- function(x) if (is.null(x) || length(x) != 1L || is.na(x)) NULL else x
 
-# Pool summary badges: suggested / in-pool / kept-of-total.
-.pool_counts <- function(suggested, pooled, total) {
-  tags$div(class = "small mb-2",
-    tags$span(class = "badge text-bg-warning me-1", paste("Suggested:", suggested)),
-    tags$span(class = "badge text-bg-danger me-1", paste("In pool:", pooled)),
+# Pool summary badges: suggested / currently-selected / remove-pool / kept-of-total.
+.pool_counts <- function(suggested, selected, pooled, total) {
+  tags$div(class = "small mb-2 d-flex flex-wrap gap-1 align-items-center",
+    tags$span(class = "badge text-bg-warning", paste("Suggested:", suggested)),
+    tags$span(class = "badge text-bg-primary", paste("Selected:", selected)),
+    tags$span(class = "badge text-bg-danger", paste("Remove pool:", pooled)),
     tags$span(class = "text-muted", sprintf("Keep %d of %d", total - pooled, total)))
 }
 
@@ -328,20 +329,26 @@
 mod_qc_ui <- function(id) {
   ns <- NS(id)
   # The removal-pool action buttons, shared by the Samples and Features pills.
+  # Select all / Deselect all stage the rows matching the current table search;
+  # the pool buttons then move that staged selection into the removal pool.
   pool_buttons <- function(prefix) {
     tags$div(
-      class = "d-grid gap-1 mb-2",
-      tags$div(class = "btn-group", role = "group",
-        actionButton(ns(paste0(prefix, "_add")), "Add selected",
+      class = "mb-2",
+      tags$div(class = "fw-semibold small text-body-secondary mb-1", "Removal Pool"),
+      tags$div(class = "btn-group btn-group-sm w-100 mb-1", role = "group",
+        actionButton(ns(paste0(prefix, "_select_all")), "Select all",
+                     class = "btn-outline-secondary"),
+        actionButton(ns(paste0(prefix, "_deselect_all")), "Deselect all",
+                     class = "btn-outline-secondary")),
+      tags$div(class = "d-grid gap-1",
+        actionButton(ns(paste0(prefix, "_add")), "Add selected to pool",
                      class = "btn-sm btn-outline-primary"),
-        actionButton(ns(paste0(prefix, "_remove")), "Remove selected",
-                     class = "btn-sm btn-outline-secondary")),
-      actionButton(ns(paste0(prefix, "_add_view")), "Add all in current view",
-                   icon = icon("filter"), class = "btn-sm btn-outline-primary"),
-      actionButton(ns(paste0(prefix, "_adopt")), "Adopt suggestions",
-                   icon = icon("wand-magic-sparkles"), class = "btn-sm btn-outline-primary"),
-      actionButton(ns(paste0(prefix, "_clear")), "Clear pool",
-                   icon = icon("arrows-rotate"), class = "btn-sm btn-outline-secondary")
+        actionButton(ns(paste0(prefix, "_remove")), "Remove selected from pool",
+                     class = "btn-sm btn-outline-secondary"),
+        actionButton(ns(paste0(prefix, "_adopt")), "Adopt remove suggestions",
+                     icon = icon("wand-magic-sparkles"), class = "btn-sm btn-outline-primary"),
+        actionButton(ns(paste0(prefix, "_clear")), "Clear pool",
+                     icon = icon("arrows-rotate"), class = "btn-sm btn-outline-secondary"))
     )
   }
   # View-only "Showing:" control, repeated in every sample-plot sidebar and kept
@@ -354,6 +361,13 @@ mod_qc_ui <- function(id) {
                    choices = character(0), multiple = TRUE,
                    options = list(placeholder = "(blank = show all)"))
   )
+  # A threshold numericInput with its own per-field "Auto" button alongside.
+  thr_input <- function(input_id, label, auto_id, ...) {
+    tags$div(class = "d-flex align-items-end gap-1 mb-2",
+      tags$div(class = "flex-grow-1", numericInput(ns(input_id), label, ...)),
+      actionButton(ns(auto_id), NULL, icon = icon("wand-magic-sparkles"),
+                   class = "btn-sm btn-outline-primary", title = "Set auto threshold"))
+  }
   bslib::navset_card_tab(
     title = tags$h3("QC & filtering", class = "fs-6 mb-0 pe-3"),
 
@@ -368,7 +382,7 @@ mod_qc_ui <- function(id) {
           uiOutput(ns("diag_auto_ui")),
           actionButton(ns("diag_render"), "Render", class = "btn-primary")
         ),
-        .qc_plot(ns("diag_meansd")), .qc_help_note("meansd")
+        uiOutput(ns("diag_stale")), .qc_plot(ns("diag_meansd")), .qc_help_note("meansd")
       )
     ),
 
@@ -399,7 +413,7 @@ mod_qc_ui <- function(id) {
               uiOutput(ns("auto_ui")),
               actionButton(ns("render"), "Render", class = "btn-primary")
             ),
-            .qc_plot(ns("plot"))
+            uiOutput(ns("gen_stale")), .qc_plot(ns("plot"))
           )
         ),
         bslib::nav_panel(
@@ -412,7 +426,7 @@ mod_qc_ui <- function(id) {
               uiOutput(ns("rle_auto_ui")),
               actionButton(ns("rle_render"), "Render", class = "btn-primary")
             ),
-            .qc_plot(ns("diag_rle")), .qc_help_note("rle")
+            uiOutput(ns("rle_stale")), .qc_plot(ns("diag_rle")), .qc_help_note("rle")
           )
         ),
         bslib::nav_panel(
@@ -425,7 +439,7 @@ mod_qc_ui <- function(id) {
               uiOutput(ns("dens_auto_ui")),
               actionButton(ns("dens_render"), "Render", class = "btn-primary")
             ),
-            .qc_plot(ns("diag_density")), .qc_help_note("density")
+            uiOutput(ns("dens_stale")), .qc_plot(ns("diag_density")), .qc_help_note("density")
           )
         ),
         bslib::nav_panel(
@@ -456,7 +470,7 @@ mod_qc_ui <- function(id) {
               uiOutput(ns("cor_auto_ui")),
               actionButton(ns("cor_render"), "Render", class = "btn-primary")
             ),
-            .qc_plot(ns("cor_plot")), .qc_help_note("correlation")
+            uiOutput(ns("cor_stale")), .qc_plot(ns("cor_plot")), .qc_help_note("correlation")
           )
         ),
         bslib::nav_panel(
@@ -469,7 +483,7 @@ mod_qc_ui <- function(id) {
               uiOutput(ns("wg_auto_ui")),
               actionButton(ns("wg_render"), "Render", class = "btn-primary")
             ),
-            .qc_plot(ns("wg_plot")), .qc_help_note("within_group")
+            uiOutput(ns("wg_stale")), .qc_plot(ns("wg_plot")), .qc_help_note("within_group")
           )
         )
       )
@@ -484,25 +498,24 @@ mod_qc_ui <- function(id) {
           bslib::layout_sidebar(
             sidebar = bslib::sidebar(
               title = tags$h4("Sample filtering", class = "fs-6 mb-0"), width = 300,
-              helpText("Flags are advisory. A blank threshold disables that check; ",
-                       tags$strong("Auto"), " fills data-driven thresholds."),
+              helpText("Flags are advisory. A blank threshold disables that check; the ",
+                       tags$strong("Auto"), " buttons fill data-driven thresholds."),
               uiOutput(ns("samp_group_ui")),
-              tags$div(class = "d-flex justify-content-end mb-1",
-                actionButton(ns("samp_auto"), "Auto", icon = icon("wand-magic-sparkles"),
-                             class = "btn-sm btn-outline-primary",
-                             title = "Fill data-driven thresholds (median +/- 3*MAD)")),
-              numericInput(ns("samp_lib_min"), "Min library size (blank = off)",
-                           value = NA, min = 0),
-              numericInput(ns("samp_detected_min"), "Min detected features (blank = off)",
-                           value = NA, min = 0),
-              numericInput(ns("samp_mito_max"), "Max % mitochondrial (blank = off)",
-                           value = NA, min = 0, max = 100),
+              thr_input("samp_lib_min", "Min library size (blank = off)", "samp_lib_auto",
+                        value = NA, min = 0),
+              thr_input("samp_detected_min", "Min detected features (blank = off)",
+                        "samp_detected_auto", value = NA, min = 0),
+              thr_input("samp_mito_max", "Max % mitochondrial (blank = off)", "samp_mito_auto",
+                        value = NA, min = 0, max = 100),
               numericInput(ns("samp_wg_z"), "Within-group outlier z-cutoff (blank = off)",
                            value = 2, min = 0, step = 0.5),
+              actionButton(ns("samp_auto"), "Set auto threshold for all settings",
+                           icon = icon("wand-magic-sparkles"),
+                           class = "btn-sm btn-outline-primary w-100 mb-2"),
               tags$hr(),
               pool_buttons("samp"),
               uiOutput(ns("samp_counts")),
-              actionButton(ns("samp_apply"), "Apply removal",
+              actionButton(ns("samp_apply"), "Remove Samples",
                            icon = icon("trash"), class = "btn-danger w-100")
             ),
             tags$small(class = "text-muted",
@@ -534,11 +547,11 @@ mod_qc_ui <- function(id) {
               tags$hr(),
               pool_buttons("feat"),
               uiOutput(ns("feat_counts")),
-              actionButton(ns("feat_apply"), "Apply removal",
+              actionButton(ns("feat_apply"), "Remove Features",
                            icon = icon("trash"), class = "btn-danger w-100")
             ),
             tags$small(class = "text-muted",
-                       "The removal pool is pre-seeded with the suggestion; filter the table and 'Add all in current view' for bulk edits."),
+                       "The removal pool is pre-seeded with the suggestion; search the table then 'Select all' + 'Add selected to pool' for bulk edits."),
             shinycssloaders::withSpinner(DT::DTOutput(ns("feat_tbl")), proxy.height = "300px"),
             .qc_plot(ns("feat_density")), .qc_help_note("filter_density")
           )
@@ -579,12 +592,28 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       checkboxInput(ns(input_id), "Auto-render", value = ncol(state$working) <= 30L)
     })
     # Deferred render: update live when auto is on, else only on the button.
-    deferred <- function(auto_id, render_id, spec) {
+    # `sig` is a cheap signature of the inputs the plot depends on; after a manual
+    # render, a change to `sig` marks the plot "stale" so we can nudge the user to
+    # re-render. Returns a list of `value()` and `stale()` reactives.
+    deferred <- function(auto_id, render_id, spec, sig) {
       rv <- reactiveVal(NULL)
-      observe({ if (isTRUE(input[[auto_id]])) rv(spec()) })
-      observeEvent(input[[render_id]], rv(spec()))
-      rv
+      last_sig <- reactiveVal(NULL)
+      go <- function() { rv(spec()); last_sig(sig()) }
+      observe({ if (isTRUE(input[[auto_id]])) go() })
+      observeEvent(input[[render_id]], go())
+      stale <- reactive({
+        if (is.null(rv()) || isTRUE(input[[auto_id]])) return(FALSE)
+        !isTRUE(all.equal(last_sig(), sig()))
+      })
+      list(value = rv, stale = stale)
     }
+    # A "settings changed -> re-render" banner, shown above a plot when stale.
+    stale_note <- function(d) renderUI({
+      if (!isTRUE(d$stale())) return(NULL)
+      tags$div(class = "alert alert-warning py-1 px-2 small mb-2 d-flex align-items-center gap-2",
+               icon("triangle-exclamation"),
+               "Settings changed - click Render to update the plot.")
+    })
 
     output$dtype_badge <- renderUI(.dtype_badge_ui(state))
     output$diag_badge  <- renderUI(.dtype_badge_ui(state))
@@ -708,12 +737,15 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       list(tbl = qc_tbl(), x_axis = input$x_axis, metric = input$metric,
            sort = input$sort %||% "none", show = showing_samples())
     })
-    gen_shown <- deferred("auto", "render", current_spec)
+    gen_shown <- deferred("auto", "render", current_spec,
+      sig = reactive(list(input$x_axis, input$metric, input$sort,
+                          show_by_rv(), show_values_rv(), state$data_version)))
+    output$gen_stale <- stale_note(gen_shown)
 
     output$plot <- renderPlot({
-      validate(need(!is.null(gen_shown()),
+      validate(need(!is.null(gen_shown$value()),
                     "Click Render (or enable auto-render) to draw the plot."))
-      s <- gen_shown()
+      s <- gen_shown$value()
       tbl <- s$tbl[s$tbl$sample %in% s$show, , drop = FALSE]
       validate(need(nrow(tbl) > 0, "No samples in the current 'Showing' selection."))
       ae <- sample_aes(input$group %||% default_group_col(), s$metric, tbl$sample)
@@ -754,10 +786,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       df$group <- factor(gmap[as.character(df$sample)])
       list(df = df, n = ncol(dds), show = showing_samples())
     })
-    rle_shown <- deferred("rle_auto", "rle_render", rle_spec)
+    rle_shown <- deferred("rle_auto", "rle_render", rle_spec,
+      sig = reactive(list(input$rle_group, show_by_rv(), show_values_rv(), state$data_version)))
+    output$rle_stale <- stale_note(rle_shown)
     output$diag_rle <- renderPlot({
-      validate(need(!is.null(rle_shown()), "Click Render (or enable auto-render)."))
-      s <- rle_shown()
+      validate(need(!is.null(rle_shown$value()), "Click Render (or enable auto-render)."))
+      s <- rle_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
@@ -772,10 +806,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       df$group <- factor(gmap[as.character(df$sample)])
       list(df = df, n = ncol(dds), show = showing_samples())
     })
-    dens_shown <- deferred("dens_auto", "dens_render", dens_spec)
+    dens_shown <- deferred("dens_auto", "dens_render", dens_spec,
+      sig = reactive(list(input$dens_group, show_by_rv(), show_values_rv(), state$data_version)))
+    output$dens_stale <- stale_note(dens_shown)
     output$diag_density <- renderPlot({
-      validate(need(!is.null(dens_shown()), "Click Render (or enable auto-render)."))
-      s <- dens_shown()
+      validate(need(!is.null(dens_shown$value()), "Click Render (or enable auto-render)."))
+      s <- dens_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
@@ -794,10 +830,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         }))
       list(vst = vst_mat)
     })
-    meansd_shown <- deferred("diag_auto", "diag_render", meansd_spec)
+    meansd_shown <- deferred("diag_auto", "diag_render", meansd_spec,
+      sig = reactive(list(state$data_version)))
+    output$diag_stale <- stale_note(meansd_shown)
     output$diag_meansd <- renderPlot({
-      validate(need(!is.null(meansd_shown()), "Click Render (or enable auto-render)."))
-      .qc_meansd_plot(meansd_shown()$vst, dark_theme = dark())
+      validate(need(!is.null(meansd_shown$value()), "Click Render (or enable auto-render)."))
+      .qc_meansd_plot(meansd_shown$value()$vst, dark_theme = dark())
     })
 
     # --- Sample Correlation: Heatmap ----------------------------------------
@@ -834,12 +872,15 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       list(cm = cm, anno_df = anno_df, n = ncol(state$working), method = method,
            show = showing_samples())
     })
-    cor_shown <- deferred("cor_auto", "cor_render", cor_spec)
+    cor_shown <- deferred("cor_auto", "cor_render", cor_spec,
+      sig = reactive(list(input$cor_method, input$cor_anno, show_by_rv(),
+                          show_values_rv(), state$data_version)))
+    output$cor_stale <- stale_note(cor_shown)
     output$cor_plot <- renderPlot({
-      validate(need(!is.null(cor_shown()), "Click Render to draw the correlation heatmap."))
+      validate(need(!is.null(cor_shown$value()), "Click Render to draw the correlation heatmap."))
       validate(need(requireNamespace("ComplexHeatmap", quietly = TRUE),
                     "Install 'ComplexHeatmap' to show the correlation heatmap."))
-      s <- cor_shown()
+      s <- cor_shown$value()
       show <- intersect(colnames(s$cm), s$show)
       validate(need(length(show) > 1,
                     "Need at least two samples in the current 'Showing' selection."))
@@ -857,10 +898,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       list(df = qc_within_group_correlation(state$working, group = input$wg_group),
            show = showing_samples())
     })
-    wg_shown <- deferred("wg_auto", "wg_render", wg_spec)
+    wg_shown <- deferred("wg_auto", "wg_render", wg_spec,
+      sig = reactive(list(input$wg_group, show_by_rv(), show_values_rv(), state$data_version)))
+    output$wg_stale <- stale_note(wg_shown)
     output$wg_plot <- renderPlot({
-      validate(need(!is.null(wg_shown()), "Click Render (or enable auto-render)."))
-      s <- wg_shown()
+      validate(need(!is.null(wg_shown$value()), "Click Render (or enable auto-render)."))
+      s <- wg_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       .qc_within_group_plot(d, dark_theme = dark())
     })
@@ -915,6 +958,13 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     }
     observeEvent(state$working, fill_samp_thresholds())
     observeEvent(input$samp_auto, fill_samp_thresholds())
+    # Per-field Auto buttons fill just their own threshold.
+    observeEvent(input$samp_lib_auto, updateNumericInput(
+      session, "samp_lib_min", value = suggest_sample_thresholds(state$working)$lib_size_min))
+    observeEvent(input$samp_detected_auto, updateNumericInput(
+      session, "samp_detected_min", value = suggest_sample_thresholds(state$working)$detected_min))
+    observeEvent(input$samp_mito_auto, updateNumericInput(
+      session, "samp_mito_max", value = suggest_sample_thresholds(state$working)$pct_mito_max))
 
     # Features default to adopting the suggestion (re-seeded when rules change);
     # samples stay opt-in (highlight only). Both pools reset on any data change.
@@ -923,21 +973,22 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
     observeEvent(state$data_version, samp_pool(character(0)))
 
-    # Tables: a read-only "Suggested" column + a separate "In pool" column; native
-    # row-selection is transient staging the buttons act on.
+    # Tables: a read-only boolean "Suggested Removal" column + a separate boolean
+    # "In Removal Pool" column; native row-selection is transient staging the
+    # pool buttons act on.
     samp_display <- function(fl, pool) data.frame(
       Sample = fl$sample, `Library size (M)` = round(fl$library_size / 1e6, 3),
       Detected = fl$detected, `% mito` = round(fl$pct_mito, 2),
       `Within-grp corr` = round(fl$within_group_corr, 3),
-      Suggested = ifelse(fl$flagged, "flag", ""), Reason = fl$reason,
-      `In pool` = ifelse(fl$sample %in% pool, "yes", ""),
+      `Suggested Removal` = fl$flagged, Reason = fl$reason,
+      `In Removal Pool` = fl$sample %in% pool,
       check.names = FALSE, stringsAsFactors = FALSE)
     feat_display <- function(fl, pool) data.frame(
       Feature = fl$feature_id, Class = fl$feature_class,
       `Total count` = round(fl$total_count), Detected = fl$n_detected,
       `Mean log` = round(fl$mean_logcounts, 2),
-      Suggested = ifelse(fl$suggested_drop, "drop", ""), Reason = fl$reason,
-      `In pool` = ifelse(fl$feature_id %in% pool, "yes", ""),
+      `Suggested Removal` = fl$suggested_drop, Reason = fl$reason,
+      `In Removal Pool` = fl$feature_id %in% pool,
       check.names = FALSE, stringsAsFactors = FALSE)
 
     output$samp_tbl <- DT::renderDT({
@@ -960,32 +1011,36 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       feat_proxy, feat_display(feat_flags(), feat_pool()),
       resetPaging = FALSE, clearSelection = "none", rownames = FALSE), ignoreInit = TRUE)
 
-    # Map DT row indices (selected / matching the live filter) back to ids.
+    # Map the (transient) DT row selection back to ids.
     samp_sel  <- reactive(samp_flags()$sample[input$samp_tbl_rows_selected])
-    samp_view <- reactive(samp_flags()$sample[input$samp_tbl_rows_all])
     feat_sel  <- reactive(feat_flags()$feature_id[input$feat_tbl_rows_selected])
-    feat_view <- reactive(feat_flags()$feature_id[input$feat_tbl_rows_all])
+
+    # Select all / Deselect all stage the rows matching the current table search.
+    observeEvent(input$samp_select_all,   DT::selectRows(samp_proxy, input$samp_tbl_rows_all))
+    observeEvent(input$samp_deselect_all, DT::selectRows(samp_proxy, NULL))
+    observeEvent(input$feat_select_all,   DT::selectRows(feat_proxy, input$feat_tbl_rows_all))
+    observeEvent(input$feat_deselect_all, DT::selectRows(feat_proxy, NULL))
 
     observeEvent(input$samp_add,      samp_pool(union(samp_pool(), samp_sel())))
     observeEvent(input$samp_remove,   samp_pool(setdiff(samp_pool(), samp_sel())))
-    observeEvent(input$samp_add_view, samp_pool(union(samp_pool(), samp_view())))
     observeEvent(input$samp_adopt,    samp_pool(union(samp_pool(),
                    samp_flags()$sample[samp_flags()$flagged])))
     observeEvent(input$samp_clear,    samp_pool(character(0)))
     observeEvent(input$feat_add,      feat_pool(union(feat_pool(), feat_sel())))
     observeEvent(input$feat_remove,   feat_pool(setdiff(feat_pool(), feat_sel())))
-    observeEvent(input$feat_add_view, feat_pool(union(feat_pool(), feat_view())))
     observeEvent(input$feat_adopt,    feat_pool(union(feat_pool(),
                    feat_flags()$feature_id[feat_flags()$suggested_drop])))
     observeEvent(input$feat_clear,    feat_pool(character(0)))
 
     output$samp_counts <- renderUI({
       req(state$working)
-      .pool_counts(sum(samp_flags()$flagged), length(samp_pool()), ncol(state$working))
+      .pool_counts(sum(samp_flags()$flagged), length(input$samp_tbl_rows_selected),
+                   length(samp_pool()), ncol(state$working))
     })
     output$feat_counts <- renderUI({
       req(state$working)
-      .pool_counts(sum(feat_flags()$suggested_drop), length(feat_pool()), nrow(state$working))
+      .pool_counts(sum(feat_flags()$suggested_drop), length(input$feat_tbl_rows_selected),
+                   length(feat_pool()), nrow(state$working))
     })
 
     # Before/after filtering density: keep = everything not in the removal pool.
