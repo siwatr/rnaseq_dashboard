@@ -38,9 +38,10 @@ mod_assay_server <- function(id, state) {
       }
     })
 
-    observeEvent(input$apply, {
-      req(state$working, input$assays)
-      sel <- input$assays
+    suppress_overwrite <- reactiveVal(FALSE)   # "don't warn again this session"
+    pending_assays     <- reactiveVal(NULL)    # selection awaiting modal confirm
+
+    do_apply <- function(sel) {
       ok <- tryCatch({
         state_mutate(state, function(d) {
           d <- add_normalized_assays(d, sel)
@@ -48,10 +49,34 @@ mod_assay_server <- function(id, state) {
         }, action = list(action = "add_assays", assays = sel))
         TRUE
       }, error = function(e) { showNotification(conditionMessage(e), type = "error"); FALSE })
-      req(ok)
+      if (!isTRUE(ok)) return(invisible())
       showNotification(sprintf("Updated assays: %s.",
                                paste(SummarizedExperiment::assayNames(state$working), collapse = ", ")),
                        type = "message")
+    }
+
+    # Recomputing an assay that already exists overwrites it -- warn first
+    # (Proceed/Cancel + a session-wide "don't warn"), mirroring the annotation tab.
+    observeEvent(input$apply, {
+      req(state$working, input$assays)
+      sel <- input$assays
+      existing <- intersect(sel, SummarizedExperiment::assayNames(state$working))
+      if (length(existing) && !isTRUE(suppress_overwrite())) {
+        pending_assays(sel)
+        showModal(modalDialog(
+          title = "Overwrite existing assay(s)?",
+          tags$p(sprintf("These assay(s) already exist and will be recomputed and overwritten: %s.",
+                         paste(existing, collapse = ", "))),
+          checkboxInput(ns("assay_ow_suppress"), "Don't warn again this session", FALSE),
+          footer = tagList(modalButton("Cancel"),
+                           actionButton(ns("assay_ow_proceed"), "Proceed", class = "btn-warning"))
+        ))
+      } else do_apply(sel)
+    })
+    observeEvent(input$assay_ow_proceed, {
+      if (isTRUE(input$assay_ow_suppress)) suppress_overwrite(TRUE)
+      sel <- pending_assays(); pending_assays(NULL); removeModal()
+      if (!is.null(sel)) do_apply(sel)
     })
 
     output$info <- renderPrint({

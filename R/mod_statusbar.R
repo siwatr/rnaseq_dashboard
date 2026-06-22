@@ -49,7 +49,17 @@ mod_statusbar_server <- function(id, state) {
         .badge(paste("assays:", paste(m$assays, collapse = ", "))),
         .badge(paste("design:", m$design))
       )
-      if (m$n_edits > 0L) badges <- c(badges, list(.badge(sprintf("%d edits", m$n_edits))))
+      # `edits` = net distance from the original (drives Reset); `undoable` = how
+      # many of those edits can still be stepped back (capped at the snapshot
+      # depth), which explains why Undo stops before reaching 0 edits.
+      if (m$n_edits > 0L) {
+        badges <- c(badges, list(
+          bslib::tooltip(.badge(sprintf("%d edits", m$n_edits)),
+                         "Edits applied since the dataset was loaded; Reset reverts all of them."),
+          bslib::tooltip(.badge(sprintf("undoable: %d", m$n_undo),
+                                if (m$n_undo > 0L) "text-bg-secondary" else "text-bg-light"),
+                         sprintf("Undo steps available now (at most %d are kept).", .undo_depth))))
+      }
       if (isTRUE(m$sce_per_cell)) {
         badges <- c(badges, list(.badge("per-cell: stats unreliable", "text-bg-warning")))
       }

@@ -158,7 +158,8 @@ state_undo <- function(state) {
 #'
 #' @param state App-state object.
 #' @return A list: `loaded`, and when loaded `data_type`, `feature_type`,
-#'   `n_features`, `n_samples`, `assays`, `design`, `n_edits`, `data_version`,
+#'   `n_features`, `n_samples`, `assays`, `design`, `n_edits`, `n_undo` (undo
+#'   steps currently available, capped at the snapshot depth), `data_version`,
 #'   and `sce_per_cell` (TRUE when a single-cell object was coerced per-cell).
 #' @export
 state_meta <- function(state) {
@@ -176,6 +177,7 @@ state_meta <- function(state) {
     design       = tryCatch(paste(deparse(DESeq2::design(dds)), collapse = " "),
                             error = function(e) NA_character_),
     n_edits      = state$n_edits %||% 0L,
+    n_undo       = length(state$undo_stack),
     data_version = state$data_version
   )
 }

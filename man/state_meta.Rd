@@ -11,7 +11,8 @@ state_meta(state)
 }
 \value{
 A list: \code{loaded}, and when loaded \code{data_type}, \code{feature_type},
-\code{n_features}, \code{n_samples}, \code{assays}, \code{design}, \code{n_edits}, \code{data_version},
+\code{n_features}, \code{n_samples}, \code{assays}, \code{design}, \code{n_edits}, \code{n_undo} (undo
+steps currently available, capped at the snapshot depth), \code{data_version},
 and \code{sce_per_cell} (TRUE when a single-cell object was coerced per-cell).
 }
 \description{

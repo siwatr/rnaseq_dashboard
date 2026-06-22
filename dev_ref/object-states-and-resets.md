@@ -69,6 +69,11 @@ targeted **resets** only.
   re-estimated when they were set.
 - The metadata "Reset to original" commits immediately (no Save) and resyncs the `draft`
   via the editor's `observeEvent(state$working, …)`.
+- The status bar shows two related badges: **`N edits`** = net distance from `original`
+  (`state$n_edits`; an explicit counter — load/reset set 0, mutate +1, undo -1 — not the
+  append-only `history` length), and **`undoable: K`** = `length(undo_stack)`, how many of
+  those edits can still be stepped back (≤ `.undo_depth`). They differ once you make more
+  than `.undo_depth` edits, which is why Undo can stop before `N edits` reaches 0.
 - Memory: `undo_stack` holds at most 5 prior `dds` snapshots. R shares unchanged memory,
   but subsetting/edits allocate fresh assay matrices, so the worst case is ~5x the
   mutated-assay footprint — bounded, and fine for bulk; lower `.undo_depth` if a future

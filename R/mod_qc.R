@@ -328,14 +328,16 @@
 
 mod_qc_ui <- function(id) {
   ns <- NS(id)
-  # Select all / Deselect all stage the rows matching the current table search;
-  # placed above the table (next to the data they act on). Two compact buttons.
-  select_buttons <- function(prefix) {
-    tags$div(class = "d-flex gap-2 mb-2",
+  # Above-table action row: Select all / Deselect all stage the rows matching the
+  # current table search; "Reset … Removal" (warning) un-filters that dimension.
+  select_buttons <- function(prefix, reset_label) {
+    tags$div(class = "d-flex gap-2 mb-2 align-items-center",
       actionButton(ns(paste0(prefix, "_select_all")), "Select all",
                    class = "btn-sm btn-outline-secondary"),
       actionButton(ns(paste0(prefix, "_deselect_all")), "Deselect all",
-                   class = "btn-sm btn-outline-secondary"))
+                   class = "btn-sm btn-outline-secondary"),
+      actionButton(ns(paste0(prefix, "_reset")), reset_label, icon = icon("rotate-left"),
+                   class = "btn-sm btn-warning ms-auto"))
   }
   # The removal-pool action buttons (sidebar): move the staged selection into or
   # out of the removal pool.
@@ -527,13 +529,11 @@ mod_qc_ui <- function(id) {
               pool_buttons("samp"),
               uiOutput(ns("samp_counts")),
               actionButton(ns("samp_apply"), "Remove Samples",
-                           icon = icon("trash"), class = "btn-danger w-100"),
-              actionButton(ns("samp_reset"), "Reset Sample Removal",
-                           icon = icon("rotate-left"), class = "btn-outline-secondary w-100 mt-1")
+                           icon = icon("trash"), class = "btn-danger w-100")
             ),
             tags$small(class = "text-muted",
                        "Select rows to stage them, then use the buttons. Flagged samples are highlighted but never pre-pooled."),
-            select_buttons("samp"),
+            select_buttons("samp", "Reset Sample Removal"),
             shinycssloaders::withSpinner(DT::DTOutput(ns("samp_tbl")), proxy.height = "300px")
           )
         ),
@@ -562,13 +562,11 @@ mod_qc_ui <- function(id) {
               pool_buttons("feat"),
               uiOutput(ns("feat_counts")),
               actionButton(ns("feat_apply"), "Remove Features",
-                           icon = icon("trash"), class = "btn-danger w-100"),
-              actionButton(ns("feat_reset"), "Reset Feature Removal",
-                           icon = icon("rotate-left"), class = "btn-outline-secondary w-100 mt-1")
+                           icon = icon("trash"), class = "btn-danger w-100")
             ),
             tags$small(class = "text-muted",
                        "The removal pool is pre-seeded with the suggestion; search the table then 'Select all' + 'Add selected to pool' for bulk edits."),
-            select_buttons("feat"),
+            select_buttons("feat", "Reset Feature Removal"),
             shinycssloaders::withSpinner(DT::DTOutput(ns("feat_tbl")), proxy.height = "300px"),
             .qc_plot(ns("feat_density")), .qc_help_note("filter_density")
           )
@@ -1038,13 +1036,14 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     observeEvent(input$feat_select_all,   DT::selectRows(feat_proxy, input$feat_tbl_rows_all))
     observeEvent(input$feat_deselect_all, DT::selectRows(feat_proxy, NULL))
 
-    observeEvent(input$samp_add,      samp_pool(union(samp_pool(), samp_sel())))
-    observeEvent(input$samp_remove,   samp_pool(setdiff(samp_pool(), samp_sel())))
+    # Staging selection is consumed once moved to/from the pool -> clear it.
+    observeEvent(input$samp_add,    { samp_pool(union(samp_pool(), samp_sel()));   DT::selectRows(samp_proxy, NULL) })
+    observeEvent(input$samp_remove, { samp_pool(setdiff(samp_pool(), samp_sel())); DT::selectRows(samp_proxy, NULL) })
     observeEvent(input$samp_adopt,    samp_pool(union(samp_pool(),
                    samp_flags()$sample[samp_flags()$flagged])))
     observeEvent(input$samp_clear,    samp_pool(character(0)))
-    observeEvent(input$feat_add,      feat_pool(union(feat_pool(), feat_sel())))
-    observeEvent(input$feat_remove,   feat_pool(setdiff(feat_pool(), feat_sel())))
+    observeEvent(input$feat_add,    { feat_pool(union(feat_pool(), feat_sel()));   DT::selectRows(feat_proxy, NULL) })
+    observeEvent(input$feat_remove, { feat_pool(setdiff(feat_pool(), feat_sel())); DT::selectRows(feat_proxy, NULL) })
     observeEvent(input$feat_adopt,    feat_pool(union(feat_pool(),
                    feat_flags()$feature_id[feat_flags()$suggested_drop])))
     observeEvent(input$feat_clear,    feat_pool(character(0)))

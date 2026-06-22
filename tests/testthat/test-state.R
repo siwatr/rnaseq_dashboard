@@ -51,9 +51,11 @@ test_that("edit count reflects net edits, not the append-only history (reset cle
   state_load(st, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1), source = "demo")
   for (i in 1:3) state_mutate(st, function(d) d, action = list(action = "noop"))
   expect_equal(state_meta(st)$n_edits, 3L)
+  expect_equal(state_meta(st)$n_undo, 3L)                  # undo steps available
 
   state_reset(st)
   expect_equal(state_meta(st)$n_edits, 0L)                 # reset zeroes the badge
+  expect_equal(state_meta(st)$n_undo, 0L)                  # and clears undo history
   expect_gt(length(st$history), 0L)                        # history log still retained
 
   state_mutate(st, function(d) d, action = list(action = "noop"))
