@@ -45,19 +45,20 @@ mod_statusbar_server <- function(id, state) {
       if (!isTRUE(m$loaded)) return(.badge("no dataset loaded", "text-bg-light"))
       badges <- list(
         .badge(m$data_type, "text-bg-info"),
-        .badge(sprintf("%s features x %s samples", m$n_features, m$n_samples)),
-        .badge(paste("assays:", paste(m$assays, collapse = ", "))),
+        bslib::tooltip(
+          .badge(sprintf("%d features | %d samples | %d assays",
+                         m$n_features, m$n_samples, length(m$assays))),
+          paste("Assays:", paste(m$assays, collapse = ", "))),
         .badge(paste("design:", m$design))
       )
-      # `edits` = net distance from the original (drives Reset); `undoable` = how
-      # many of those edits can still be stepped back (capped at the snapshot
-      # depth), which explains why Undo stops before reaching 0 edits.
+      # `N edits` = net distance from the original (drives Reset); `N undo limit`
+      # = how many of those edits can still be stepped back (capped at the
+      # snapshot depth), which explains why Undo stops before reaching 0 edits.
       if (m$n_edits > 0L) {
         badges <- c(badges, list(
-          bslib::tooltip(.badge(sprintf("%d edits", m$n_edits)),
+          bslib::tooltip(.badge(sprintf("%d edits", m$n_edits), "text-bg-light"),
                          "Edits applied since the dataset was loaded; Reset reverts all of them."),
-          bslib::tooltip(.badge(sprintf("undoable: %d", m$n_undo),
-                                if (m$n_undo > 0L) "text-bg-secondary" else "text-bg-light"),
+          bslib::tooltip(.badge(sprintf("%d undo limit", m$n_undo), "text-bg-light"),
                          sprintf("Undo steps available now (at most %d are kept).", .undo_depth))))
       }
       if (isTRUE(m$sce_per_cell)) {
