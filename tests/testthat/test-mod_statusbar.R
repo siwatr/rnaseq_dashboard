@@ -35,3 +35,15 @@ test_that("status bar Undo is a no-op on an empty stack", {
 test_that("status bar UI mounts the global-actions output", {
   expect_match(as.character(mod_statusbar_ui("sb")), "sb-actions")
 })
+
+test_that("status bar flags spike-in / exogenous features when present", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_statusbar_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 3, seed = 1),
+               source = "demo")
+    html <- paste(as.character(output$status), collapse = " ")
+    expect_match(html, "spike-in")
+    expect_match(html, "exogenous")
+  })
+})

@@ -85,3 +85,15 @@ test_that("set_spike_concentration writes spike_concentration; missing checker f
   miss <- spike_features_missing_conc(out)
   expect_setequal(miss, spike[3:4])                                         # the 0 and NA
 })
+
+test_that("spike_dose_response degrades (not errors) on a zero-library sample", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 6, seed = 9)
+  cnt <- as.matrix(SummarizedExperiment::assay(dds, "counts"))
+  cnt[, 1] <- 0L                                       # one empty/failed sample
+  SummarizedExperiment::assay(dds, "counts") <- cnt
+  dr <- spike_dose_response(dds, assay = "CPM", source = "column")   # must not error
+  expect_equal(nrow(dr$per_sample), ncol(dds))
+  expect_true(is.na(dr$per_sample$pct_spike[1]))       # zero-lib -> NA, others fine
+  expect_equal(dr$per_sample$n_spike_detected[1], 0L)
+})

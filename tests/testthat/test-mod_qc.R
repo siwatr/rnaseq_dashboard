@@ -286,3 +286,50 @@ test_that("QC per-tab Reset Feature Removal restores removed features and is und
     expect_gt(state$data_version, v)
   })
 })
+
+# ---- Spike-in (ERCC) dose-response (P3d) ------------------------------------
+
+test_that("spike-in plot builders return ggplots (light + dark)", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 60, n_per_group = 2, n_spike = 10, seed = 1)
+  dr <- spike_dose_response(dds, assay = "CPM", source = "column")
+  long <- dr$long; long$group <- factor(rep("a", nrow(long)))
+  ps <- dr$per_sample; ps$group <- factor(rep("a", nrow(ps)))
+  expect_s3_class(ddsdashboard:::.qc_spike_dr_plot(long, FALSE), "ggplot")
+  expect_s3_class(ddsdashboard:::.qc_spike_dr_plot(long, TRUE), "ggplot")
+  expect_s3_class(ddsdashboard:::.qc_spike_summary_plot(ps, "r_squared", TRUE), "ggplot")
+  expect_s3_class(ddsdashboard:::.qc_spike_summary_plot(ps, "pct_spike", FALSE), "ggplot")
+})
+
+test_that("QC spike-in view caches dose-response keyed on source + assay", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 2,
+                                                     n_spike = 8, seed = 2)), source = "demo")
+    session$flushReact()
+    session$setInputs(spike_source = "mix1", spike_assay = "CPM",
+                      spike_group = "condition", spike_auto = FALSE, spike_render = 1)
+    expect_true(exists("spike_dr", envir = state$derived, inherits = FALSE))
+    cached <- get("spike_dr", envir = state$derived)
+    expect_equal(cached$version, state$data_version)
+    expect_equal(nrow(cached$value$per_sample), ncol(state$working))
+  })
+})
+
+test_that("QC 'Remove all spike-in features' drops spikes and round-trips via reset", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2,
+                                                     n_spike = 6, seed = 3)), source = "demo")
+    session$flushReact()
+    n0 <- nrow(state$working)
+    session$setInputs(feat_drop_spike_ok = 1)               # confirm-modal OK
+    expect_equal(nrow(state$working), n0 - 6L)
+    expect_equal(state_meta(state)$n_spike_in, 0L)
+    session$setInputs(feat_reset = 1)                       # Reset Feature Removal
+    expect_equal(nrow(state$working), n0)
+    expect_equal(state_meta(state)$n_spike_in, 6L)
+  })
+})

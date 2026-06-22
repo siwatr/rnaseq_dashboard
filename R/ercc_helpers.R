@@ -54,13 +54,19 @@ resolve_spike_concentration <- function(dds, source = c("column", "mix1", "mix2"
 
 # Observed expression matrix (linear, depth-normalized) for the dose-response:
 # the named assay when present, else CPM computed from counts. Never counts /
-# logcounts (the caller restricts choices; this guards the default).
+# logcounts (the caller restricts choices; this guards the default). CPM is
+# computed defensively so a zero-library sample yields NA (dropped later) rather
+# than erroring out of the whole view (cpm() stops on a zero-total column).
 .spike_expr_matrix <- function(dds, assay = "CPM") {
   an <- SummarizedExperiment::assayNames(dds)
-  m <- if (assay %in% an && !assay %in% c("counts", "logcounts")) {
-    as.matrix(SummarizedExperiment::assay(dds, assay))
+  if (assay %in% an && !assay %in% c("counts", "logcounts")) {
+    m <- as.matrix(SummarizedExperiment::assay(dds, assay))
   } else {
-    cpm(as.matrix(SummarizedExperiment::assay(dds, "counts")))
+    counts <- as.matrix(SummarizedExperiment::assay(dds, "counts"))
+    lib <- colSums(counts)
+    m <- matrix(NA_real_, nrow(counts), ncol(counts), dimnames = dimnames(counts))
+    good <- lib > 0
+    if (any(good)) m[, good] <- sweep(counts[, good, drop = FALSE], 2L, lib[good], "/") * 1e6
   }
   colnames(m) <- colnames(dds)
   m

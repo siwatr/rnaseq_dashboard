@@ -119,6 +119,48 @@
     .qc_theme(dark_theme)
 }
 
+# ---- Spike-in (ERCC) dose-response builders --------------------------------
+
+# Per-sample metric labels for the spike-in summary plot/table.
+.spike_metric_labels <- c(
+  pct_spike        = "% spike-in (of library)",
+  n_spike_detected = "Detected spike-in features",
+  lod              = "Lowest detected conc (attomoles/uL)",
+  slope            = "Dose-response slope (log-log)",
+  r_squared        = "Dose-response R-squared")
+
+# Dose-response scatter: known concentration vs observed expression (log-log),
+# coloured by group, with a per-sample lm line. `long` carries a `group` column.
+# Zeros (undetected) are dropped before the log scales.
+.qc_spike_dr_plot <- function(long, dark_theme = FALSE) {
+  d <- long[is.finite(long$concentration) & is.finite(long$expression) &
+            long$concentration > 0 & long$expression > 0, , drop = FALSE]
+  if (!nrow(d)) return(.qc_msg_plot("No detected spike-ins with known concentration."))
+  ggplot2::ggplot(d, ggplot2::aes(x = .data$concentration, y = .data$expression,
+                                  colour = .data$group)) +
+    ggplot2::geom_point(size = 1.4, alpha = 0.7) +
+    ggplot2::geom_smooth(ggplot2::aes(group = .data$sample), method = "lm",
+                         formula = y ~ x, se = FALSE, linewidth = 0.4) +
+    ggplot2::scale_x_log10() + ggplot2::scale_y_log10() +
+    ggplot2::labs(x = "known concentration (attomoles/uL)", y = "observed expression",
+                  colour = "group") +
+    .qc_theme(dark_theme)
+}
+
+# Per-sample spike summary: a chosen metric across samples (bar, sorted), filled
+# by group. `df` is spike_dose_response()$per_sample with a `group` column.
+.qc_spike_summary_plot <- function(df, metric, dark_theme = FALSE) {
+  lab <- .spike_metric_labels[[metric]] %||% metric
+  d <- df[is.finite(df[[metric]]), , drop = FALSE]
+  if (!nrow(d)) return(.qc_msg_plot(paste("No", lab, "to show.")))
+  d$sample <- factor(d$sample, levels = d$sample[order(d[[metric]])])
+  ggplot2::ggplot(d, ggplot2::aes(x = .data$sample, y = .data[[metric]], fill = .data$group)) +
+    ggplot2::geom_col() +
+    ggplot2::labs(x = "sample", y = lab, fill = "group") +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
+    .qc_theme(dark_theme)
+}
+
 # ---- Dataset-level diagnostic plot builders --------------------------------
 
 # Per-point 2D kernel density (the colouring geom_pointdensity provides). Uses
@@ -282,7 +324,18 @@
     "Distribution of log2 expression over endogenous features, before vs after",
     "the proposed filter. The tall low-value peak is near-zero genes; a good",
     "filter removes most of it, leaving a cleaner unimodal 'after' curve.",
-    "Spike-in / exogenous features are exempt and never removed here.")
+    "Spike-in / exogenous features are exempt and never removed here."),
+  spike_dr = paste(
+    "Spike-in titration QC (technical control; not used for normalization here).",
+    "Each point is an ERCC control: known input concentration (x) vs observed",
+    "expression (y), log-log, with a per-sample fit. A healthy titration tracks a",
+    "straight line of slope ~ 1 with high R-squared; samples that fan out, flatten,",
+    "or lose low-concentration spike-ins (higher 'lowest detected conc') are",
+    "candidates for concern. Undetected (zero) spike-ins are dropped before fitting.",
+    "Slope is only meaningful when concentrations span several logs; a vertical",
+    "offset between samples reflects a differing spike-in fraction (input mass),",
+    "not titration quality. Zero/low spike-ins in only some samples usually just",
+    "means those samples were not spiked (mixed designs).")
 )
 
 # A subtle "How to read this" note placed below a diagnostic plot.
@@ -501,6 +554,39 @@ mod_qc_ui <- function(id) {
       )
     ),
 
+    # ---- Spike-in (ERCC) -----------------------------------------------------
+    bslib::nav_panel(
+      tags$h4("Spike-in (ERCC)", class = "fs-6"),
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          title = tags$h4("Spike-in titration", class = "fs-6 mb-0"), width = 300,
+          helpText("Technical QC of the ERCC titration (not used for normalization)."),
+          uiOutput(ns("spike_source_ui")),
+          uiOutput(ns("spike_assay_ui")),
+          uiOutput(ns("spike_group_ui")),
+          uiOutput(ns("spike_auto_ui")),
+          actionButton(ns("spike_render"), "Render", class = "btn-primary")
+        ),
+        uiOutput(ns("spike_msg")),
+        uiOutput(ns("spike_stale")),
+        bslib::navset_pill(
+          bslib::nav_panel("Dose-response",
+            .qc_plot(ns("spike_dr_plot")), .qc_help_note("spike_dr")),
+          bslib::nav_panel("Per-sample summary",
+            selectInput(ns("spike_metric"), "Metric",
+                        choices = c("% spike-in" = "pct_spike",
+                                    "Detected spike-in features" = "n_spike_detected",
+                                    "Lowest detected conc" = "lod",
+                                    "Dose-response slope" = "slope",
+                                    "Dose-response R-squared" = "r_squared"),
+                        selected = "r_squared"),
+            uiOutput(ns("spike_cv")),
+            .qc_plot(ns("spike_summary_plot")),
+            shinycssloaders::withSpinner(DT::DTOutput(ns("spike_table")), proxy.height = "200px"))
+        )
+      )
+    ),
+
     # ---- Filtering -----------------------------------------------------------
     bslib::nav_panel(
       tags$h4("Filtering", class = "fs-6"),
@@ -562,7 +648,11 @@ mod_qc_ui <- function(id) {
               pool_buttons("feat"),
               uiOutput(ns("feat_counts")),
               actionButton(ns("feat_apply"), "Remove Features",
-                           icon = icon("trash"), class = "btn-danger w-100")
+                           icon = icon("trash"), class = "btn-danger w-100"),
+              tags$hr(),
+              helpText("Drop all spike-in (ERCC) controls if your design has none / they failed."),
+              actionButton(ns("feat_drop_spike"), "Remove all spike-in features",
+                           icon = icon("flask"), class = "btn-outline-danger w-100")
             ),
             tags$small(class = "text-muted",
                        "The removal pool is pre-seeded with the suggestion; search the table then 'Select all' + 'Add selected to pool' for bulk edits."),
@@ -923,6 +1013,106 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       .qc_within_group_plot(d, dark_theme = dark())
     })
 
+    # --- Spike-in (ERCC) dose-response --------------------------------------
+    spike_ids <- reactive(rownames(state$working)[.detect_spike_features(state$working)])
+    # A usable spike_concentration column = present + positive for some spike rows.
+    conc_col_ok <- reactive({
+      req(state$working); ids <- spike_ids()
+      if (!length(ids)) return(FALSE)
+      length(spike_features_missing_conc(state$working)) < length(ids)
+    })
+    output$spike_source_ui <- renderUI({
+      req(state$working)
+      choices <- c("ERCC Mix 1 (bundled)" = "mix1", "ERCC Mix 2 (bundled)" = "mix2")
+      if (conc_col_ok()) choices <- c("Feature metadata (spike_concentration)" = "column", choices)
+      selectInput(ns("spike_source"), "Concentration source", choices = choices,
+                  selected = if (conc_col_ok()) "column" else "mix1")
+    })
+    output$spike_assay_ui <- renderUI({
+      req(state$working)
+      present <- intersect(c("CPM", "TPM", "FPKM"), SummarizedExperiment::assayNames(state$working))
+      selectInput(ns("spike_assay"), "Observed assay", choices = union("CPM", present), selected = "CPM")
+    })
+    output$spike_group_ui <- group_box("spike_group")
+    output$spike_auto_ui  <- auto_box("spike_auto")
+
+    spike_spec <- reactive({
+      req(state$working, input$spike_source, input$spike_assay)
+      source <- input$spike_source; assay <- input$spike_assay
+      state_derive(state, "spike_dr", params = list(source = source, assay = assay),
+                   expr = function() spike_dose_response(state$working, assay = assay, source = source))
+    })
+    spike_shown <- deferred("spike_auto", "spike_render", spike_spec,
+      sig = reactive(list(input$spike_source, input$spike_assay, state$data_version)))
+    output$spike_stale <- stale_note(spike_shown)
+
+    # group column for colouring (applied at render, not part of the cached compute)
+    spike_group_col <- function(samples) {
+      gmap <- group_lookup(input$spike_group %||% default_group_col())
+      factor(gmap[as.character(samples)])
+    }
+
+    output$spike_msg <- renderUI({
+      req(state$working)
+      if (!length(spike_ids())) {
+        return(tags$div(class = "alert alert-secondary py-2 small mb-2",
+          "No spike-in features detected. Tag ERCC controls on the Feature tab to enable this view."))
+      }
+      v <- spike_shown$value(); if (is.null(v)) return(NULL)
+      notes <- character(0)
+      # Match rate when joining the bundled ERCC reference (non-ERCC / custom
+      # spike ids resolve to NA and would yield a meaningless fit silently).
+      if (input$spike_source %in% c("mix1", "mix2")) {
+        cby <- v$long$concentration[!duplicated(v$long$feature)]
+        matched <- sum(is.finite(cby))
+        if (matched < length(cby)) notes <- c(notes, sprintf(
+          "Only %d of %d spike-in id(s) matched the ERCC reference - check the Mix, or designate a concentration column on the Feature tab.",
+          matched, length(cby)))
+      }
+      n_zero <- sum(v$per_sample$n_spike_detected == 0)
+      if (n_zero > 0L) notes <- c(notes, sprintf(
+        "%d of %d sample(s) have no detected spike-ins - often this just means they were not spiked (mixed designs). Consider removing spike-in features (Filtering tab) if your design has none.",
+        n_zero, ncol(state$working)))
+      if (!length(notes)) return(NULL)
+      tags$div(class = "alert alert-warning py-2 small mb-2", lapply(notes, tags$div))
+    })
+
+    output$spike_dr_plot <- renderPlot({
+      validate(need(length(spike_ids()) > 0, "No spike-in features in this dataset."))
+      validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
+      dr <- spike_shown$value()
+      validate(need(any(is.finite(dr$long$concentration)),
+                    "No known concentrations resolved for these spike-ins - try another source."))
+      long <- dr$long; long$group <- spike_group_col(long$sample)
+      .qc_spike_dr_plot(long, dark_theme = dark())
+    })
+
+    output$spike_summary_plot <- renderPlot({
+      validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
+      ps <- spike_shown$value()$per_sample
+      ps$group <- spike_group_col(ps$sample)
+      .qc_spike_summary_plot(ps, input$spike_metric %||% "r_squared", dark_theme = dark())
+    })
+
+    output$spike_cv <- renderUI({
+      v <- spike_shown$value(); req(v)
+      pct <- v$per_sample$pct_spike[is.finite(v$per_sample$pct_spike)]
+      if (length(pct) < 2L || mean(pct) == 0) return(NULL)
+      tags$div(class = "small text-muted mb-2",
+        sprintf("Spike-in fraction across samples: mean %.2f%%, CV %.0f%% (high CV = uneven spike input).",
+                mean(pct), 100 * stats::sd(pct) / mean(pct)))
+    })
+
+    output$spike_table <- DT::renderDT({
+      validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
+      ps <- spike_shown$value()$per_sample
+      dt_table(data.frame(
+        Sample = ps$sample, `% spike` = round(ps$pct_spike, 2),
+        Detected = ps$n_spike_detected, `Fit points` = ps$n_points,
+        Slope = round(ps$slope, 3), `R-squared` = round(ps$r_squared, 3),
+        `Lowest detected conc` = signif(ps$lod, 3), check.names = FALSE))
+    })
+
     # --- Filtering: shared flags + removal pools ----------------------------
     samp_pool <- reactiveVal(character(0))
     feat_pool <- reactiveVal(character(0))
@@ -1110,6 +1300,30 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       state_mutate(state, function(d) restore_features(d, state$original),
                    action = list(action = "restore_features", n_restored = length(removed)))
       showNotification(sprintf("Restored %d removed feature(s).", length(removed)), type = "message")
+    })
+
+    # Remove all spike-in features (sound: size factors use endogenous controlGenes,
+    # so this does not affect normalization). Reversible via "Reset Feature Removal".
+    observeEvent(input$feat_drop_spike, {
+      req(state$working)
+      ids <- rownames(state$working)[.detect_spike_features(state$working)]
+      if (!length(ids)) {
+        showNotification("No spike-in features to remove.", type = "message"); return()
+      }
+      showModal(modalDialog(
+        title = "Remove all spike-in features?",
+        sprintf("Drop %d spike-in (ERCC) feature(s) from the working dataset? This removes the spike-in QC; restore via 'Reset Feature Removal'.", length(ids)),
+        easyClose = TRUE,
+        footer = tagList(modalButton("Cancel"),
+                         actionButton(ns("feat_drop_spike_ok"), "Remove", class = "btn-danger"))))
+    })
+    observeEvent(input$feat_drop_spike_ok, {
+      removeModal()
+      ids <- rownames(state$working)[.detect_spike_features(state$working)]
+      req(length(ids) > 0)
+      state_mutate(state, function(d) drop_features(d, ids),
+                   action = list(action = "drop_spike_in", n_dropped = length(ids)))
+      showNotification(sprintf("Removed %d spike-in feature(s).", length(ids)), type = "message")
     })
 
     observeEvent(input$feat_apply_ok, {

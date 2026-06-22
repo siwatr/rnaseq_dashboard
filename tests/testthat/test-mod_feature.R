@@ -120,3 +120,25 @@ test_that("Feature-info: GTF edits compose with unsaved draft edits", {
     expect_equal(as.numeric(rd$feature_length), c(202, 201, 501)) # plus GTF length
   })
 })
+
+test_that("Feature tab: 'Set as spike-in concentration' writes spike_concentration on Save", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_feature_server, args = list(state = state), {
+    dds <- make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 3, seed = 1)
+    # Add a numeric column carrying a (different) concentration for spike rows.
+    dds <- add_meta_column(dds, "rowData", "my_conc", "numeric", NA)
+    spike <- rownames(dds)[ddsdashboard:::.detect_spike_features(dds)]
+    rd <- SummarizedExperiment::rowData(dds)
+    rd$my_conc[match(spike, rownames(dds))] <- c(5, 50, 500)
+    SummarizedExperiment::rowData(dds) <- rd
+    state_load(state, dds, source = "demo")
+    session$flushReact()
+    session$setInputs(spike_col = "my_conc", set_spike_conc = 1)
+    # mock already has a spike_concentration column -> overwrite guard fires.
+    session$setInputs(ow_proceed = 1)
+    session$setInputs(`editor-save` = 1)            # Save lives in the editor submodule
+    sc <- SummarizedExperiment::rowData(state$working)$spike_concentration
+    expect_equal(sc[match(spike, rownames(state$working))], c(5, 50, 500))
+  })
+})

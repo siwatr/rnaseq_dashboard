@@ -51,6 +51,14 @@ mod_statusbar_server <- function(id, state) {
           paste("Assays:", paste(m$assays, collapse = ", "))),
         .badge(paste("design:", m$design))
       )
+      # Flag non-endogenous features (spike-in / exogenous) when present.
+      if (isTRUE(m$n_spike_in > 0L) || isTRUE(m$n_exogenous > 0L)) {
+        parts <- c(if (m$n_spike_in > 0L) sprintf("%d spike-in", m$n_spike_in),
+                   if (m$n_exogenous > 0L) sprintf("%d exogenous", m$n_exogenous))
+        badges <- c(badges, list(bslib::tooltip(
+          .badge(paste(parts, collapse = " / "), "text-bg-light"),
+          "Non-endogenous features present (excluded from normalization, variable-gene selection, and expression filtering).")))
+      }
       # `N edits` = net distance from the original (drives Reset); `N undo limit`
       # = how many of those edits can still be stepped back (capped at the
       # snapshot depth), which explains why Undo stops before reaching 0 edits.
