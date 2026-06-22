@@ -328,18 +328,21 @@
 
 mod_qc_ui <- function(id) {
   ns <- NS(id)
-  # The removal-pool action buttons, shared by the Samples and Features pills.
   # Select all / Deselect all stage the rows matching the current table search;
-  # the pool buttons then move that staged selection into the removal pool.
+  # placed above the table (next to the data they act on). Two compact buttons.
+  select_buttons <- function(prefix) {
+    tags$div(class = "d-flex gap-2 mb-2",
+      actionButton(ns(paste0(prefix, "_select_all")), "Select all",
+                   class = "btn-sm btn-outline-secondary"),
+      actionButton(ns(paste0(prefix, "_deselect_all")), "Deselect all",
+                   class = "btn-sm btn-outline-secondary"))
+  }
+  # The removal-pool action buttons (sidebar): move the staged selection into or
+  # out of the removal pool.
   pool_buttons <- function(prefix) {
     tags$div(
       class = "mb-2",
       tags$div(class = "fw-semibold small text-body-secondary mb-1", "Removal Pool"),
-      tags$div(class = "btn-group btn-group-sm w-100 mb-1", role = "group",
-        actionButton(ns(paste0(prefix, "_select_all")), "Select all",
-                     class = "btn-outline-secondary"),
-        actionButton(ns(paste0(prefix, "_deselect_all")), "Deselect all",
-                     class = "btn-outline-secondary")),
       tags$div(class = "d-grid gap-1",
         actionButton(ns(paste0(prefix, "_add")), "Add selected to pool",
                      class = "btn-sm btn-outline-primary"),
@@ -361,12 +364,19 @@ mod_qc_ui <- function(id) {
                    choices = character(0), multiple = TRUE,
                    options = list(placeholder = "(blank = show all)"))
   )
-  # A threshold numericInput with its own per-field "Auto" button alongside.
-  thr_input <- function(input_id, label, auto_id, ...) {
-    tags$div(class = "d-flex align-items-end gap-1 mb-2",
-      tags$div(class = "flex-grow-1", numericInput(ns(input_id), label, ...)),
-      actionButton(ns(auto_id), NULL, icon = icon("wand-magic-sparkles"),
-                   class = "btn-sm btn-outline-primary", title = "Set auto threshold"))
+  # A threshold numericInput with its own per-field "Auto" button alongside. The
+  # label sits on its own line; the input (wide) and the smaller wand button sit
+  # on the next line, vertically centred so they read as aligned. `tip` is the
+  # button's hover text (e.g. "Auto threshold: min. library size").
+  thr_input <- function(input_id, label, auto_id, tip, ...) {
+    tags$div(class = "mb-2",
+      tags$label(label, class = "form-label mb-1", `for` = ns(input_id)),
+      tags$div(class = "d-flex align-items-center gap-1",
+        tags$div(class = "flex-grow-1", numericInput(ns(input_id), label = NULL, ...)),
+        bslib::tooltip(
+          actionButton(ns(auto_id), NULL, icon = icon("wand-magic-sparkles"),
+                       class = "btn-sm btn-outline-primary"),
+          tip)))
   }
   bslib::navset_card_tab(
     title = tags$h3("QC & filtering", class = "fs-6 mb-0 pe-3"),
@@ -502,11 +512,12 @@ mod_qc_ui <- function(id) {
                        tags$strong("Auto"), " buttons fill data-driven thresholds."),
               uiOutput(ns("samp_group_ui")),
               thr_input("samp_lib_min", "Min library size (blank = off)", "samp_lib_auto",
-                        value = NA, min = 0),
+                        tip = "Auto threshold: min. library size", value = NA, min = 0),
               thr_input("samp_detected_min", "Min detected features (blank = off)",
-                        "samp_detected_auto", value = NA, min = 0),
+                        "samp_detected_auto", tip = "Auto threshold: min. detected features",
+                        value = NA, min = 0),
               thr_input("samp_mito_max", "Max % mitochondrial (blank = off)", "samp_mito_auto",
-                        value = NA, min = 0, max = 100),
+                        tip = "Auto threshold: max. % mitochondrial", value = NA, min = 0, max = 100),
               numericInput(ns("samp_wg_z"), "Within-group outlier z-cutoff (blank = off)",
                            value = 2, min = 0, step = 0.5),
               actionButton(ns("samp_auto"), "Set auto threshold for all settings",
@@ -520,6 +531,7 @@ mod_qc_ui <- function(id) {
             ),
             tags$small(class = "text-muted",
                        "Select rows to stage them, then use the buttons. Flagged samples are highlighted but never pre-pooled."),
+            select_buttons("samp"),
             shinycssloaders::withSpinner(DT::DTOutput(ns("samp_tbl")), proxy.height = "300px")
           )
         ),
@@ -552,6 +564,7 @@ mod_qc_ui <- function(id) {
             ),
             tags$small(class = "text-muted",
                        "The removal pool is pre-seeded with the suggestion; search the table then 'Select all' + 'Add selected to pool' for bulk edits."),
+            select_buttons("feat"),
             shinycssloaders::withSpinner(DT::DTOutput(ns("feat_tbl")), proxy.height = "300px"),
             .qc_plot(ns("feat_density")), .qc_help_note("filter_density")
           )

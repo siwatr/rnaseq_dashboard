@@ -151,7 +151,8 @@ app_ui <- function(themer_mode = FALSE) {
   bslib::page_navbar(
     # Real heading element so it reads as the app title (distinct from the tab
     # labels) and picks up the theme's heading font; sized down to fit the navbar.
-    title = tags$h1("DDS Dashboard", class = "fs-3 fw-bold text-warning mb-0 pb-0 pe-3"),
+    title = tags$h1("DDS Dashboard", class = "fs-3 fw-bold mb-0 pb-0 pe-3",
+                    style = "color:#8b58db;"),
     theme = .app_theme(),
     bslib::nav_panel(tags$h2("Input", class = "fs-6 mb-0"),
       bslib::navset_card_tab(
