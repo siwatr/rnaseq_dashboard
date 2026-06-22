@@ -7,7 +7,15 @@ mod_statusbar_ui <- function(id) {
   ns <- NS(id)
   tags$span(class = "d-flex gap-1 align-items-center",
             uiOutput(ns("status"), inline = TRUE),
+            uiOutput(ns("actions"), inline = TRUE),
             uiOutput(ns("mem"), inline = TRUE))
+}
+
+# A small icon button, disabled (native HTML, no shinyjs) when `enabled` is FALSE.
+.sb_btn <- function(id, ic, cls, enabled, tip) {
+  b <- actionButton(id, NULL, icon = icon(ic), class = paste("btn-sm py-0", cls))
+  if (!isTRUE(enabled)) b <- tagAppendAttributes(b, disabled = NA, `aria-disabled` = "true")
+  bslib::tooltip(b, tip)
 }
 
 .badge <- function(text, class = "text-bg-secondary") {
@@ -31,21 +39,56 @@ mod_statusbar_ui <- function(id) {
 
 mod_statusbar_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
+    ns <- session$ns
     output$status <- renderUI({
       m <- state_meta(state)
       if (!isTRUE(m$loaded)) return(.badge("no dataset loaded", "text-bg-light"))
       badges <- list(
         .badge(m$data_type, "text-bg-info"),
-        .badge(sprintf("%s features x %s samples", m$n_features, m$n_samples)),
-        .badge(paste("assays:", paste(m$assays, collapse = ", "))),
+        bslib::tooltip(
+          .badge(sprintf("%d features | %d samples | %d assays",
+                         m$n_features, m$n_samples, length(m$assays))),
+          paste("Assays:", paste(m$assays, collapse = ", "))),
         .badge(paste("design:", m$design))
       )
-      if (m$n_edits > 0L) badges <- c(badges, list(.badge(sprintf("%d edits", m$n_edits))))
+      # `N edits` = net distance from the original (drives Reset); `N undo limit`
+      # = how many of those edits can still be stepped back (capped at the
+      # snapshot depth), which explains why Undo stops before reaching 0 edits.
+      if (m$n_edits > 0L) {
+        badges <- c(badges, list(
+          bslib::tooltip(.badge(sprintf("%d edits", m$n_edits), "text-bg-light"),
+                         "Edits applied since the dataset was loaded; Reset reverts all of them."),
+          bslib::tooltip(.badge(sprintf("%d undo limit", m$n_undo), "text-bg-light"),
+                         sprintf("Undo steps available now (at most %d are kept).", .undo_depth))))
+      }
       if (isTRUE(m$sce_per_cell)) {
         badges <- c(badges, list(.badge("per-cell: stats unreliable", "text-bg-warning")))
       }
       tags$span(class = "d-flex gap-1 align-items-center", badges)
     })
+
+    # Global Undo / Reset (the originally-designed state affordances). Undo steps
+    # back the last committed edit (any tab); Reset restores the loaded object.
+    # Disabled when unavailable; hidden until a dataset is loaded.
+    output$actions <- renderUI({
+      m <- state_meta(state)
+      if (!isTRUE(m$loaded)) return(NULL)
+      tags$span(class = "d-flex gap-1 align-items-center",
+        .sb_btn(ns("undo"), "rotate-left", "btn-outline-secondary",
+                length(state$undo_stack) > 0L, "Undo last edit"),
+        .sb_btn(ns("reset"), "arrows-rotate", "btn-outline-danger",
+                m$n_edits > 0L, "Reset to original (undo all edits)"))
+    })
+    observeEvent(input$undo, state_undo(state))
+    observeEvent(input$reset, {
+      showModal(modalDialog(
+        title = "Reset to original?",
+        "Discard ALL edits and restore the dataset exactly as loaded? The undo history is cleared.",
+        easyClose = TRUE,
+        footer = tagList(modalButton("Cancel"),
+                         actionButton(session$ns("reset_confirm"), "Reset", class = "btn-danger"))))
+    })
+    observeEvent(input$reset_confirm, { removeModal(); state_reset(state) })
 
     # Session memory footprint (whole R process), refreshed on its own timer so it
     # does not re-render the dataset badges. Hidden when `ps` is unavailable.

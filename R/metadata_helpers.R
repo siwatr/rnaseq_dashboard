@@ -236,6 +236,47 @@ rename_samples <- function(dds, old, new) {
   dds
 }
 
+#' Reset one metadata slot to the originally loaded values
+#'
+#' Slot-scoped "reset to original": restores `colData` or `rowData` of `working`
+#' to the values in `original`, **by id, for the rows currently present** in
+#' `working` — so it does not undo sample/feature *filtering*. The original
+#' column schema wins (user-added columns are dropped). For `colData` the design
+#' formula is restored from `original` (so it cannot reference a column that no
+#' longer exists); for `rowData`, normalized assays are refreshed and size
+#' factors re-estimated when set (feature_length / feature_class feed TPM/FPKM
+#' and `controlGenes`). Rows whose id is absent from `original` (e.g. a renamed
+#' sample) keep their current values for the original-schema columns.
+#'
+#' @param working The current `DESeqDataSet`.
+#' @param original The originally loaded `DESeqDataSet` (the reset target).
+#' @param slot `"colData"` (samples) or `"rowData"` (features).
+#' @return `working` with that slot reverted to `original`.
+#' @export
+reset_metadata_slot <- function(working, original, slot = c("colData", "rowData")) {
+  slot <- match.arg(slot)
+  ids  <- if (slot == "colData") colnames(working) else rownames(working)
+  orig <- .meta_get(original, slot)
+  cur  <- .meta_get(working, slot)
+  ocols <- colnames(orig)
+  pos  <- match(ids, rownames(orig))                  # NA for ids not in original
+  out  <- orig[pos, ocols, drop = FALSE]              # original values, original schema
+  rownames(out) <- ids
+  miss <- which(is.na(pos))                            # renamed / not-in-original rows
+  if (length(miss)) {
+    for (j in intersect(ocols, colnames(cur))) out[[j]] <- .fill_rows(out[[j]], miss, cur[[j]][miss])
+  }
+  working <- .meta_set(working, slot, out)
+  if (slot == "colData") {
+    working <- tryCatch({ DESeq2::design(working) <- DESeq2::design(original); working },
+                        error = function(e) working)
+  } else {
+    working <- refresh_assays(working)
+    if (!is.null(DESeq2::sizeFactors(working))) working <- estimate_size_factors_endogenous(working)
+  }
+  working
+}
+
 #' Set the feature_class of selected features (bulk)
 #'
 #' @param dds A `DESeqDataSet`.

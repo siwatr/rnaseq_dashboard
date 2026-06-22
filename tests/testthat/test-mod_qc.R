@@ -267,3 +267,22 @@ test_that("QC UI exposes the Filtering tab, pool actions, and per-sidebar Showin
   expect_match(html, "gen_show_by")                  # one of the synced controls
   expect_match(html, "samp_lib_auto")                # a per-field Auto button
 })
+
+test_that("QC per-tab Reset Feature Removal restores removed features and is undoable", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2,
+                                                     n_spike = 2, seed = 8)), source = "demo")
+    session$setInputs(feat_use_fbe = FALSE, feat_min_count = 0, feat_use_min_samples = FALSE)
+    session$flushReact()
+    n_full <- nrow(state$working)
+    feat_pool(rownames(state$working)[1:4])
+    session$setInputs(feat_apply_ok = 1)
+    expect_equal(nrow(state$working), n_full - 4L)
+    v <- state$data_version
+    session$setInputs(feat_reset = 1)
+    expect_equal(nrow(state$working), n_full)          # all features restored
+    expect_gt(state$data_version, v)
+  })
+})

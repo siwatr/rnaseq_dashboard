@@ -34,10 +34,32 @@ test_that("state_load / mutate / derive / undo / reset behave correctly", {
 
   state_undo(st)
   expect_equal(nrow(st$working), nrow(dds))
+  expect_equal(state_meta(st)$n_edits, 0L)                 # undo decrements the count
 
   state_reset(st)
   expect_identical(st$working, st$original)
   expect_equal(length(st$undo_stack), 0L)
+  expect_equal(state_meta(st)$n_edits, 0L)
+})
+
+test_that("edit count reflects net edits, not the append-only history (reset clears it)", {
+  skip_if_not_installed("DESeq2")
+  shiny::reactiveConsole(TRUE)
+  on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+
+  st <- new_app_state()
+  state_load(st, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1), source = "demo")
+  for (i in 1:3) state_mutate(st, function(d) d, action = list(action = "noop"))
+  expect_equal(state_meta(st)$n_edits, 3L)
+  expect_equal(state_meta(st)$n_undo, 3L)                  # undo steps available
+
+  state_reset(st)
+  expect_equal(state_meta(st)$n_edits, 0L)                 # reset zeroes the badge
+  expect_equal(state_meta(st)$n_undo, 0L)                  # and clears undo history
+  expect_gt(length(st$history), 0L)                        # history log still retained
+
+  state_mutate(st, function(d) d, action = list(action = "noop"))
+  expect_equal(state_meta(st)$n_edits, 1L)                 # counts from 1 again, not cumulative
 })
 
 test_that("state_mutate errors when nothing is loaded", {

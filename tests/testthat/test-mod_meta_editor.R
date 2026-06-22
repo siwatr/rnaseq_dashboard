@@ -103,3 +103,38 @@ test_that("meta_editor (features): feature_class edits validate; bulk set on fil
     expect_true(all(as.character(SummarizedExperiment::rowData(state$working)$feature_class) == "spike_in"))
   })
 })
+
+test_that("meta_editor: Reset to original commits immediately (slot-scoped)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(meta_editor_server, args = list(state = state, opts = sample_opts), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 2,
+                                                     n_spike = 1, seed = 1)), source = "demo")
+    session$flushReact()
+    session$setInputs(table_cell_edit = list(row = 1L, col = 1L, value = "treated"))
+    session$setInputs(save = 1)
+    expect_equal(as.character(SummarizedExperiment::colData(state$working)$condition[1]), "treated")
+    v <- state$data_version
+    session$setInputs(reset_orig = 1)                 # immediate, no Save
+    expect_gt(state$data_version, v)
+    expect_equal(as.character(SummarizedExperiment::colData(state$working)$condition[1]), "control")
+  })
+})
+
+test_that("meta_editor: unsaved-changes state flips with an uncommitted edit", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(meta_editor_server, args = list(state = state, opts = sample_opts), {
+    state_load(state, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$flushReact()
+    # draft_unchanged() drives the badge: TRUE -> "Saved", FALSE -> "Unsaved changes".
+    expect_true(draft_unchanged(draft()))
+    session$setInputs(table_cell_edit = list(row = 1L, col = 1L, value = "treated"))
+    session$flushReact()
+    expect_false(draft_unchanged(draft()))
+    session$setInputs(save = 1)
+    session$flushReact()
+    expect_true(draft_unchanged(draft()))
+  })
+})

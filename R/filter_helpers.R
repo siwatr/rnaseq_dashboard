@@ -278,6 +278,98 @@ drop_samples <- function(dds, drop_ids) {
   .refit_after_subset(dds)
 }
 
+# Merge metadata for a restore: result is indexed by `ids`, on the CURRENT
+# column schema (`current`). Rows present in `current` keep their (edited) values;
+# rows only in `original` (being re-added) take original's values for the columns
+# that exist there (columns added after load stay NA). Both args are DataFrames.
+.merge_meta <- function(current, original, ids) {
+  cols <- colnames(current)
+  out  <- current[match(ids, rownames(current)), cols, drop = FALSE]
+  rownames(out) <- ids
+  miss <- which(!ids %in% rownames(current))
+  if (length(miss)) {
+    opos <- match(ids[miss], rownames(original))
+    for (j in intersect(cols, colnames(original))) {
+      out[[j]] <- .fill_rows(out[[j]], miss, original[[j]][opos])
+    }
+  }
+  out
+}
+
+# Assign `vals` into rows `idx` of `target`, widening factor levels first so a
+# value absent from the (possibly narrowed) target levels is not turned into NA.
+.fill_rows <- function(target, idx, vals) {
+  if (is.factor(target)) {
+    target <- factor(target, levels = union(levels(target), as.character(vals)))
+    target[idx] <- as.character(vals)
+  } else {
+    target[idx] <- vals
+  }
+  target
+}
+
+# Rebuild a dds from original's counts over a target feature/sample set, merging
+# metadata so kept items keep their edits. Used by restore_samples/features.
+# Raw counts are never edited, so kept-item counts in `original` equal `working`'s;
+# pulling all counts from `original` is therefore authoritative. Note: rebuilding
+# via DESeqDataSetFromMatrix flattens rowRanges to a plain rowData DataFrame, so
+# GTF-derived GRanges/seqinfo (if any) are not carried through a restore.
+.reconstruct <- function(working, original, feats, samples) {
+  counts <- as.matrix(SummarizedExperiment::assay(original, "counts"))[feats, samples, drop = FALSE]
+  rd <- .merge_meta(SummarizedExperiment::rowData(working), SummarizedExperiment::rowData(original), feats)
+  cd <- .merge_meta(SummarizedExperiment::colData(working), SummarizedExperiment::colData(original), samples)
+  # Build with a placeholder design first: re-added rows can be NA for a
+  # user-added design column (or collapse a factor to one level), which
+  # DESeqDataSetFromMatrix rejects at construction. Then restore the intended
+  # design by slot assignment (not re-validated) so the DE page can full-rank it.
+  dds <- DESeq2::DESeqDataSetFromMatrix(countData = counts, colData = cd, rowData = rd, design = ~ 1)
+  dds <- tryCatch({ DESeq2::design(dds) <- DESeq2::design(working); dds },
+                  error = function(e) dds)
+  # DESeqDataSetFromMatrix keeps only `counts`; restore the normalized assays
+  # `working` carried, recomputed from the reconstructed counts.
+  dds <- ensure_logcounts(dds)
+  want <- intersect(c("CPM", "TPM", "FPKM"), SummarizedExperiment::assayNames(working))
+  if (length(want)) dds <- add_normalized_assays(dds, which = want)
+  if (!is.null(DESeq2::sizeFactors(working))) dds <- estimate_size_factors_endogenous(dds)
+  dds
+}
+
+#' Restore removed samples (reset sample filtering)
+#'
+#' Re-adds every sample that is in `original` but not in `working`, returning the
+#' full original sample set while **keeping edits on the samples that stayed**
+#' (re-added samples get their original colData; columns added after load are
+#' `NA`). Feature filtering and rowData edits are untouched. No-op when nothing
+#' was removed.
+#'
+#' @param working The current `DESeqDataSet`.
+#' @param original The originally loaded `DESeqDataSet`.
+#' @return `working` with removed samples restored (assays refreshed, size
+#'   factors re-estimated when set).
+#' @export
+restore_samples <- function(working, original) {
+  if (!length(setdiff(colnames(original), colnames(working)))) return(working)
+  .reconstruct(working, original, feats = rownames(working), samples = colnames(original))
+}
+
+#' Restore removed features (reset feature filtering)
+#'
+#' Re-adds every feature that is in `original` but not in `working`, returning the
+#' full original feature set while **keeping edits on the features that stayed**
+#' (re-added features get their original rowData; columns added after load are
+#' `NA`). Sample filtering and colData edits are untouched. No-op when nothing
+#' was removed.
+#'
+#' @param working The current `DESeqDataSet`.
+#' @param original The originally loaded `DESeqDataSet`.
+#' @return `working` with removed features restored (assays refreshed, size
+#'   factors re-estimated when set).
+#' @export
+restore_features <- function(working, original) {
+  if (!length(setdiff(rownames(original), rownames(working)))) return(working)
+  .reconstruct(working, original, feats = rownames(original), samples = colnames(working))
+}
+
 #' Before/after expression density data for the feature filter
 #'
 #' Long-format log-expression values over endogenous features, labelled `before`
