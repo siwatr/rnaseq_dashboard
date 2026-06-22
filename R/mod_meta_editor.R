@@ -83,7 +83,8 @@ meta_editor_ui <- function(id, opts, extra_sidebar = NULL, extra_main = NULL) {
                    "Reset to last save"),
     bslib::tooltip(actionButton(ns("reset_orig"), icon("arrows-rotate"),
                                 class = "btn-outline-danger"),
-                   "Reset to original")
+                   "Reset to original (this tab; applied immediately)"),
+    uiOutput(ns("dirty_badge"), inline = TRUE)
   )
   # No inner card: the host wraps this editor in a navset card tab.
   header <- tagList(
@@ -193,21 +194,42 @@ meta_editor_server <- function(id, state, opts) {
                        type = "message")
     })
 
-    observeEvent(input$save, {
-      req(draft(), state$working)
-      d <- draft()
-      unchanged <-
-        identical(as.data.frame(.meta_get(d, slot)),
-                  as.data.frame(.meta_get(state$working, slot))) &&
+    # Does the draft differ from the committed working object (this slot)?
+    draft_unchanged <- function(d) {
+      identical(as.data.frame(.meta_get(d, slot)),
+                as.data.frame(.meta_get(state$working, slot))) &&
         identical(colnames(d), colnames(state$working)) &&
         identical(rownames(d), rownames(state$working)) &&
         identical(deparse(DESeq2::design(d)), deparse(DESeq2::design(state$working)))
-      if (unchanged) { showNotification("No changes to save.", type = "message"); return() }
+    }
+
+    # Unsaved-changes indicator beside Save (reacts to draft edits).
+    output$dirty_badge <- renderUI({
+      d <- draft(); req(d, state$working)
+      if (draft_unchanged(d)) {
+        tags$span(class = "badge rounded-pill text-bg-light", "Saved")
+      } else {
+        tags$span(class = "badge rounded-pill text-bg-warning",
+                  tagList(icon("triangle-exclamation"), " Unsaved changes"))
+      }
+    })
+
+    observeEvent(input$save, {
+      req(draft(), state$working)
+      d <- draft()
+      if (draft_unchanged(d)) { showNotification("No changes to save.", type = "message"); return() }
       state_mutate(state, function(.) d, action = list(action = paste0("edit_", slot)))
       showNotification("Changes saved.", type = "message")
     })
-    observeEvent(input$reset_save, { draft(state$working);  bump(); showNotification("Reverted to last save.") })
-    observeEvent(input$reset_orig, { draft(state$original); bump(); showNotification("Reverted to original.") })
+    observeEvent(input$reset_save, { draft(state$working); bump(); showNotification("Reverted to last save.") })
+    # Reset to original: slot-scoped + committed immediately (no Save needed). The
+    # observeEvent(state$working) above resyncs the draft. Undoable via the status bar.
+    observeEvent(input$reset_orig, {
+      req(state$working, state$original)
+      state_mutate(state, function(d) reset_metadata_slot(d, state$original, slot),
+                   action = list(action = paste0("reset_", slot)))
+      showNotification("Reverted this tab to original.", type = "message")
+    })
 
     # Expose the draft so a host page (e.g. Feature info) can compose its own
     # edits -- annotation, feature_length -- onto the same buffer instead of

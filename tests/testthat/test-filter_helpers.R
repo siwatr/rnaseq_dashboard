@@ -194,3 +194,79 @@ test_that("qc_filter_density returns before/after long data over endogenous", {
   expect_equal(n_before, length(endo_ids) * ncol(dds))
   expect_equal(n_after, 20L * ncol(dds))
 })
+
+# ---- restore_samples / restore_features (reset removal) ---------------------
+
+test_that("restore_features brings back removed features, keeping kept-feature edits", {
+  skip_if_not_installed("DESeq2")
+  orig <- ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 3, seed = 3))
+  keep_edit <- rownames(orig)[10]
+  w <- set_feature_class(orig, keep_edit, "exogenous")
+  drop <- rownames(orig)[1:5]
+  w <- drop_features(w, drop)
+  expect_equal(nrow(w), nrow(orig) - 5L)
+  out <- restore_features(w, orig)
+  expect_setequal(rownames(out), rownames(orig))         # all features back
+  expect_equal(unname(as.matrix(SummarizedExperiment::assay(out, "counts"))),
+               unname(as.matrix(SummarizedExperiment::assay(orig, "counts"))[, colnames(out)]))
+  rd <- SummarizedExperiment::rowData(out)
+  expect_equal(as.character(rd[keep_edit, "feature_class"]), "exogenous")  # kept edit
+  expect_equal(as.character(rd[drop[1], "feature_class"]),                  # re-added = original
+               as.character(SummarizedExperiment::rowData(orig)[drop[1], "feature_class"]))
+})
+
+test_that("restore_samples brings back removed samples, keeping edits + feature filtering", {
+  skip_if_not_installed("DESeq2")
+  orig <- ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 3, n_spike = 1, seed = 4))
+  w <- add_meta_column(orig, "colData", "rin", "numeric", 8)
+  w <- drop_features(w, rownames(w)[1:4])                 # also filter features
+  drop_s <- colnames(w)[1:2]
+  w <- drop_samples(w, drop_s)
+  out <- restore_samples(w, orig)
+  expect_equal(ncol(out), ncol(orig))                     # all samples back
+  expect_equal(nrow(out), nrow(w))                        # feature filtering preserved
+  expect_true("rin" %in% colnames(SummarizedExperiment::colData(out)))     # kept edit
+  expect_true(is.na(SummarizedExperiment::colData(out)[drop_s[1], "rin"]))  # re-added -> NA
+})
+
+test_that("restore_* are no-ops when nothing was removed; drop |> restore round-trips dims", {
+  skip_if_not_installed("DESeq2")
+  orig <- ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 5))
+  expect_equal(dim(restore_features(orig, orig)), dim(orig))
+  expect_equal(dim(restore_samples(orig, orig)), dim(orig))
+  rt <- restore_features(drop_features(orig, rownames(orig)[1:3]), orig)
+  expect_setequal(rownames(rt), rownames(orig))
+})
+
+test_that("restore_features preserves the normalized assay set (not counts-only)", {
+  skip_if_not_installed("DESeq2")
+  orig <- ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 1, seed = 6))
+  orig <- add_normalized_assays(orig, "CPM")
+  w <- drop_features(orig, rownames(orig)[1:5])
+  out <- restore_features(w, orig)
+  expect_true(all(c("counts", "logcounts", "CPM") %in% SummarizedExperiment::assayNames(out)))
+  expect_setequal(SummarizedExperiment::assayNames(out), SummarizedExperiment::assayNames(w))
+})
+
+test_that("restore_samples does not error when the design references a post-load column", {
+  skip_if_not_installed("DESeq2")
+  orig <- ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 3, n_spike = 1, seed = 7))
+  w <- add_meta_column(orig, "colData", "lane", "factor", "L1")    # post-load factor column
+  w <- edit_meta_cell(w, "colData", colnames(w)[2], "lane", "L2")  # give it 2 levels
+  DESeq2::design(w) <- ~ lane                                      # re-added rows -> NA for `lane`
+  w <- drop_samples(w, colnames(w)[1])
+  expect_no_error(out <- restore_samples(w, orig))                 # falls back to ~1, no throw
+  expect_equal(ncol(out), ncol(orig))                             # all samples back
+})
+
+test_that(".merge_meta widens narrowed factor levels instead of NA-ing re-added rows", {
+  skip_if_not_installed("DESeq2")
+  orig <- ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 3, n_spike = 1, seed = 8))
+  # 'condition' has both levels in original; drop_samples droplevels() may narrow them.
+  treated <- colnames(orig)[SummarizedExperiment::colData(orig)$condition == "treated"]
+  w <- drop_samples(orig, treated)                                 # working keeps only 'control'
+  out <- restore_samples(w, orig)
+  cd <- SummarizedExperiment::colData(out)
+  expect_false(anyNA(cd$condition))                                # re-added 'treated' not NA-ed
+  expect_setequal(as.character(cd$condition), c("control", "treated"))
+})

@@ -97,3 +97,29 @@ test_that("set_feature_class tags resolved ids", {
   expect_equal(as.character(fc["ERCC-00001"]), "spike_in")
   expect_error(set_feature_class(dds, "nope", "exogenous"), "None of the given")
 })
+
+# ---- reset_metadata_slot (slot-scoped "reset to original") ------------------
+
+test_that("reset_metadata_slot reverts colData to original, keeping current samples", {
+  skip_if_not_installed("DESeq2")
+  orig <- ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 3, n_spike = 1, seed = 1))
+  w <- add_meta_column(orig, "colData", "rin", "numeric", 7)
+  w <- edit_meta_cell(w, "colData", colnames(w)[3], "rin", "9")
+  w <- drop_samples(w, colnames(w)[1:2])                 # filtering must NOT be undone
+  out <- reset_metadata_slot(w, orig, "colData")
+  expect_equal(ncol(out), ncol(w))                       # samples unchanged
+  expect_false("rin" %in% colnames(SummarizedExperiment::colData(out)))  # added col dropped
+  expect_setequal(colnames(SummarizedExperiment::colData(out)),
+                  colnames(SummarizedExperiment::colData(orig)))
+})
+
+test_that("reset_metadata_slot reverts rowData edits and leaves the other slot intact", {
+  skip_if_not_installed("DESeq2")
+  orig <- ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 2, seed = 2))
+  w <- set_feature_class(orig, rownames(orig)[1], "exogenous")        # rowData edit
+  w <- add_meta_column(w, "colData", "batch", "character", "b1")      # unrelated colData edit
+  out <- reset_metadata_slot(w, orig, "rowData")
+  fc <- as.character(SummarizedExperiment::rowData(out)$feature_class)
+  expect_equal(fc[1], as.character(SummarizedExperiment::rowData(orig)$feature_class)[1])
+  expect_true("batch" %in% colnames(SummarizedExperiment::colData(out)))  # other slot kept
+})
