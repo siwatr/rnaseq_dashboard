@@ -20,12 +20,12 @@ flag_samples(
 \item{group}{\code{colData} column defining replicate groups for the within-group
 check; defaults to a design variable.}
 
-\item{lib_size_min, detected_min}{Lower thresholds; \code{NULL} uses a robust fence.}
+\item{lib_size_min, detected_min}{Lower thresholds; \code{NULL} disables the rule.}
 
-\item{pct_mito_max}{Upper threshold for \% mitochondrial; \code{NULL} uses a fence.}
+\item{pct_mito_max}{Upper threshold for \% mitochondrial; \code{NULL} disables it.}
 
 \item{within_group_z}{Flag a sample when its within-group correlation z-score
-(within its group) is below \code{-within_group_z}.}
+(within its group) is below \code{-within_group_z}; \code{NULL} disables the check.}
 
 \item{method}{Correlation method for the within-group check.}
 }
@@ -36,8 +36,9 @@ A \code{data.frame}, one row per sample, with the metric columns plus
 }
 \description{
 Per-sample flags from \code{\link[=qc_per_sample_metrics]{qc_per_sample_metrics()}} plus the within-group
-correlation outlier check (\code{\link[=qc_within_group_correlation]{qc_within_group_correlation()}}). Thresholds
-default to robust fences (median +/- 3*MAD) so the flags are populated before
-any tuning; pass explicit values to override. Advisory only - the UI never
-auto-drops samples.
+correlation outlier check (\code{\link[=qc_within_group_correlation]{qc_within_group_correlation()}}). Each threshold is
+opt-in: a \code{NULL} threshold means that rule is \strong{not applied} (no flag), so
+blank inputs in the UI simply disable a check. \code{\link[=suggest_sample_thresholds]{suggest_sample_thresholds()}}
+supplies sensible robust-fence values for the UI "Auto" button. Advisory
+only - the UI never auto-drops samples.
 }

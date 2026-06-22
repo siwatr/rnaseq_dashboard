@@ -134,18 +134,19 @@ flag_features <- function(dds, use_filter_by_expr = TRUE, group = NULL,
 #' Flag low-quality samples (advisory)
 #'
 #' Per-sample flags from [qc_per_sample_metrics()] plus the within-group
-#' correlation outlier check ([qc_within_group_correlation()]). Thresholds
-#' default to robust fences (median +/- 3*MAD) so the flags are populated before
-#' any tuning; pass explicit values to override. Advisory only - the UI never
-#' auto-drops samples.
+#' correlation outlier check ([qc_within_group_correlation()]). Each threshold is
+#' opt-in: a `NULL` threshold means that rule is **not applied** (no flag), so
+#' blank inputs in the UI simply disable a check. [suggest_sample_thresholds()]
+#' supplies sensible robust-fence values for the UI "Auto" button. Advisory
+#' only - the UI never auto-drops samples.
 #'
 #' @param dds A `DESeqDataSet`.
 #' @param group `colData` column defining replicate groups for the within-group
 #'   check; defaults to a design variable.
-#' @param lib_size_min,detected_min Lower thresholds; `NULL` uses a robust fence.
-#' @param pct_mito_max Upper threshold for % mitochondrial; `NULL` uses a fence.
+#' @param lib_size_min,detected_min Lower thresholds; `NULL` disables the rule.
+#' @param pct_mito_max Upper threshold for % mitochondrial; `NULL` disables it.
 #' @param within_group_z Flag a sample when its within-group correlation z-score
-#'   (within its group) is below `-within_group_z`.
+#'   (within its group) is below `-within_group_z`; `NULL` disables the check.
 #' @param method Correlation method for the within-group check.
 #' @return A `data.frame`, one row per sample, with the metric columns plus
 #'   `within_group_corr`, the per-reason logicals `low_lib_size`,
@@ -160,21 +161,20 @@ flag_samples <- function(dds, group = NULL, lib_size_min = NULL,
   wg_corr <- wg$mean_corr[match(m$sample, wg$sample)]
   wg_grp  <- wg$group[match(m$sample, wg$sample)]
 
-  lib_thr <- lib_size_min %||% .lower_fence(m$library_size)
-  det_thr <- detected_min %||% .lower_fence(m$detected)
-  mito_thr <- pct_mito_max %||% .upper_fence(m$pct_mito)
-
-  low_lib   <- m$library_size < lib_thr
-  low_det   <- m$detected < det_thr
-  high_mito <- m$pct_mito > mito_thr
+  # Each rule is opt-in: a NULL threshold disables it (no flag).
+  low_lib   <- if (is.null(lib_size_min)) rep(FALSE, nrow(m)) else m$library_size < lib_size_min
+  low_det   <- if (is.null(detected_min)) rep(FALSE, nrow(m)) else m$detected < detected_min
+  high_mito <- if (is.null(pct_mito_max)) rep(FALSE, nrow(m)) else m$pct_mito > pct_mito_max
 
   # Within-group outlier: per-group z-score of mean_corr below -within_group_z.
   wg_out <- rep(FALSE, nrow(m))
-  for (g in unique(stats::na.omit(as.character(wg_grp)))) {
-    idx <- which(as.character(wg_grp) == g & !is.na(wg_corr))
-    if (length(idx) < 3L) next                      # z-score needs >= 3 points
-    z <- (wg_corr[idx] - mean(wg_corr[idx])) / stats::sd(wg_corr[idx])
-    wg_out[idx] <- is.finite(z) & z < -abs(within_group_z)
+  if (!is.null(within_group_z)) {
+    for (g in unique(stats::na.omit(as.character(wg_grp)))) {
+      idx <- which(as.character(wg_grp) == g & !is.na(wg_corr))
+      if (length(idx) < 3L) next                    # z-score needs >= 3 points
+      z <- (wg_corr[idx] - mean(wg_corr[idx])) / stats::sd(wg_corr[idx])
+      wg_out[idx] <- is.finite(z) & z < -abs(within_group_z)
+    }
   }
 
   reason <- .reasons(list(
@@ -191,6 +191,23 @@ flag_samples <- function(dds, group = NULL, lib_size_min = NULL,
     flagged = low_lib | low_det | high_mito | wg_out, reason = reason,
     row.names = NULL, stringsAsFactors = FALSE, check.names = FALSE
   )
+}
+
+#' Suggested auto thresholds for sample flagging
+#'
+#' Robust fences (median +/- 3*MAD) for the sample-filter inputs, used to
+#' populate the UI on load and behind its "Auto" button. A degenerate (zero-MAD)
+#' fence yields `NA` so that input stays blank (rule disabled).
+#'
+#' @param dds A `DESeqDataSet`.
+#' @return A list with `lib_size_min`, `detected_min`, `pct_mito_max`.
+#' @export
+suggest_sample_thresholds <- function(dds) {
+  m <- qc_per_sample_metrics(dds)
+  lo <- function(x) { f <- .lower_fence(x); if (is.finite(f)) max(0, f) else NA_real_ }
+  hi <- function(x) { f <- .upper_fence(x); if (is.finite(f)) f else NA_real_ }
+  list(lib_size_min = lo(m$library_size), detected_min = lo(m$detected),
+       pct_mito_max = hi(m$pct_mito))
 }
 
 #' Three-level removal status for plotting

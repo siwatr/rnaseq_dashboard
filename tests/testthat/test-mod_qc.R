@@ -187,7 +187,9 @@ test_that("Showing subset filters plotted samples without bumping data_version",
                                                       n_spike = 1, seed = 4)), source = "demo")
     session$flushReact()
     v0 <- state$data_version
-    session$setInputs(show_by = "condition", show_values = "control")
+    # Edit one tab's control; the canonical state + showing_samples() follow.
+    session$setInputs(gen_show_by = "condition")
+    session$setInputs(gen_show_values = "control")
     session$flushReact()
     shown <- showing_samples()
     cd <- as.data.frame(SummarizedExperiment::colData(state$working))
@@ -197,11 +199,27 @@ test_that("Showing subset filters plotted samples without bumping data_version",
   })
 })
 
-test_that("QC UI exposes the Filtering tab, pool actions, and the Showing control", {
+test_that("Showing controls share one canonical selection across tabs", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 3,
+                                                      n_spike = 1, seed = 5)), source = "demo")
+    session$flushReact()
+    session$setInputs(rle_show_by = "condition")            # edit via the RLE tab
+    session$setInputs(rle_show_values = "treated")
+    session$flushReact()
+    # The General-QC plot honors the same selection (canonical, not per-tab).
+    cd <- as.data.frame(SummarizedExperiment::colData(state$working))
+    expect_setequal(showing_samples(), rownames(cd)[cd$condition == "treated"])
+  })
+})
+
+test_that("QC UI exposes the Filtering tab, pool actions, and per-sidebar Showing", {
   html <- paste(as.character(mod_qc_ui("qc")), collapse = " ")
   expect_match(html, "Filtering")
-  expect_match(html, "Samples")
-  expect_match(html, "Features")
   expect_match(html, "Apply removal")
-  expect_match(html, "showing_bar")          # the page-level Showing control mount
+  expect_match(html, "Showing \\(display only\\)")   # the per-sidebar Showing control
+  expect_match(html, "gen_show_by")                  # one of the synced controls
+  expect_match(html, "samp_auto")                    # the sample-threshold Auto button
 })

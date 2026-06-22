@@ -80,6 +80,31 @@ test_that("flag_samples honors an explicit library-size threshold", {
   expect_true(all(grepl("low library size", fs$reason[fs$low_lib_size])))
 })
 
+test_that("flag_samples treats NULL thresholds as disabled (no flag)", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 1, seed = 13)
+  # All thresholds NULL -> every rule off -> nothing flagged.
+  fs <- flag_samples(dds, lib_size_min = NULL, detected_min = NULL,
+                     pct_mito_max = NULL, within_group_z = NULL)
+  expect_false(any(fs$low_lib_size))
+  expect_false(any(fs$high_mito))
+  expect_false(any(fs$within_group_outlier))
+  expect_false(any(fs$flagged))
+})
+
+test_that("suggest_sample_thresholds returns finite-or-NA fence values", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 2, seed = 14)
+  th <- suggest_sample_thresholds(dds)
+  expect_setequal(names(th), c("lib_size_min", "detected_min", "pct_mito_max"))
+  for (v in th) expect_true(is.na(v) || (is.finite(v) && v >= 0))
+  # A returned lower fence, when finite, actually drives flag_samples.
+  if (is.finite(th$lib_size_min)) {
+    fs <- flag_samples(dds, lib_size_min = th$lib_size_min, within_group_z = NULL)
+    expect_equal(fs$low_lib_size, fs$library_size < th$lib_size_min)
+  }
+})
+
 test_that("flag_samples within-group outlier flags an injected bad replicate", {
   skip_if_not_installed("DESeq2")
   dds <- make_mock_dds(n_genes = 200, n_per_group = 5, n_spike = 0, seed = 7)

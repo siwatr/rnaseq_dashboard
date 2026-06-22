@@ -308,7 +308,7 @@
 .qc_plot <- function(id) shinycssloaders::withSpinner(plotOutput(id), proxy.height = "300px")
 
 # A blank numericInput reads back as NA; map that to NULL so the flag helpers
-# fall back to their auto (robust-fence) thresholds.
+# treat that threshold as "rule disabled" (no flag).
 .blank_na <- function(x) if (is.null(x) || length(x) != 1L || is.na(x)) NULL else x
 
 # Pool summary badges: suggested / in-pool / kept-of-total.
@@ -344,8 +344,16 @@ mod_qc_ui <- function(id) {
                    icon = icon("arrows-rotate"), class = "btn-sm btn-outline-secondary")
     )
   }
-  tagList(
-  uiOutput(ns("showing_bar")),
+  # View-only "Showing:" control, repeated in every sample-plot sidebar and kept
+  # in sync by the server. Default Keep is empty => show all (no subsetting).
+  showing_ctrl <- function(s) tagList(
+    tags$hr(class = "my-2"),
+    selectInput(ns(paste0(s, "_show_by")), "Showing (display only)",
+                choices = c("All samples" = "__all__"), selected = "__all__"),
+    selectizeInput(ns(paste0(s, "_show_values")), "Keep (blank = show all)",
+                   choices = character(0), multiple = TRUE,
+                   options = list(placeholder = "(blank = show all)"))
+  )
   bslib::navset_card_tab(
     title = tags$h3("QC & filtering", class = "fs-6 mb-0 pe-3"),
 
@@ -387,6 +395,7 @@ mod_qc_ui <- function(id) {
                                         "Increasing" = "increasing"),
                             selected = "none")
               ),
+              showing_ctrl("gen"),
               uiOutput(ns("auto_ui")),
               actionButton(ns("render"), "Render", class = "btn-primary")
             ),
@@ -399,6 +408,7 @@ mod_qc_ui <- function(id) {
             sidebar = bslib::sidebar(
               title = tags$h4("RLE", class = "fs-6 mb-0"), width = 280,
               uiOutput(ns("rle_group_ui")),
+              showing_ctrl("rle"),
               uiOutput(ns("rle_auto_ui")),
               actionButton(ns("rle_render"), "Render", class = "btn-primary")
             ),
@@ -411,6 +421,7 @@ mod_qc_ui <- function(id) {
             sidebar = bslib::sidebar(
               title = tags$h4("Expression density", class = "fs-6 mb-0"), width = 280,
               uiOutput(ns("dens_group_ui")),
+              showing_ctrl("dens"),
               uiOutput(ns("dens_auto_ui")),
               actionButton(ns("dens_render"), "Render", class = "btn-primary")
             ),
@@ -441,6 +452,7 @@ mod_qc_ui <- function(id) {
               actionButton(ns("cor_clear_anno"), "Clear annotation",
                            icon = icon("arrows-rotate"),
                            class = "btn-sm btn-outline-secondary mb-2"),
+              showing_ctrl("cor"),
               uiOutput(ns("cor_auto_ui")),
               actionButton(ns("cor_render"), "Render", class = "btn-primary")
             ),
@@ -453,6 +465,7 @@ mod_qc_ui <- function(id) {
             sidebar = bslib::sidebar(
               title = tags$h4("Within-group correlation", class = "fs-6 mb-0"), width = 280,
               uiOutput(ns("wg_group_ui")),
+              showing_ctrl("wg"),
               uiOutput(ns("wg_auto_ui")),
               actionButton(ns("wg_render"), "Render", class = "btn-primary")
             ),
@@ -471,15 +484,20 @@ mod_qc_ui <- function(id) {
           bslib::layout_sidebar(
             sidebar = bslib::sidebar(
               title = tags$h4("Sample filtering", class = "fs-6 mb-0"), width = 300,
-              helpText("Flags are advisory. Build a removal pool, then Apply."),
+              helpText("Flags are advisory. A blank threshold disables that check; ",
+                       tags$strong("Auto"), " fills data-driven thresholds."),
               uiOutput(ns("samp_group_ui")),
-              numericInput(ns("samp_lib_min"), "Min library size (blank = auto)",
+              tags$div(class = "d-flex justify-content-end mb-1",
+                actionButton(ns("samp_auto"), "Auto", icon = icon("wand-magic-sparkles"),
+                             class = "btn-sm btn-outline-primary",
+                             title = "Fill data-driven thresholds (median +/- 3*MAD)")),
+              numericInput(ns("samp_lib_min"), "Min library size (blank = off)",
                            value = NA, min = 0),
-              numericInput(ns("samp_detected_min"), "Min detected features (blank = auto)",
+              numericInput(ns("samp_detected_min"), "Min detected features (blank = off)",
                            value = NA, min = 0),
-              numericInput(ns("samp_mito_max"), "Max % mitochondrial (blank = auto)",
+              numericInput(ns("samp_mito_max"), "Max % mitochondrial (blank = off)",
                            value = NA, min = 0, max = 100),
-              numericInput(ns("samp_wg_z"), "Within-group outlier z-cutoff",
+              numericInput(ns("samp_wg_z"), "Within-group outlier z-cutoff (blank = off)",
                            value = 2, min = 0, step = 0.5),
               tags$hr(),
               pool_buttons("samp"),
@@ -528,7 +546,6 @@ mod_qc_ui <- function(id) {
       )
     )
   )
-  )
 }
 
 #' @param state the shared app-state object (see [new_app_state()]).
@@ -573,49 +590,75 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     output$diag_badge  <- renderUI(.dtype_badge_ui(state))
 
     # --- "Showing:" display subset (view-only; never mutates the dds) --------
-    output$showing_bar <- renderUI({
-      req(state$working)
+    # One canonical selection (column + kept values) shared across each sample
+    # plot's sidebar control. Editing any tab's control updates the canonical
+    # state, which is fanned back out to every tab so they stay in sync. Default
+    # Keep is empty => show all (no subsetting).
+    .show_tabs <- c("gen", "rle", "dens", "wg", "cor")
+    show_by_rv     <- reactiveVal("__all__")
+    show_values_rv <- reactiveVal(character(0))
+
+    # Value-box choices for the current "show by" column.
+    show_val_choices <- function(by) {
+      if (is.null(by) || identical(by, "__all__")) return(character(0))
+      if (identical(by, "__samples__")) return(colnames(state$working))
+      cd <- as.data.frame(SummarizedExperiment::colData(state$working))
+      sort(unique(as.character(cd[[by]])))
+    }
+
+    # Populate / reset all the per-tab controls when a dataset (re)loads.
+    observeEvent(state$working, {
       cols <- colnames(SummarizedExperiment::colData(state$working))
-      bslib::card(class = "mb-2", bslib::card_body(class = "py-2",
-        tags$div(class = "d-flex flex-wrap gap-2 align-items-end",
-          tags$div(
-            tags$label(class = "form-label small mb-1", "Showing (display only)"),
-            selectInput(ns("show_by"), NULL,
-                        choices = c("All samples" = "__all__",
-                                    stats::setNames(cols, cols),
-                                    "Individual samples" = "__samples__"),
-                        selected = "__all__", width = "210px")),
-          uiOutput(ns("show_values_ui")),
-          actionButton(ns("show_reset"), "Reset", icon = icon("arrows-rotate"),
-                       class = "btn-sm btn-outline-secondary"),
-          tags$span(class = "text-muted small ms-auto",
-                    "Hides samples from the sample plots & correlation heatmap; does not remove data.")
-        )))
-    })
-    output$show_values_ui <- renderUI({
-      req(state$working, input$show_by)
-      if (identical(input$show_by, "__all__")) return(NULL)
-      choices <- if (identical(input$show_by, "__samples__")) {
-        colnames(state$working)
-      } else {
-        cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-        sort(unique(as.character(cd[[input$show_by]])))
+      ch <- c("All samples" = "__all__", stats::setNames(cols, cols),
+              "Individual samples" = "__samples__")
+      show_by_rv("__all__"); show_values_rv(character(0))
+      for (s in .show_tabs) {
+        updateSelectInput(session, paste0(s, "_show_by"), choices = ch, selected = "__all__")
+        updateSelectizeInput(session, paste0(s, "_show_values"),
+                             choices = character(0), selected = character(0))
       }
-      selectizeInput(ns("show_values"), "Keep", choices = choices, selected = choices,
-                     multiple = TRUE, width = "320px")
     })
-    observeEvent(input$show_reset, updateSelectInput(session, "show_by", selected = "__all__"))
-    # Samples currently shown (always non-empty: empty selection falls back to all).
+
+    # Per-tab edits -> canonical state (guarded so fan-out echoes are no-ops).
+    lapply(.show_tabs, function(s) {
+      observeEvent(input[[paste0(s, "_show_by")]], {
+        v <- input[[paste0(s, "_show_by")]]
+        if (is.null(v) || identical(v, show_by_rv())) return()
+        show_by_rv(v); show_values_rv(character(0))      # reset values on column switch
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0(s, "_show_values")]], {
+        v <- input[[paste0(s, "_show_values")]] %||% character(0)
+        if (setequal(v, show_values_rv())) return()
+        show_values_rv(v)
+      }, ignoreNULL = FALSE, ignoreInit = TRUE)
+    })
+
+    # Canonical state -> fan out to every tab's controls (keeps them in sync).
+    observeEvent(show_by_rv(), {
+      ch <- show_val_choices(show_by_rv())
+      for (s in .show_tabs) {
+        updateSelectInput(session, paste0(s, "_show_by"), selected = show_by_rv())
+        updateSelectizeInput(session, paste0(s, "_show_values"),
+                             choices = ch, selected = show_values_rv())
+      }
+    })
+    observeEvent(show_values_rv(), {
+      for (s in .show_tabs) {
+        updateSelectizeInput(session, paste0(s, "_show_values"), selected = show_values_rv())
+      }
+    }, ignoreNULL = FALSE)
+
+    # Samples currently shown (always non-empty: a blank Keep box = show all).
     showing_samples <- reactive({
       req(state$working)
       all_s <- colnames(state$working)
-      sb <- input$show_by %||% "__all__"
-      if (identical(sb, "__all__")) return(all_s)
-      vals <- input$show_values
-      if (is.null(vals) || !length(vals)) return(all_s)
-      if (identical(sb, "__samples__")) return(intersect(all_s, vals))
+      by <- show_by_rv()
+      if (identical(by, "__all__")) return(all_s)
+      vals <- show_values_rv()
+      if (!length(vals)) return(all_s)
+      if (identical(by, "__samples__")) return(intersect(all_s, vals))
       cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      all_s[as.character(cd[[sb]]) %in% vals]
+      all_s[as.character(cd[[by]]) %in% vals]
     })
 
     # --- Sample QC: General QC + Matrix -------------------------------------
@@ -663,7 +706,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     current_spec <- reactive({
       req(state$working, input$x_axis, input$metric)
       list(tbl = qc_tbl(), x_axis = input$x_axis, metric = input$metric,
-           sort = input$sort %||% "none")
+           sort = input$sort %||% "none", show = showing_samples())
     })
     gen_shown <- deferred("auto", "render", current_spec)
 
@@ -671,7 +714,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(!is.null(gen_shown()),
                     "Click Render (or enable auto-render) to draw the plot."))
       s <- gen_shown()
-      tbl <- s$tbl[s$tbl$sample %in% showing_samples(), , drop = FALSE]
+      tbl <- s$tbl[s$tbl$sample %in% s$show, , drop = FALSE]
       validate(need(nrow(tbl) > 0, "No samples in the current 'Showing' selection."))
       ae <- sample_aes(input$group %||% default_group_col(), s$metric, tbl$sample)
       tbl$group <- ae$values
@@ -709,13 +752,13 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         sample = factor(rep(colnames(rle), each = nf), levels = colnames(rle)),
         value  = as.numeric(rle))
       df$group <- factor(gmap[as.character(df$sample)])
-      list(df = df, n = ncol(dds))
+      list(df = df, n = ncol(dds), show = showing_samples())
     })
     rle_shown <- deferred("rle_auto", "rle_render", rle_spec)
     output$diag_rle <- renderPlot({
       validate(need(!is.null(rle_shown()), "Click Render (or enable auto-render)."))
-      d <- rle_shown()$df
-      d <- d[d$sample %in% showing_samples(), , drop = FALSE]
+      s <- rle_shown()
+      d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
       .qc_rle_plot(d, dark(), length(levels(d$sample)))
@@ -727,13 +770,13 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       gmap <- group_lookup(input$dens_group)
       df <- qc_expression_long(dds)
       df$group <- factor(gmap[as.character(df$sample)])
-      list(df = df, n = ncol(dds))
+      list(df = df, n = ncol(dds), show = showing_samples())
     })
     dens_shown <- deferred("dens_auto", "dens_render", dens_spec)
     output$diag_density <- renderPlot({
       validate(need(!is.null(dens_shown()), "Click Render (or enable auto-render)."))
-      d <- dens_shown()$df
-      d <- d[d$sample %in% showing_samples(), , drop = FALSE]
+      s <- dens_shown()
+      d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
       .qc_density_plot(d, dark(), length(levels(d$sample)))
@@ -788,7 +831,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cd <- as.data.frame(SummarizedExperiment::colData(state$working))
       cols <- intersect(input$cor_anno, colnames(cd))
       anno_df <- if (!length(cols)) NULL else cd[, cols, drop = FALSE]
-      list(cm = cm, anno_df = anno_df, n = ncol(state$working), method = method)
+      list(cm = cm, anno_df = anno_df, n = ncol(state$working), method = method,
+           show = showing_samples())
     })
     cor_shown <- deferred("cor_auto", "cor_render", cor_spec)
     output$cor_plot <- renderPlot({
@@ -796,7 +840,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(requireNamespace("ComplexHeatmap", quietly = TRUE),
                     "Install 'ComplexHeatmap' to show the correlation heatmap."))
       s <- cor_shown()
-      show <- intersect(colnames(s$cm), showing_samples())
+      show <- intersect(colnames(s$cm), s$show)
       validate(need(length(show) > 1,
                     "Need at least two samples in the current 'Showing' selection."))
       cm <- s$cm[show, show, drop = FALSE]
@@ -810,13 +854,14 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     output$wg_auto_ui  <- auto_box("wg_auto")
     wg_spec <- reactive({
       req(state$working, input$wg_group)
-      qc_within_group_correlation(state$working, group = input$wg_group)
+      list(df = qc_within_group_correlation(state$working, group = input$wg_group),
+           show = showing_samples())
     })
     wg_shown <- deferred("wg_auto", "wg_render", wg_spec)
     output$wg_plot <- renderPlot({
       validate(need(!is.null(wg_shown()), "Click Render (or enable auto-render)."))
-      d <- wg_shown()
-      d <- d[d$sample %in% showing_samples(), , drop = FALSE]
+      s <- wg_shown()
+      d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       .qc_within_group_plot(d, dark_theme = dark())
     })
 
@@ -828,15 +873,15 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # Filtering tables and the General QC "Removal status" colour-by.
     samp_flags <- reactive({
       req(state$working)
-      params <- list(group = input$samp_group, lib = input$samp_lib_min,
-                     det = input$samp_detected_min, mito = input$samp_mito_max,
-                     z = input$samp_wg_z %||% 2)
+      params <- list(group = input$samp_group, lib = .blank_na(input$samp_lib_min),
+                     det = .blank_na(input$samp_detected_min),
+                     mito = .blank_na(input$samp_mito_max), z = .blank_na(input$samp_wg_z))
       state_derive(state, "samp_flags", params = params, expr = function() {
         flag_samples(state$working, group = input$samp_group,
                      lib_size_min = .blank_na(input$samp_lib_min),
                      detected_min = .blank_na(input$samp_detected_min),
                      pct_mito_max = .blank_na(input$samp_mito_max),
-                     within_group_z = input$samp_wg_z %||% 2)
+                     within_group_z = .blank_na(input$samp_wg_z))
       })
     })
     feat_flags <- reactive({
@@ -858,6 +903,18 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       selectInput(ns("feat_group"), "filterByExpr grouping", choices = cols,
                   selected = default_group_col())
     })
+
+    # Sample thresholds: fill data-driven defaults on load and on the Auto button
+    # (a degenerate fence -> NA -> blank input -> that rule stays disabled).
+    fill_samp_thresholds <- function() {
+      req(state$working)
+      th <- suggest_sample_thresholds(state$working)
+      updateNumericInput(session, "samp_lib_min", value = th$lib_size_min)
+      updateNumericInput(session, "samp_detected_min", value = th$detected_min)
+      updateNumericInput(session, "samp_mito_max", value = th$pct_mito_max)
+    }
+    observeEvent(state$working, fill_samp_thresholds())
+    observeEvent(input$samp_auto, fill_samp_thresholds())
 
     # Features default to adopting the suggestion (re-seeded when rules change);
     # samples stay opt-in (highlight only). Both pools reset on any data change.
@@ -946,13 +1003,13 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     observeEvent(input$samp_apply, {
       req(length(samp_pool()) > 0)
       confirm_modal("samp_apply_ok",
-        sprintf("Remove %d sample(s) from the dataset? This can be undone.",
+        sprintf("Remove %d sample(s) from the working dataset? Your original import is kept and can be restored by reloading it.",
                 length(samp_pool())))
     })
     observeEvent(input$feat_apply, {
       req(length(feat_pool()) > 0)
       confirm_modal("feat_apply_ok",
-        sprintf("Remove %d feature(s) from the dataset? This can be undone.",
+        sprintf("Remove %d feature(s) from the working dataset? Your original import is kept and can be restored by reloading it.",
                 length(feat_pool())))
     })
     observeEvent(input$samp_apply_ok, {
