@@ -54,13 +54,13 @@ Add **`rowData(dds)$feature_class`** unconditionally — a factor with levels `e
 - **detected features** (`detected`, genes with count > 0).
 - **% mitochondrial** — pass mito genes via `subsets=` (identify by chromosome `MT`/`chrM` in `rowRanges`, or a `gene_name` `^mt-`/`^MT-` pattern).
 - **% spike-in** — for ERCC, the spike-in subset (`^ERCC-` names, or rows tagged on the input page).
-- **spike-in dose–response** — scatter of known ERCC concentration vs. observed TPM/FPKM; a good linear fit is a quality signal.
+- **spike-in dose–response** — **titration QC, not normalization** (size factors stay endogenous-`controlGenes`; spike-ins are QC-only here). Per-sample log–log `lm` of observed expression vs. known concentration: slope ≈ 1 + high R² = a healthy titration. Observed assay = a linear depth-normalized one — **prefer TPM/FPKM when available, else CPM (with a warning)**; **never counts or logcounts**. Drop zeros before the log; return NA below 3 usable points; report the lowest *detected* spiked concentration (LOD). Concentrations come from a `spike_concentration` rowData column or the bundled ERCC Mix 1/2 reference (`inst/extdata/ercc_concentrations.csv`). Helpers: `ercc_concentrations()`, `resolve_spike_concentration()`, `spike_dose_response()` in `R/ercc_helpers.R`.
 
-Useful QC plots: per-metric bar plot (few samples) or box plot grouped by a `colData` column (many samples); a variance-stabilization mean–variance plot (`DESeq2::vst()`); and a sample–sample correlation heatmap on log-counts (`ComplexHeatmap`, correlation of `assay(dds, "logcounts")`).
+Useful QC plots: per-metric bar plot (few samples) or box plot grouped by a `colData` column (many samples); a sample–sample correlation heatmap on log-counts (`ComplexHeatmap`, correlation of `assay(dds, "logcounts")`); and the **mean–SD variance-stabilization plot** — VST via `DESeq2::vst()` (fallback `varianceStabilizingTransformation()` on small/low-count data), plotting `rank(rowMeans)` vs per-gene `sd`, points coloured by local density via base `MASS::kde2d` (no `vsn`/`hexbin` dependency) with a red running-median trend; a flat trend ≈ variance stabilized.
 
 Filtering: always drop all-zero features (`rowSums(counts) == 0`); offer **`edgeR::filterByExpr()`** (fast, design-aware) as the smart automatic default, plus a manual `rowSums(counts)` threshold. **Do not use `HTSFilter`** — too slow for an interactive app. For small-n bulk (3–12 samples), MAD-based outlier detection is unreliable — *flag* samples, don't auto-drop.
 
-**QC page is unified** across bulk/single-cell (same plot types, per-sample vs per-cell unit) with a visible **data-type badge**. The "variance stabilization plot" = `vsn::meanSdPlot()` on VST data.
+**QC page is unified** across bulk/single-cell (same plot types, per-sample vs per-cell unit) with a visible **data-type badge**. (The mean–SD variance-stabilization plot is the base-`MASS::kde2d` reimplementation described above — `vsn`/`hexbin` were intentionally dropped.)
 
 ## DESeq2 differential expression
 

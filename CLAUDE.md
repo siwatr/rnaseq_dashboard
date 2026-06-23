@@ -13,7 +13,7 @@ The minimum viable input is a `dds` carrying only a raw count matrix; everything
 ## Tech stack
 
 - **R + Shiny**, UI built with **bslib** (Bootstrap 5). Use the `shiny-bslib` and `shiny-bslib-theming` skills for layout/theming. `page_navbar()` for the multi-page structure; `DT` for editable tables; `shinycssloaders` for spinners; `thematic` so ggplots match the theme.
-- **Bioconductor:** `DESeq2`, `SummarizedExperiment`, `SingleCellExperiment`, `scater` (QC), `rtracklayer` (GTF), `edgeR` (`filterByExpr`), `apeglm`/`ashr` (LFC shrinkage), `vsn` (`meanSdPlot`), `AnnotationDbi` + `org.*.eg.db` (annotation), `scran` (single-cell, later).
+- **Bioconductor:** `DESeq2`, `SummarizedExperiment`, `SingleCellExperiment`, `scater` (QC), `rtracklayer` (GTF), `edgeR` (`filterByExpr`), `apeglm`/`ashr` (LFC shrinkage), `AnnotationDbi` + `org.*.eg.db` (annotation), `scran` (single-cell, later).
 - **Plots:** `ggplot2` is the default for all plots. `ComplexHeatmap` is the heatmap engine (do not substitute pheatmap/heatmaply).
 - **Tables / IO:** `readr`/`readxl` in, `writexl` out; `rmarkdown` + `sessioninfo` for the reproducibility report.
 
@@ -120,7 +120,7 @@ Pages (navbar order). The first navbar entry, **Input**, is itself a sub-tabbed 
 
 ## Workflow
 
-- Build the app in **phases** (bulk-first). **The detailed phase plan + current status lives in [dev_ref/roadmap.md](dev_ref/roadmap.md) — consult/update it as the source of truth** (don't duplicate the full list here). At a glance: P1 (skeleton), P2 (annotation + normalization + theming), and **P3a–d** (QC, filtering, edit-history controls, ERCC dose-response) are **done**; **P3e (UI-polish: ggplot↔plotly toggle) is next**, then P3f (Palette wiring), P4 (PCA), P5 (DESeq2 + DE plots + heatmap), P6 (single-cell).
+- Build the app in **phases** (bulk-first). **The detailed phase plan + current status lives in [dev_ref/roadmap.md](dev_ref/roadmap.md) — consult/update it as the source of truth** (don't duplicate the full list here). At a glance: P1 (skeleton), P2 (annotation + normalization + theming), and **P3a–d** (QC, filtering, edit-history controls, ERCC dose-response) are **done**; **P3e (filtering by spike-in QC metrics) is next**, then P3f (UI-polish: ggplot↔plotly toggle), P3g (Palette wiring), P4 (PCA), P5 (DESeq2 + DE plots + heatmap + add the `de-analysis` skill), P6 (Export & reproducibility: R script/Quarto report, plot export, DE tables), P7 (single-cell, lowest priority).
 - **Build mock-`dds` fixtures early** (`data-raw/`, used by `tests/`) so every phase has data to test against.
 - **Commit after each meaningful, self-contained change** with a descriptive message.
 - Heavy Bioconductor objects: don't print full matrices to logs; prefer `show()` / dimensions / `head()`.

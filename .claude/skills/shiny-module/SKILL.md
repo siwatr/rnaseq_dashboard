@@ -1,9 +1,9 @@
 ---
 name: shiny-module
-description: Scaffold a new page/feature in this RNA-seq dashboard as a Shiny module following the project's conventions — paired mod_<name>_ui/server functions, the shared app-state object (original/working/data_version/history/undo_stack/meta + a derived cache), versioned cached derivations, bslib layout, deferred (button-gated) rendering, and the composable sub-module / draft-editor patterns. Use when adding a new page, splitting a page into sub-modules, or refactoring inline server logic into a module.
+description: Scaffold a new page/feature in this RNA-seq dashboard as a Shiny module following the project's conventions — paired mod_<name>_ui/server functions, the shared app-state object (original/working/data_version/history/undo_stack/meta + a derived cache), versioned cached derivations, global + scoped undo/reset, bslib layout, the deferred-render + stale-note pattern, the reusable "Plot Showing" subset control, the removal-pool select-rows→commit idiom, and the composable sub-module / draft-editor patterns. Use when adding a new page, splitting a page into sub-modules, or refactoring inline server logic into a module.
 metadata:
   type: project
-  version: "2.1"
+  version: "2.2"
 ---
 
 # Scaffolding a dashboard module
@@ -15,11 +15,11 @@ Every page in this app is a Shiny module so state and namespacing stay isolated.
 The canonical store is **not** a bare `dds` reactive — it's one `reactiveValues` (`state`) threaded into every module (see `CLAUDE.md` → State model). Modules interact with it through a small helper API (lives in `R/state.R`):
 
 - `state$working` — current `dds`; `state$original` — immutable load; `state$data_version` — bumped on any data edit; `state$history` — action log; `state$undo_stack` — short snapshot stack (depth 5); `state$meta` — app-level flags (`data_type`, `feature_type`, `sce_per_cell`) not stored on the `dds`. `state$derived` — cached heavy artifacts, a plain **environment** (not a reactive field), staleness keyed on `data_version`.
-- `state_meta(state)` — summary list for the status bar (`loaded`, `data_type`, `feature_type`, `n_features`/`n_samples`, `assays`, `design`, `n_edits`, `data_version`). Read `meta$feature_type` here for adaptive `<unit>_name` labels.
+- `state_meta(state)` — summary list for the status bar (`loaded`, `data_type`, `feature_type`, `n_features`/`n_samples`, `assays`, `design`, `n_edits`, `n_undo`, feature-class counts `n_endogenous`/`n_spike_in`/`n_exogenous`, `data_version`). Read `meta$feature_type` here for adaptive `<unit>_name` labels.
 - `state_dds(state)` — reactive read of `state$working` (use this where the old code read `dds()`).
 - `state_mutate(state, fn, action)` — apply `fn(working)` → new `dds`, **bump `data_version`**, append `action` (name + params) to `history`. The single entry point for edits (filters, metadata, annotation).
 - `state_derive(state, key, params, expr)` — get-or-compute a cached artifact (VST, PCA, DESeq fit, DE table) stamped with the current `data_version`; recomputes only when stale. Wrap heavy work behind the render button **and** this helper.
-- `state_reset(state)` / `state_undo(state)` — restore `original` / pop the snapshot stack.
+- `state_reset(state)` / `state_undo(state)` — restore `original` / pop the snapshot stack. **Wired globally** as the status-bar Undo / Reset buttons (`mod_statusbar`); every committed edit is undoable. **Scoped resets** complement them: `reset_metadata_slot(working, original, slot)` (the metadata editor's "Reset to original" — reverts one slot, auto-commits) and `restore_samples()`/`restore_features()` (QC "Reset Sample/Feature Removal" — re-add removed items from `original`, keeping other edits). All are themselves `state_mutate`s (undoable + logged).
 
 This keeps invalidation in one place: a module never hand-rolls staleness — mutating via `state_mutate` invalidates everything downstream automatically.
 
@@ -28,9 +28,10 @@ This keeps invalidation in one place: a module never hand-rolls staleness — mu
 - **Naming:** `mod_<page>_ui(id, ...)` and `mod_<page>_server(id, state, ...)`. File `R/mod_<page>.R`.
 - **Namespacing:** all input IDs go through `ns <- NS(id)` in the UI; bare IDs inside `moduleServer()`.
 - **Edits go through `state_mutate`**; derived results go through `state_derive`. Modules return `invisible(NULL)` — they mutate shared `state`, they don't pass a `dds` back.
-- **Deferred rendering:** expensive work is gated behind an "apply/render" button (`bindEvent()`/`eventReactive()`), never live on every control.
+- **Deferred rendering:** expensive work is gated behind an "apply/render" button (`bindEvent()`/`eventReactive()`), never live on every control. The QC pages use a reusable helper `deferred(auto_id, render_id, spec, sig)` returning `list(value, stale)`: `spec()` is the heavy data reactive; `sig` is a *cheap* reactive signature of the inputs the plot depends on; the plot re-pulls on the Render button (or live when an `auto_id` checkbox is on), and `stale()` is TRUE when `sig` changed since the last render. Pair it with `stale_note()` to render a "Settings changed — click Render" banner above the plot.
 - **Stale-aware UI:** show a stale badge / disable "use" when a needed `derived` artifact is stale; gate on prerequisites (e.g. DE needs a design) with a banner.
-- **Read-only tables go through `dt_table()`** (`R/utils_table.R`) — the standard `DT::datatable()` wrapper (per-column filters, rows-per-page selector, search, horizontal scroll, `rownames = FALSE`). Extend it via its `options=`/`...` passthrough rather than hand-rolling options. The editable metadata editor (`mod_meta_editor`) keeps its own `editable`/`selection` config and is the exception.
+- **Read-only tables go through `dt_table()`** (`R/utils_table.R`) — the standard `DT::datatable()` wrapper (per-column filters, rows-per-page selector, search, horizontal scroll, `rownames = FALSE`). It defaults to **`selection = "none"`** (read-only); actionable tables opt in with `selection = list(mode = "multiple")`. Extend via its `options=`/`selection=`/`...` passthrough rather than hand-rolling. Per-value cell colour via `DT::formatStyle()` + `DT::styleEqual()` (e.g. danger-red `TRUE`s; `feature_class` orange/purple). The editable metadata editor (`mod_meta_editor`) builds its own `DT::datatable()` (editable cells + opt-in row selection) and is the exception.
+- **Tooltips use `bslib::tooltip()`**, never the native `title=` attribute — consistent hover styling/delay app-wide.
 
 ## Composable sub-modules (established patterns)
 
@@ -48,6 +49,20 @@ value** instead of `invisible(NULL)`:
   — no `data_version` bump until Save. **Never write those composed edits straight to
   `state$working`:** the editor re-seeds its draft from `state$working`, so doing so silently
   drops the user's unsaved edits (a real bug we hit). Edits flow draft → Save → `state_mutate`.
+
+- **"Plot Showing" subset → `showing_samples` reactive (the standard for plot tabs).**
+  `R/mod_plot_subset.R`: put `plot_subset_ui(ns, <suffix>)` (a collapsible "Plot Showing" accordion:
+  show-by column → keep-values) in *each* plot sidebar, and call `plot_subset_server(input, output,
+  session, state, suffixes)` **once** — it syncs all instances to one canonical selection and returns a
+  `showing_samples` reactive. It's **display-only**: plots filter their data by `showing_samples()`
+  (and fold it into the deferred `sig` so a change marks the plot stale) — it never mutates the `dds`
+  or bumps `data_version`. Any page with per-sample plots should embed it.
+
+- **Removal-pool select-rows → commit (actionable tables).** QC Filtering stages a DT row selection,
+  moves it into a *pool* `reactiveVal` via buttons (Add/Remove selected, Select all/Deselect all over
+  the search-filtered rows), and **Applies** the pool in one `state_mutate` (a confirm modal for
+  destructive removals). The same idiom drives the feature editor's bulk `feature_class` assign
+  ("Set on selected rows" / "Set on filtered rows" via `input$<tbl>_rows_selected` / `_rows_all`).
 
 ## Template
 
@@ -119,4 +134,5 @@ server <- function(input, output, session) {
 - [ ] Heavy work is gated behind an explicit button (`eventReactive`/`bindEvent`) and `req()`-guarded.
 - [ ] No hand-rolled staleness — invalidation is implicit through `state_mutate` bumping `data_version`.
 - [ ] Prerequisite banner + stale badge where a derived artifact is required.
+- [ ] Per-sample plot tabs embed the "Plot Showing" control (`plot_subset_ui` per sidebar + one `plot_subset_server`); plots filter by `showing_samples()`.
 - [ ] Any new mutating action logs to `history` (powers the reproducibility export).

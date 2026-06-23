@@ -39,9 +39,13 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   Mix1/2 ref (`inst/extdata/ercc_concentrations.csv`). Plus polish: reusable "Plot Showing"
   module (`mod_plot_subset.R`), `dt_table` read-only by default, selection-based
   feature_class assignment, per-value DT colours, auto-render threshold → 150. [PR #15]
-- **P3e ⬅️ next** UI-polish bundle — primarily a **ggplot ↔ plotly engine toggle** for the
+- **P3e ⬅️ next** **Filtering by spike-in QC metrics** — let QC → Filtering → Samples flag/select
+  samples by spike content & fit (% spike-in, detected-spike count, dose-response R²/slope,
+  lowest-detected conc), feeding the existing removal-pool flow (`flag_samples()` gains spike
+  criteria).
+- **P3f ⬜** UI-polish bundle — primarily a **ggplot ↔ plotly engine toggle** for the
   interactive plots; sweep up small UX items.
-- **P3f ⬜** project-wide **Palette page** full wiring (mock landed in P3b): feed `thematic`
+- **P3g ⬜** project-wide **Palette page** full wiring (mock landed in P3b): feed `thematic`
   qualitative/sequential palettes + `qc_annotation_colors()` for ComplexHeatmap; pin
   metadata levels to fixed colours.
 
@@ -57,18 +61,27 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   (`log2FoldChange`(_shrunk)) + `sig`/`DEG`(_shrunk); shrinkage toggle = column selection.
 - MA / volcano / direct-comparison plots with axis clamping (triangle markers).
 - Expression heatmap (`ComplexHeatmap`; default per-gene z-score; `anno_mark` for genes of
-  interest; column names auto-hidden > 30 samples). A `de-analysis` skill may be added here.
+  interest; column names auto-hidden > 30 samples).
+- **Create the `de-analysis` skill** (guided design/contrast/shrinkage, dual-LFC schema,
+  MA/volcano conventions) as part of this phase, so it matches the real DESeq2 implementation.
 
-## Phase 6 — single-cell (later) ⬜
+## Phase 6 — Export & reproducibility ⬜
+Fill in the Export page (shell since P1; currently downloads the processed `dds` only):
+- **Reproducibility R script / Quarto report** generated from the `history` action log (loaded data,
+  edits, filters, design, thresholds, `sessioninfo`) — the provenance trail + publishable record.
+- **Plot export** via explicit device capture (`png()`/`pdf()` + `draw()`/`print()`), not `ggsave()`.
+- **DE result tables → XLSX** (`writexl`); processed `dds` export (already works).
+
+## Phase 7 — single-cell (later, lowest priority) ⬜
 - SCE ingestion, per-cell QC (`scran`/`scater`), pseudobulk aggregation
   (`scuttle::aggregateAcrossCells`), warned per-cell DESeq2 (< ~1k cells), t-SNE/UMAP.
 
 ---
 
 ## Deferred / wishlist (revisit when relevant)
-- **Spike-in content/fit as Sample-filtering flag criteria** (deferred from P3d): let
-  `flag_samples()`/the Filtering Samples tab flag on % spike / detected-spike / dose-response
-  R² so ERCC outliers can be staged for removal.
+- **ERCC dose-response default assay** — should prefer **TPM/FPKM when available**, falling back to
+  **CPM with a warning** (the current code defaults to CPM unconditionally). Fix in a future PR; the
+  `rnaseq-bioc` skill already documents the desired behaviour.
 - **Within-group-correlation auto-flag tuning** (threshold/z-score UX beyond v1).
 - **Advanced filter builder** for metadata tables (rows of criteria + AND/OR gate) — deferred
   in P2; built-in per-column DT filters cover AND-across-columns; revisit if OR is needed.
