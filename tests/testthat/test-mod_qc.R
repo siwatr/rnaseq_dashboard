@@ -323,12 +323,35 @@ test_that("QC UI exposes the Filtering tab, pool actions, and per-sidebar Showin
   expect_match(html, "Add selected to pool")
   expect_match(html, "Remove Samples")               # renamed apply buttons
   expect_match(html, "Remove Features")
-  expect_match(html, "Set auto thresholds")          # scoped general-filters Auto button
-  expect_match(html, "Sample QC filters")            # collapsible filter group
+  expect_match(html, "samp_filters_ui")              # filter accordion built server-side
   expect_match(html, "Plot Showing")                 # per-sidebar Showing accordion
   expect_match(html, "gen_show_by")                  # one of the synced controls
   expect_match(html, "spike_show_by")                # Showing now on the spike tab too
-  expect_match(html, "samp_lib_auto")                # a per-field Auto button
+})
+
+test_that("the sample-filter accordion is one card; spike panel a sibling only with spikes", {
+  skip_if_not_installed("DESeq2")
+  render_filters <- function(n_spike) {
+    state <- new_app_state()
+    out <- NULL
+    shiny::testServer(mod_qc_server, args = list(state = state), {
+      state_load(state, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2,
+                                                        n_spike = n_spike, seed = 41)), source = "demo")
+      session$flushReact()
+      out <<- paste(as.character(output$samp_filters_ui$html), collapse = " ")
+    })
+    out
+  }
+  with_spike <- render_filters(4)
+  expect_equal(lengths(regmatches(with_spike, gregexpr("class=\"accordion\"", with_spike))), 1L)
+  expect_match(with_spike, "Sample QC filters")
+  expect_match(with_spike, "Spike-in \\(ERCC\\) filters")
+  expect_match(with_spike, "samp_lib_auto")          # general per-field Auto button
+  expect_match(with_spike, "samp_spike_auto")        # scoped spike Auto button
+
+  no_spike <- render_filters(0)
+  expect_match(no_spike, "Sample QC filters")
+  expect_no_match(no_spike, "Spike-in \\(ERCC\\) filters")   # panel omitted, not a 2nd card
 })
 
 test_that("QC per-tab Reset Feature Removal restores removed features and is undoable", {

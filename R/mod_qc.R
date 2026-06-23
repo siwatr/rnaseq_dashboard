@@ -48,6 +48,22 @@
   notes
 }
 
+# A threshold numericInput with its own per-field "Auto" wand button alongside.
+# The label sits on its own line; the input (wide) + the smaller wand button sit
+# on the next line, vertically centred. `tip` is the button's hover text. Used in
+# the QC sample-filter accordion (built server-side via renderUI so the general
+# and spike-in panels are true siblings in one accordion card).
+.qc_thr_input <- function(ns, input_id, label, auto_id, tip, ...) {
+  tags$div(class = "mb-2",
+    tags$label(label, class = "form-label mb-1", `for` = ns(input_id)),
+    tags$div(class = "d-flex align-items-center gap-1",
+      tags$div(class = "flex-grow-1", numericInput(ns(input_id), label = NULL, ...)),
+      bslib::tooltip(
+        actionButton(ns(auto_id), NULL, icon = icon("wand-magic-sparkles"),
+                     class = "btn-sm btn-outline-primary"),
+        tip)))
+}
+
 # Metric -> axis label. Library size is reported in millions on its axis.
 .qc_metric_labels <- c(
   library_size = "Library size (millions)",
@@ -432,20 +448,6 @@ mod_qc_ui <- function(id) {
   }
   # The view-only "Showing:" control (reusable; see R/mod_plot_subset.R) sits in
   # each plot sidebar via plot_subset_ui(ns, <suffix>), all synced by the server.
-  # A threshold numericInput with its own per-field "Auto" button alongside. The
-  # label sits on its own line; the input (wide) and the smaller wand button sit
-  # on the next line, vertically centred so they read as aligned. `tip` is the
-  # button's hover text (e.g. "Auto threshold: min. library size").
-  thr_input <- function(input_id, label, auto_id, tip, ...) {
-    tags$div(class = "mb-2",
-      tags$label(label, class = "form-label mb-1", `for` = ns(input_id)),
-      tags$div(class = "d-flex align-items-center gap-1",
-        tags$div(class = "flex-grow-1", numericInput(ns(input_id), label = NULL, ...)),
-        bslib::tooltip(
-          actionButton(ns(auto_id), NULL, icon = icon("wand-magic-sparkles"),
-                       class = "btn-sm btn-outline-primary"),
-          tip)))
-  }
   bslib::navset_card_tab(
     title = tags$h3("QC & filtering", class = "fs-6 mb-0 pe-3"),
 
@@ -614,58 +616,11 @@ mod_qc_ui <- function(id) {
               title = tags$h4("Sample filtering", class = "fs-6 mb-0"), width = 300,
               helpText("Flags are advisory. A blank threshold disables that check; the ",
                        tags$strong("Auto"), " buttons fill data-driven thresholds."),
-              # Collapsible threshold groups (cf. the "Plot Showing" module): the
-              # general sample-QC filters and the spike-in (ERCC) filters, each
-              # with its own scoped "Set auto thresholds" button.
-              bslib::accordion(
-                open = "Sample QC filters",
-                bslib::accordion_panel(
-                  "Sample QC filters", icon = icon("filter"),
-                  uiOutput(ns("samp_group_ui")),
-                  thr_input("samp_lib_min", "Min library size (blank = off)", "samp_lib_auto",
-                            tip = "Auto threshold: min. library size", value = NA, min = 0),
-                  thr_input("samp_detected_min", "Min detected features (blank = off)",
-                            "samp_detected_auto", tip = "Auto threshold: min. detected features",
-                            value = NA, min = 0),
-                  thr_input("samp_mito_max", "Max % mitochondrial (blank = off)", "samp_mito_auto",
-                            tip = "Auto threshold: max. % mitochondrial", value = NA, min = 0, max = 100),
-                  numericInput(ns("samp_wg_z"), "Within-group outlier z-cutoff (blank = off)",
-                               value = 2, min = 0, step = 0.5),
-                  actionButton(ns("samp_auto"), "Set auto thresholds",
-                               icon = icon("wand-magic-sparkles"),
-                               class = "btn-sm btn-outline-primary w-100")
-                )
-              ),
-              # Spike-in (ERCC) filters - only when the dataset has spike-ins.
-              # Uses the concentration source / observed assay chosen on the
-              # Spike-in (ERCC) tab. All blank = off (opt-in).
-              conditionalPanel(
-                condition = "output.has_spike", ns = ns,
-                bslib::accordion(
-                  open = FALSE,
-                  bslib::accordion_panel(
-                    "Spike-in (ERCC) filters", icon = icon("vial"),
-                    helpText("Uses the concentration source & observed assay set on the Spike-in (ERCC) tab."),
-                    uiOutput(ns("samp_spike_note")),
-                    thr_input("samp_spike_min", "Min % spike-in (blank = off)", "samp_spike_min_auto",
-                              tip = "Auto threshold: min. % spike-in (under-spiked)", value = NA, min = 0, max = 100),
-                    thr_input("samp_spike_max", "Max % spike-in (blank = off)", "samp_spike_max_auto",
-                              tip = "Auto threshold: max. % spike-in (over-spiked)", value = NA, min = 0, max = 100),
-                    numericInput(ns("samp_spike_detected_min"), "Min detected spikes (blank = off)",
-                                 value = NA, min = 0, step = 1),
-                    thr_input("samp_dose_r2_min", "Min dose-response R2 (blank = off)", "samp_dose_r2_auto",
-                              tip = "Auto threshold: min. dose-response R-squared", value = NA, min = 0, max = 1, step = 0.05),
-                    tags$div(class = "d-flex gap-2",
-                      tags$div(class = "flex-grow-1",
-                        numericInput(ns("samp_slope_min"), "Slope min", value = NA, step = 0.1)),
-                      tags$div(class = "flex-grow-1",
-                        numericInput(ns("samp_slope_max"), "Slope max", value = NA, step = 0.1))),
-                    actionButton(ns("samp_spike_auto"), "Set auto spike thresholds",
-                                 icon = icon("wand-magic-sparkles"),
-                                 class = "btn-sm btn-outline-primary w-100")
-                  )
-                )
-              ),
+              # One accordion with the general sample-QC filters and (when the
+              # dataset has spike-ins) the spike-in filters as sibling panels.
+              # Built server-side (renderUI) so the conditional spike panel is a
+              # true sibling in the same accordion card, not a separate card.
+              uiOutput(ns("samp_filters_ui")),
               tags$hr(),
               pool_buttons("samp"),
               uiOutput(ns("samp_counts")),
@@ -1170,9 +1125,55 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
 
     output$samp_group_ui <- group_box("samp_group", label = "Within-group grouping")
-    # Gate the spike-criteria sidebar block on the dataset having spike-ins.
-    output$has_spike <- reactive(length(spike_ids()) > 0)
-    outputOptions(output, "has_spike", suspendWhenHidden = FALSE)
+    # Does the dataset have spike-ins? Change-detected reactive so the filter
+    # accordion below re-renders only when this flips, not on every edit.
+    has_spike <- reactive(length(spike_ids()) > 0)
+    # Build the sample-filter accordion server-side so the general and (optional)
+    # spike-in panels are sibling panels in ONE accordion card. Stays rendered
+    # while the tab is hidden so the threshold inputs always exist (the General
+    # QC removal colour-by reads them).
+    output$samp_filters_ui <- renderUI({
+      nsf <- session$ns
+      general <- bslib::accordion_panel(
+        "Sample QC filters", icon = icon("filter"),
+        uiOutput(nsf("samp_group_ui")),
+        .qc_thr_input(nsf, "samp_lib_min", "Min library size (blank = off)", "samp_lib_auto",
+                      tip = "Auto threshold: min. library size", value = NA, min = 0),
+        .qc_thr_input(nsf, "samp_detected_min", "Min detected features (blank = off)",
+                      "samp_detected_auto", tip = "Auto threshold: min. detected features",
+                      value = NA, min = 0),
+        .qc_thr_input(nsf, "samp_mito_max", "Max % mitochondrial (blank = off)", "samp_mito_auto",
+                      tip = "Auto threshold: max. % mitochondrial", value = NA, min = 0, max = 100),
+        numericInput(nsf("samp_wg_z"), "Within-group outlier z-cutoff (blank = off)",
+                     value = 2, min = 0, step = 0.5),
+        actionButton(nsf("samp_auto"), "Set auto thresholds",
+                     icon = icon("wand-magic-sparkles"), class = "btn-sm btn-outline-primary w-100"))
+      panels <- list(general)
+      if (isTRUE(has_spike())) {
+        spike <- bslib::accordion_panel(
+          "Spike-in (ERCC) filters", icon = icon("vial"),
+          helpText("Uses the concentration source & observed assay set on the Spike-in (ERCC) tab."),
+          uiOutput(nsf("samp_spike_note")),
+          .qc_thr_input(nsf, "samp_spike_min", "Min % spike-in (blank = off)", "samp_spike_min_auto",
+                        tip = "Auto threshold: min. % spike-in (under-spiked)", value = NA, min = 0, max = 100),
+          .qc_thr_input(nsf, "samp_spike_max", "Max % spike-in (blank = off)", "samp_spike_max_auto",
+                        tip = "Auto threshold: max. % spike-in (over-spiked)", value = NA, min = 0, max = 100),
+          numericInput(nsf("samp_spike_detected_min"), "Min detected spikes (blank = off)",
+                       value = NA, min = 0, step = 1),
+          .qc_thr_input(nsf, "samp_dose_r2_min", "Min dose-response R2 (blank = off)", "samp_dose_r2_auto",
+                        tip = "Auto threshold: min. dose-response R-squared", value = NA, min = 0, max = 1, step = 0.05),
+          tags$div(class = "d-flex gap-2",
+            tags$div(class = "flex-grow-1",
+              numericInput(nsf("samp_slope_min"), "Slope min", value = NA, step = 0.1)),
+            tags$div(class = "flex-grow-1",
+              numericInput(nsf("samp_slope_max"), "Slope max", value = NA, step = 0.1))),
+          actionButton(nsf("samp_spike_auto"), "Set auto spike thresholds",
+                       icon = icon("wand-magic-sparkles"), class = "btn-sm btn-outline-primary w-100"))
+        panels <- c(panels, list(spike))
+      }
+      do.call(bslib::accordion, c(list(open = "Sample QC filters"), panels))
+    })
+    outputOptions(output, "samp_filters_ui", suspendWhenHidden = FALSE)
     # Reuse the QC tab's match-rate / no-detection warning, but only nag when a
     # spike rule is actually enabled (else it is noise on the Filtering tab).
     output$samp_spike_note <- renderUI({
