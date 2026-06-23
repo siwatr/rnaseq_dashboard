@@ -42,6 +42,11 @@ mod_feature_ui <- function(id) {
     helpText("Unlocks TPM/FPKM from an existing numeric rowData column:"),
     uiOutput(ns("len_col_ui")),
     actionButton(ns("set_len"), "Set length from column"),
+    hr(),
+    tags$strong("Spike-in concentration"),
+    helpText("Designate which numeric column holds the known spike-in (ERCC) dose, for dose-response QC:"),
+    uiOutput(ns("spike_col_ui")),
+    actionButton(ns("set_spike_conc"), "Set as spike-in concentration"),
     hr()
   )
   # One navset: the metadata table and each annotation source are separate tabs,
@@ -52,7 +57,9 @@ mod_feature_ui <- function(id) {
       "Feature Metadata",
       meta_editor_ui(ns("editor"), .feature_editor_opts,
                      extra_sidebar = feature_settings,
-                     extra_main = div(class = "mb-2", textOutput(ns("coverage"))))
+                     extra_main = div(class = "mb-2",
+                                      uiOutput(ns("class_counts")),
+                                      textOutput(ns("coverage"))))
     ),
     bslib::nav_panel(
       "OrgDb Annotation",
@@ -263,10 +270,51 @@ mod_feature_server <- function(id, state) {
       do <- function() {
         res <- edit_draft(function(d) set_feature_length_from_column(d, input$len_col))
         req(res)
-        showNotification(sprintf("feature_length set from '%s'. Click Save to keep.", input$len_col),
-                         type = "message")
+        ok <- has_feature_length(res)
+        showNotification(
+          sprintf("feature_length set from '%s'%s Click Save to keep.", input$len_col,
+                  if (ok) "." else
+                    " - but some features have missing/non-positive values, so TPM/FPKM stay unavailable."),
+          type = if (ok) "message" else "warning", duration = if (ok) 5 else NULL)
       }
       guarded("feature_length", do)
+    })
+
+    # --- spike-in concentration: designate a numeric column ------------------
+    output$spike_col_ui <- renderUI({
+      d <- editor$draft(); req(d)
+      rd <- SummarizedExperiment::rowData(d)
+      num <- colnames(rd)[vapply(as.list(rd), is.numeric, logical(1))]
+      selectInput(ns("spike_col"), NULL, choices = num)
+    })
+
+    observeEvent(input$set_spike_conc, {
+      req(editor$draft(), input$spike_col)
+      do <- function() {
+        res <- edit_draft(function(d) set_spike_concentration(d, input$spike_col))
+        req(res)
+        n_spike <- sum(.detect_spike_features(res))
+        miss <- length(spike_features_missing_conc(res))
+        if (!n_spike) { showNotification("No spike-in features to set a concentration for.",
+                                          type = "warning"); return() }
+        showNotification(
+          sprintf("spike_concentration set from '%s' for %d of %d spike-in feature(s).%s Click Save to keep.",
+                  input$spike_col, n_spike - miss, n_spike,
+                  if (miss) sprintf(" %d still missing/non-positive.", miss) else ""),
+          type = if (miss) "warning" else "message", duration = if (miss) NULL else 5)
+      }
+      guarded("spike_concentration", do)
+    })
+
+    output$class_counts <- renderUI({
+      d <- editor$draft(); req(d)
+      fc <- tryCatch(as.character(SummarizedExperiment::rowData(d)$feature_class),
+                     error = function(e) NULL)
+      if (is.null(fc)) return(NULL)
+      n <- function(k) sum(fc == k)
+      tags$div(class = "small text-muted mb-1",
+               sprintf("Feature classes: %d endogenous | %d exogenous | %d spike-in",
+                       n("endogenous"), n("exogenous"), n("spike_in")))
     })
 
     # --- feature_length: computed from the loaded GTF ------------------------

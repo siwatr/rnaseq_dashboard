@@ -64,8 +64,13 @@ meta_editor_ui <- function(id, opts, extra_sidebar = NULL, extra_main = NULL) {
     panels <- c(panels, list(bslib::accordion_panel(
       "Set feature class (bulk)",
       selectInput(ns("bulk_value"), "Class", c("endogenous", "spike_in", "exogenous")),
-      actionButton(ns("bulk_apply"), "Set class on filtered rows"),
-      helpText("Filter the table (e.g. type ERCC), then apply to every matching row.")
+      tags$div(class = "btn-group btn-group-sm w-100 mb-2", role = "group",
+        actionButton(ns("bulk_select_all"), "Select all", class = "btn-outline-secondary"),
+        actionButton(ns("bulk_deselect_all"), "Deselect all", class = "btn-outline-secondary")),
+      tags$div(class = "d-grid gap-1",
+        actionButton(ns("bulk_apply_selected"), "Set on selected rows", class = "btn-sm btn-primary"),
+        actionButton(ns("bulk_apply_filtered"), "Set on filtered rows", class = "btn-sm btn-secondary")),
+      helpText("Select rows (or filter the table), then assign the class.")
     )))
   }
 
@@ -125,17 +130,31 @@ meta_editor_server <- function(id, state, opts) {
       if (length(prot)) helpText(sprintf("Protected column(s): %s.", paste(prot, collapse = ", ")))
     })
 
+    # Row selection enabled where bulk feature_class assignment is offered (it
+    # coexists with cell editing: click selects, double-click edits).
+    tbl_selection <- if (isTRUE(opts$bulk_class)) "multiple" else "none"
     output$table <- DT::renderDT({
       redraw()
       d <- isolate(draft()); req(d)
       df <- as.data.frame(.meta_get(d, slot))
       display <- .meta_display_df(df, opts$row_noun)
-      DT::datatable(display, rownames = FALSE,
-                    filter = "top",
-                    editable = list(target = "cell", disable = list(columns = 0)),
-                    selection = "none",
-                    options = list(pageLength = 10, scrollX = TRUE))
+      dt <- DT::datatable(display, rownames = FALSE,
+                          filter = "top",
+                          editable = list(target = "cell", disable = list(columns = 0)),
+                          selection = tbl_selection,
+                          options = list(pageLength = 10, scrollX = TRUE))
+      # Colour the feature_class column (endogenous default / spike-in orange /
+      # exogenous purple) for at-a-glance reading.
+      if (slot == "rowData" && "feature_class" %in% colnames(display)) {
+        dt <- DT::formatStyle(dt, "feature_class",
+          color = DT::styleEqual(c("spike_in", "exogenous"),
+                                 c("var(--bs-warning)", "#8b58db"), default = NULL),
+          fontWeight = DT::styleEqual(c("spike_in", "exogenous"),
+                                      c("bold", "bold"), default = NULL))
+      }
+      dt
     }, server = TRUE)
+    tbl_proxy <- DT::dataTableProxy("table")
 
     .apply <- function(expr) {
       tryCatch({ draft(expr); bump() },
@@ -183,16 +202,25 @@ meta_editor_server <- function(id, state, opts) {
       updateTextInput(session, "rn_row_new", value = "")
     })
 
-    if (isTRUE(opts$bulk_class)) observeEvent(input$bulk_apply, {
-      req(draft())
-      d <- draft()
-      rows <- input$table_rows_all                       # row indices after filtering
-      ids <- rownames(.meta_get(d, slot))[rows]
-      if (!length(ids)) { showNotification("No rows in the current filter.", type = "warning"); return() }
-      .apply(set_feature_class(d, ids, input$bulk_value))
-      showNotification(sprintf("Set %d feature(s) to %s.", length(ids), input$bulk_value),
-                       type = "message")
-    })
+    # Bulk feature_class assignment, mirroring the QC-filtering select-rows idiom:
+    # set the chosen class on the selected rows, or on all rows matching the
+    # current table search. Select all / Deselect all stage the selection.
+    if (isTRUE(opts$bulk_class)) {
+      bulk_set <- function(rows, what) {
+        d <- draft(); req(d)
+        ids <- rownames(.meta_get(d, slot))[rows]
+        if (!length(ids)) {
+          showNotification(sprintf("No %s rows to set.", what), type = "warning"); return()
+        }
+        .apply(set_feature_class(d, ids, input$bulk_value))
+        showNotification(sprintf("Set %d feature(s) to %s.", length(ids), input$bulk_value),
+                         type = "message")
+      }
+      observeEvent(input$bulk_apply_selected, bulk_set(input$table_rows_selected, "selected"))
+      observeEvent(input$bulk_apply_filtered, bulk_set(input$table_rows_all, "filtered"))
+      observeEvent(input$bulk_select_all,   DT::selectRows(tbl_proxy, input$table_rows_all))
+      observeEvent(input$bulk_deselect_all, DT::selectRows(tbl_proxy, NULL))
+    }
 
     # Does the draft differ from the committed working object (this slot)?
     draft_unchanged <- function(d) {

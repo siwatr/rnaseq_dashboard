@@ -236,6 +236,40 @@ rename_samples <- function(dds, old, new) {
   dds
 }
 
+#' Set spike-in concentrations from an existing numeric column
+#'
+#' Copies `from_col` into the standard `spike_concentration` rowData column,
+#' keeping a value only for spike-in features (`NA` elsewhere). Used by the
+#' Feature tab to designate which column holds the known ERCC dose.
+#' @param dds A `DESeqDataSet`.
+#' @param from_col A numeric `rowData` column name.
+#' @return The updated `DESeqDataSet`.
+#' @export
+set_spike_concentration <- function(dds, from_col) {
+  rd <- SummarizedExperiment::rowData(dds)
+  if (!from_col %in% colnames(rd)) stop("Unknown rowData column: ", from_col, call. = FALSE)
+  v <- suppressWarnings(as.numeric(rd[[from_col]]))
+  v[!.detect_spike_features(dds)] <- NA_real_     # only spike-ins carry a concentration
+  rd$spike_concentration <- v
+  SummarizedExperiment::rowData(dds) <- rd
+  dds
+}
+
+#' Spike-in features lacking a usable concentration
+#'
+#' @param dds A `DESeqDataSet`.
+#' @param conc_col Concentration `rowData` column (default `spike_concentration`).
+#' @return Character vector of spike-in feature ids with `NA`/non-positive
+#'   concentration (empty when all are usable or there are no spike-ins).
+#' @export
+spike_features_missing_conc <- function(dds, conc_col = "spike_concentration") {
+  spike <- .detect_spike_features(dds)
+  if (!any(spike)) return(character(0))
+  rd <- SummarizedExperiment::rowData(dds)
+  v <- if (conc_col %in% colnames(rd)) suppressWarnings(as.numeric(rd[[conc_col]])) else rep(NA_real_, nrow(dds))
+  rownames(dds)[spike & (is.na(v) | v <= 0)]
+}
+
 #' Reset one metadata slot to the originally loaded values
 #'
 #' Slot-scoped "reset to original": restores `colData` or `rowData` of `working`

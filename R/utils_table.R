@@ -17,19 +17,24 @@
 #' @param length_menu Row-count choices offered in the rows-per-page selector.
 #' @param filter DT column-filter placement; `"top"` (default) or `"none"`.
 #' @param scrollX Enable horizontal scrolling for wide tables.
+#' @param selection Row-selection mode passed to [DT::datatable()]. Defaults to
+#'   `"none"` so display tables are read-only (DT's own default is `"multiple"`,
+#'   which makes rows selectable); pass e.g. `list(mode = "multiple")` for the
+#'   actionable filtering tables.
 #' @param options Extra DataTables options, merged over (and overriding) the
 #'   defaults (`dom`, `pageLength`, `lengthMenu`, `scrollX`).
 #' @param ... Further arguments passed to [DT::datatable()].
 #' @return A `datatables` htmlwidget.
 #' @export
 dt_table <- function(df, page_length = 10L, length_menu = c(10, 25, 50, 100),
-                     filter = "top", scrollX = TRUE, options = list(), ...) {
+                     filter = "top", scrollX = TRUE, selection = "none",
+                     options = list(), ...) {
   defaults <- list(
     dom        = "lftip",   # length, filter (search), table, info, pagination
     pageLength = page_length,
     lengthMenu = length_menu,
     scrollX    = scrollX
   )
-  DT::datatable(df, rownames = FALSE, filter = filter,
+  DT::datatable(df, rownames = FALSE, filter = filter, selection = selection,
                 options = utils::modifyList(defaults, options), ...)
 }

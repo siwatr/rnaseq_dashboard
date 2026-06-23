@@ -68,3 +68,14 @@ test_that("state_mutate errors when nothing is loaded", {
   st <- new_app_state()
   expect_error(state_mutate(st, identity), "No dataset loaded")
 })
+
+test_that("state_meta reports feature-class counts", {
+  skip_if_not_installed("DESeq2")
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  st <- new_app_state()
+  state_load(st, make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 4, seed = 1), source = "demo")
+  m <- state_meta(st)
+  expect_equal(m$n_spike_in, 4L)
+  expect_equal(m$n_exogenous, 1L)                 # mock has one exogenous (GFP)
+  expect_equal(m$n_endogenous, 50L)
+})

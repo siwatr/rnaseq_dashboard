@@ -98,9 +98,28 @@ test_that("meta_editor (features): feature_class edits validate; bulk set on fil
     # bulk: set all (filtered = all) rows to spike_in
     n <- nrow(state$working)
     session$setInputs(bulk_value = "spike_in", table_rows_all = seq_len(n))
-    session$setInputs(bulk_apply = 1)
+    session$setInputs(bulk_apply_filtered = 1)
     session$setInputs(save = 1)
     expect_true(all(as.character(SummarizedExperiment::rowData(state$working)$feature_class) == "spike_in"))
+  })
+})
+
+test_that("meta_editor (features): bulk set on SELECTED rows assigns feature_class", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(meta_editor_server, args = list(state = state, opts = feature_opts), {
+    state_load(state, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 2, seed = 2),
+               source = "demo")
+    session$flushReact()
+    orig_fc <- as.character(SummarizedExperiment::rowData(state$working)$feature_class)
+    # Select rows 1:3 and assign exogenous to just those (cell editing still works
+    # alongside row selection).
+    session$setInputs(bulk_value = "exogenous", table_rows_selected = 1:3)
+    session$setInputs(bulk_apply_selected = 1)
+    session$setInputs(save = 1)
+    fc <- as.character(SummarizedExperiment::rowData(state$working)$feature_class)
+    expect_true(all(fc[1:3] == "exogenous"))
+    expect_equal(fc[-(1:3)], orig_fc[-(1:3)])         # only the selected rows changed
   })
 })
 

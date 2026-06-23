@@ -42,6 +42,14 @@ new_app_state <- function() {
   state$history <- c(state$history, list(utils::modifyList(list(time = Sys.time()), entry)))
 }
 
+# Count features of a given feature_class (no class column -> all endogenous).
+.class_count <- function(dds, class) {
+  fc <- tryCatch(as.character(SummarizedExperiment::rowData(dds)$feature_class),
+                 error = function(e) NULL)
+  if (is.null(fc)) return(if (class == "endogenous") nrow(dds) else 0L)
+  sum(fc == class)
+}
+
 #' Reactive read of the current working `dds`
 #' @param state An app-state object from [new_app_state()].
 #' @return A reactive expression yielding the working `dds` (or `NULL`).
@@ -159,8 +167,9 @@ state_undo <- function(state) {
 #' @param state App-state object.
 #' @return A list: `loaded`, and when loaded `data_type`, `feature_type`,
 #'   `n_features`, `n_samples`, `assays`, `design`, `n_edits`, `n_undo` (undo
-#'   steps currently available, capped at the snapshot depth), `data_version`,
-#'   and `sce_per_cell` (TRUE when a single-cell object was coerced per-cell).
+#'   steps currently available, capped at the snapshot depth), `n_endogenous` /
+#'   `n_spike_in` / `n_exogenous` (feature-class counts), `data_version`, and
+#'   `sce_per_cell` (TRUE when a single-cell object was coerced per-cell).
 #' @export
 state_meta <- function(state) {
   dds <- state$working
@@ -178,6 +187,9 @@ state_meta <- function(state) {
                             error = function(e) NA_character_),
     n_edits      = state$n_edits %||% 0L,
     n_undo       = length(state$undo_stack),
+    n_endogenous = .class_count(dds, "endogenous"),
+    n_spike_in   = .class_count(dds, "spike_in"),
+    n_exogenous  = .class_count(dds, "exogenous"),
     data_version = state$data_version
   )
 }

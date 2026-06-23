@@ -119,6 +119,48 @@
     .qc_theme(dark_theme)
 }
 
+# ---- Spike-in (ERCC) dose-response builders --------------------------------
+
+# Per-sample metric labels for the spike-in summary plot/table.
+.spike_metric_labels <- c(
+  pct_spike        = "% spike-in (of library)",
+  n_spike_detected = "Detected spike-in features",
+  lod              = "Lowest detected conc (attomoles/uL)",
+  slope            = "Dose-response slope (log-log)",
+  r_squared        = "Dose-response R-squared")
+
+# Dose-response scatter: known concentration vs observed expression (log-log),
+# coloured by group, with a per-sample lm line. `long` carries a `group` column.
+# Zeros (undetected) are dropped before the log scales.
+.qc_spike_dr_plot <- function(long, dark_theme = FALSE) {
+  d <- long[is.finite(long$concentration) & is.finite(long$expression) &
+            long$concentration > 0 & long$expression > 0, , drop = FALSE]
+  if (!nrow(d)) return(.qc_msg_plot("No detected spike-ins with known concentration."))
+  ggplot2::ggplot(d, ggplot2::aes(x = .data$concentration, y = .data$expression,
+                                  colour = .data$group)) +
+    ggplot2::geom_point(size = 1.4, alpha = 0.7) +
+    ggplot2::geom_smooth(ggplot2::aes(group = .data$sample), method = "lm",
+                         formula = y ~ x, se = FALSE, linewidth = 0.4) +
+    ggplot2::scale_x_log10() + ggplot2::scale_y_log10() +
+    ggplot2::labs(x = "known concentration (attomoles/uL)", y = "observed expression",
+                  colour = "group") +
+    .qc_theme(dark_theme)
+}
+
+# Per-sample spike summary: a chosen metric across samples (bar, sorted), filled
+# by group. `df` is spike_dose_response()$per_sample with a `group` column.
+.qc_spike_summary_plot <- function(df, metric, dark_theme = FALSE) {
+  lab <- .spike_metric_labels[[metric]] %||% metric
+  d <- df[is.finite(df[[metric]]), , drop = FALSE]
+  if (!nrow(d)) return(.qc_msg_plot(paste("No", lab, "to show.")))
+  d$sample <- factor(d$sample, levels = d$sample[order(d[[metric]])])
+  ggplot2::ggplot(d, ggplot2::aes(x = .data$sample, y = .data[[metric]], fill = .data$group)) +
+    ggplot2::geom_col() +
+    ggplot2::labs(x = "sample", y = lab, fill = "group") +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
+    .qc_theme(dark_theme)
+}
+
 # ---- Dataset-level diagnostic plot builders --------------------------------
 
 # Per-point 2D kernel density (the colouring geom_pointdensity provides). Uses
@@ -282,7 +324,18 @@
     "Distribution of log2 expression over endogenous features, before vs after",
     "the proposed filter. The tall low-value peak is near-zero genes; a good",
     "filter removes most of it, leaving a cleaner unimodal 'after' curve.",
-    "Spike-in / exogenous features are exempt and never removed here.")
+    "Spike-in / exogenous features are exempt and never removed here."),
+  spike_dr = paste(
+    "Spike-in titration QC (technical control; not used for normalization here).",
+    "Each point is an ERCC control: known input concentration (x) vs observed",
+    "expression (y), log-log, with a per-sample fit. A healthy titration tracks a",
+    "straight line of slope ~ 1 with high R-squared; samples that fan out, flatten,",
+    "or lose low-concentration spike-ins (higher 'lowest detected conc') are",
+    "candidates for concern. Undetected (zero) spike-ins are dropped before fitting.",
+    "Slope is only meaningful when concentrations span several logs; a vertical",
+    "offset between samples reflects a differing spike-in fraction (input mass),",
+    "not titration quality. Zero/low spike-ins in only some samples usually just",
+    "means those samples were not spiked (mixed designs).")
 )
 
 # A subtle "How to read this" note placed below a diagnostic plot.
@@ -356,16 +409,8 @@ mod_qc_ui <- function(id) {
                      icon = icon("arrows-rotate"), class = "btn-sm btn-outline-secondary"))
     )
   }
-  # View-only "Showing:" control, repeated in every sample-plot sidebar and kept
-  # in sync by the server. Default Keep is empty => show all (no subsetting).
-  showing_ctrl <- function(s) tagList(
-    tags$hr(class = "my-2"),
-    selectInput(ns(paste0(s, "_show_by")), "Showing (display only)",
-                choices = c("All samples" = "__all__"), selected = "__all__"),
-    selectizeInput(ns(paste0(s, "_show_values")), "Keep (blank = show all)",
-                   choices = character(0), multiple = TRUE,
-                   options = list(placeholder = "(blank = show all)"))
-  )
+  # The view-only "Showing:" control (reusable; see R/mod_plot_subset.R) sits in
+  # each plot sidebar via plot_subset_ui(ns, <suffix>), all synced by the server.
   # A threshold numericInput with its own per-field "Auto" button alongside. The
   # label sits on its own line; the input (wide) and the smaller wand button sit
   # on the next line, vertically centred so they read as aligned. `tip` is the
@@ -421,7 +466,7 @@ mod_qc_ui <- function(id) {
                                         "Increasing" = "increasing"),
                             selected = "none")
               ),
-              showing_ctrl("gen"),
+              plot_subset_ui(ns, "gen"),
               uiOutput(ns("auto_ui")),
               actionButton(ns("render"), "Render", class = "btn-primary")
             ),
@@ -434,7 +479,7 @@ mod_qc_ui <- function(id) {
             sidebar = bslib::sidebar(
               title = tags$h4("RLE", class = "fs-6 mb-0"), width = 280,
               uiOutput(ns("rle_group_ui")),
-              showing_ctrl("rle"),
+              plot_subset_ui(ns, "rle"),
               uiOutput(ns("rle_auto_ui")),
               actionButton(ns("rle_render"), "Render", class = "btn-primary")
             ),
@@ -447,7 +492,7 @@ mod_qc_ui <- function(id) {
             sidebar = bslib::sidebar(
               title = tags$h4("Expression density", class = "fs-6 mb-0"), width = 280,
               uiOutput(ns("dens_group_ui")),
-              showing_ctrl("dens"),
+              plot_subset_ui(ns, "dens"),
               uiOutput(ns("dens_auto_ui")),
               actionButton(ns("dens_render"), "Render", class = "btn-primary")
             ),
@@ -478,7 +523,7 @@ mod_qc_ui <- function(id) {
               actionButton(ns("cor_clear_anno"), "Clear annotation",
                            icon = icon("arrows-rotate"),
                            class = "btn-sm btn-outline-secondary mb-2"),
-              showing_ctrl("cor"),
+              plot_subset_ui(ns, "cor"),
               uiOutput(ns("cor_auto_ui")),
               actionButton(ns("cor_render"), "Render", class = "btn-primary")
             ),
@@ -491,12 +536,48 @@ mod_qc_ui <- function(id) {
             sidebar = bslib::sidebar(
               title = tags$h4("Within-group correlation", class = "fs-6 mb-0"), width = 280,
               uiOutput(ns("wg_group_ui")),
-              showing_ctrl("wg"),
+              plot_subset_ui(ns, "wg"),
               uiOutput(ns("wg_auto_ui")),
               actionButton(ns("wg_render"), "Render", class = "btn-primary")
             ),
             uiOutput(ns("wg_stale")), .qc_plot(ns("wg_plot")), .qc_help_note("within_group")
           )
+        )
+      )
+    ),
+
+    # ---- Spike-in (ERCC) -----------------------------------------------------
+    bslib::nav_panel(
+      tags$h4("Spike-in (ERCC)", class = "fs-6"),
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          title = tags$h4("Spike-in titration", class = "fs-6 mb-0"), width = 300,
+          helpText("Technical QC of the ERCC titration (not used for normalization)."),
+          uiOutput(ns("spike_source_ui")),
+          uiOutput(ns("spike_assay_ui")),
+          uiOutput(ns("spike_group_ui")),
+          plot_subset_ui(ns, "spike"),
+          uiOutput(ns("spike_auto_ui")),
+          actionButton(ns("spike_render"), "Render", class = "btn-primary")
+        ),
+        uiOutput(ns("spike_msg")),
+        uiOutput(ns("spike_stale")),
+        bslib::navset_pill(
+          bslib::nav_panel("Dose-response",
+            .qc_plot(ns("spike_dr_plot")), .qc_help_note("spike_dr")),
+          bslib::nav_panel("Per-sample summary",
+            selectInput(ns("spike_metric"), "Metric",
+                        choices = c("% spike-in" = "pct_spike",
+                                    "Detected spike-in features" = "n_spike_detected",
+                                    "Lowest detected conc" = "lod",
+                                    "Dose-response slope" = "slope",
+                                    "Dose-response R-squared" = "r_squared"),
+                        selected = "r_squared"),
+            uiOutput(ns("spike_cv")),
+            .qc_plot(ns("spike_summary_plot"))),
+          bslib::nav_panel("Spike-in QC Matrix",
+            tags$small(class = "text-muted", "Per-sample spike-in QC metrics:"),
+            shinycssloaders::withSpinner(DT::DTOutput(ns("spike_table")), proxy.height = "200px"))
         )
       )
     ),
@@ -562,7 +643,11 @@ mod_qc_ui <- function(id) {
               pool_buttons("feat"),
               uiOutput(ns("feat_counts")),
               actionButton(ns("feat_apply"), "Remove Features",
-                           icon = icon("trash"), class = "btn-danger w-100")
+                           icon = icon("trash"), class = "btn-danger w-100"),
+              tags$hr(),
+              helpText("Drop all spike-in (ERCC) controls if your design has none / they failed."),
+              actionButton(ns("feat_drop_spike"), "Remove all spike-in features",
+                           icon = icon("flask"), class = "btn-outline-danger w-100")
             ),
             tags$small(class = "text-muted",
                        "The removal pool is pre-seeded with the suggestion; search the table then 'Select all' + 'Add selected to pool' for bulk edits."),
@@ -604,7 +689,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
     auto_box <- function(input_id) renderUI({
       req(state$working)
-      checkboxInput(ns(input_id), "Auto-render", value = ncol(state$working) <= 30L)
+      checkboxInput(ns(input_id), "Auto-render", value = ncol(state$working) <= 150L)
     })
     # Deferred render: update live when auto is on, else only on the button.
     # `sig` is a cheap signature of the inputs the plot depends on; after a manual
@@ -634,76 +719,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     output$diag_badge  <- renderUI(.dtype_badge_ui(state))
 
     # --- "Showing:" display subset (view-only; never mutates the dds) --------
-    # One canonical selection (column + kept values) shared across each sample
-    # plot's sidebar control. Editing any tab's control updates the canonical
-    # state, which is fanned back out to every tab so they stay in sync. Default
-    # Keep is empty => show all (no subsetting).
-    .show_tabs <- c("gen", "rle", "dens", "wg", "cor")
-    show_by_rv     <- reactiveVal("__all__")
-    show_values_rv <- reactiveVal(character(0))
-
-    # Value-box choices for the current "show by" column.
-    show_val_choices <- function(by) {
-      if (is.null(by) || identical(by, "__all__")) return(character(0))
-      if (identical(by, "__samples__")) return(colnames(state$working))
-      cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      sort(unique(as.character(cd[[by]])))
-    }
-
-    # Populate / reset all the per-tab controls when a dataset (re)loads.
-    observeEvent(state$working, {
-      cols <- colnames(SummarizedExperiment::colData(state$working))
-      ch <- c("All samples" = "__all__", stats::setNames(cols, cols),
-              "Individual samples" = "__samples__")
-      show_by_rv("__all__"); show_values_rv(character(0))
-      for (s in .show_tabs) {
-        updateSelectInput(session, paste0(s, "_show_by"), choices = ch, selected = "__all__")
-        updateSelectizeInput(session, paste0(s, "_show_values"),
-                             choices = character(0), selected = character(0))
-      }
-    })
-
-    # Per-tab edits -> canonical state (guarded so fan-out echoes are no-ops).
-    lapply(.show_tabs, function(s) {
-      observeEvent(input[[paste0(s, "_show_by")]], {
-        v <- input[[paste0(s, "_show_by")]]
-        if (is.null(v) || identical(v, show_by_rv())) return()
-        show_by_rv(v); show_values_rv(character(0))      # reset values on column switch
-      }, ignoreInit = TRUE)
-      observeEvent(input[[paste0(s, "_show_values")]], {
-        v <- input[[paste0(s, "_show_values")]] %||% character(0)
-        if (setequal(v, show_values_rv())) return()
-        show_values_rv(v)
-      }, ignoreNULL = FALSE, ignoreInit = TRUE)
-    })
-
-    # Canonical state -> fan out to every tab's controls (keeps them in sync).
-    observeEvent(show_by_rv(), {
-      ch <- show_val_choices(show_by_rv())
-      for (s in .show_tabs) {
-        updateSelectInput(session, paste0(s, "_show_by"), selected = show_by_rv())
-        updateSelectizeInput(session, paste0(s, "_show_values"),
-                             choices = ch, selected = show_values_rv())
-      }
-    })
-    observeEvent(show_values_rv(), {
-      for (s in .show_tabs) {
-        updateSelectizeInput(session, paste0(s, "_show_values"), selected = show_values_rv())
-      }
-    }, ignoreNULL = FALSE)
-
-    # Samples currently shown (always non-empty: a blank Keep box = show all).
-    showing_samples <- reactive({
-      req(state$working)
-      all_s <- colnames(state$working)
-      by <- show_by_rv()
-      if (identical(by, "__all__")) return(all_s)
-      vals <- show_values_rv()
-      if (!length(vals)) return(all_s)
-      if (identical(by, "__samples__")) return(intersect(all_s, vals))
-      cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      all_s[as.character(cd[[by]]) %in% vals]
-    })
+    # Reusable control synced across the sample-plot sidebars (R/mod_plot_subset.R);
+    # returns the samples currently shown. Plots filter their data by it; the
+    # deferred `sig`s below depend on showing_samples() so a Showing change marks a
+    # manual plot stale. Dataset-diagnostic / Spike-in tabs are feature-level (omitted).
+    showing_samples <- plot_subset_server(input, output, session, state,
+                                          suffixes = c("gen", "rle", "dens", "wg", "cor", "spike"))
 
     # --- Sample QC: General QC + Matrix -------------------------------------
     qc_tbl <- reactive({
@@ -754,7 +775,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
     gen_shown <- deferred("auto", "render", current_spec,
       sig = reactive(list(input$x_axis, input$metric, input$sort,
-                          show_by_rv(), show_values_rv(), state$data_version)))
+                          showing_samples(), state$data_version)))
     output$gen_stale <- stale_note(gen_shown)
 
     output$plot <- renderPlot({
@@ -802,7 +823,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       list(df = df, n = ncol(dds), show = showing_samples())
     })
     rle_shown <- deferred("rle_auto", "rle_render", rle_spec,
-      sig = reactive(list(input$rle_group, show_by_rv(), show_values_rv(), state$data_version)))
+      sig = reactive(list(input$rle_group, showing_samples(), state$data_version)))
     output$rle_stale <- stale_note(rle_shown)
     output$diag_rle <- renderPlot({
       validate(need(!is.null(rle_shown$value()), "Click Render (or enable auto-render)."))
@@ -822,7 +843,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       list(df = df, n = ncol(dds), show = showing_samples())
     })
     dens_shown <- deferred("dens_auto", "dens_render", dens_spec,
-      sig = reactive(list(input$dens_group, show_by_rv(), show_values_rv(), state$data_version)))
+      sig = reactive(list(input$dens_group, showing_samples(), state$data_version)))
     output$dens_stale <- stale_note(dens_shown)
     output$diag_density <- renderPlot({
       validate(need(!is.null(dens_shown$value()), "Click Render (or enable auto-render)."))
@@ -888,8 +909,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
            show = showing_samples())
     })
     cor_shown <- deferred("cor_auto", "cor_render", cor_spec,
-      sig = reactive(list(input$cor_method, input$cor_anno, show_by_rv(),
-                          show_values_rv(), state$data_version)))
+      sig = reactive(list(input$cor_method, input$cor_anno, showing_samples(), state$data_version)))
     output$cor_stale <- stale_note(cor_shown)
     output$cor_plot <- renderPlot({
       validate(need(!is.null(cor_shown$value()), "Click Render to draw the correlation heatmap."))
@@ -914,13 +934,119 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
            show = showing_samples())
     })
     wg_shown <- deferred("wg_auto", "wg_render", wg_spec,
-      sig = reactive(list(input$wg_group, show_by_rv(), show_values_rv(), state$data_version)))
+      sig = reactive(list(input$wg_group, showing_samples(), state$data_version)))
     output$wg_stale <- stale_note(wg_shown)
     output$wg_plot <- renderPlot({
       validate(need(!is.null(wg_shown$value()), "Click Render (or enable auto-render)."))
       s <- wg_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       .qc_within_group_plot(d, dark_theme = dark())
+    })
+
+    # --- Spike-in (ERCC) dose-response --------------------------------------
+    spike_ids <- reactive(rownames(state$working)[.detect_spike_features(state$working)])
+    # A usable spike_concentration column = present + positive for some spike rows.
+    conc_col_ok <- reactive({
+      req(state$working); ids <- spike_ids()
+      if (!length(ids)) return(FALSE)
+      length(spike_features_missing_conc(state$working)) < length(ids)
+    })
+    output$spike_source_ui <- renderUI({
+      req(state$working)
+      choices <- c("ERCC Mix 1 (bundled)" = "mix1", "ERCC Mix 2 (bundled)" = "mix2")
+      if (conc_col_ok()) choices <- c("Feature metadata (spike_concentration)" = "column", choices)
+      selectInput(ns("spike_source"), "Concentration source", choices = choices,
+                  selected = if (conc_col_ok()) "column" else "mix1")
+    })
+    output$spike_assay_ui <- renderUI({
+      req(state$working)
+      present <- intersect(c("CPM", "TPM", "FPKM"), SummarizedExperiment::assayNames(state$working))
+      selectInput(ns("spike_assay"), "Observed assay", choices = union("CPM", present), selected = "CPM")
+    })
+    output$spike_group_ui <- group_box("spike_group")
+    output$spike_auto_ui  <- auto_box("spike_auto")
+
+    spike_spec <- reactive({
+      req(state$working, input$spike_source, input$spike_assay)
+      source <- input$spike_source; assay <- input$spike_assay
+      dr <- state_derive(state, "spike_dr", params = list(source = source, assay = assay),
+                         expr = function() spike_dose_response(state$working, assay = assay, source = source))
+      list(dr = dr, show = showing_samples())   # display subset (plots only)
+    })
+    spike_shown <- deferred("spike_auto", "spike_render", spike_spec,
+      sig = reactive(list(input$spike_source, input$spike_assay, showing_samples(), state$data_version)))
+    output$spike_stale <- stale_note(spike_shown)
+
+    # group column for colouring (applied at render, not part of the cached compute)
+    spike_group_col <- function(samples) {
+      gmap <- group_lookup(input$spike_group %||% default_group_col())
+      factor(gmap[as.character(samples)])
+    }
+
+    output$spike_msg <- renderUI({
+      req(state$working)
+      if (!length(spike_ids())) {
+        return(tags$div(class = "alert alert-secondary py-2 small mb-2",
+          "No spike-in features detected. Tag ERCC controls on the Feature tab to enable this view."))
+      }
+      v <- spike_shown$value(); if (is.null(v)) return(NULL)
+      dr <- v$dr
+      notes <- character(0)
+      # Match rate when joining the bundled ERCC reference (non-ERCC / custom
+      # spike ids resolve to NA and would yield a meaningless fit silently).
+      if (input$spike_source %in% c("mix1", "mix2")) {
+        cby <- dr$long$concentration[!duplicated(dr$long$feature)]
+        matched <- sum(is.finite(cby))
+        if (matched < length(cby)) notes <- c(notes, sprintf(
+          "Only %d of %d spike-in id(s) matched the ERCC reference - check the Mix, or designate a concentration column on the Feature tab.",
+          matched, length(cby)))
+      }
+      n_zero <- sum(dr$per_sample$n_spike_detected == 0)
+      if (n_zero > 0L) notes <- c(notes, sprintf(
+        "%d of %d sample(s) have no detected spike-ins - often this just means they were not spiked (mixed designs). Consider removing spike-in features (Filtering tab) if your design has none.",
+        n_zero, ncol(state$working)))
+      if (!length(notes)) return(NULL)
+      tags$div(class = "alert alert-warning py-2 small mb-2", lapply(notes, tags$div))
+    })
+
+    output$spike_dr_plot <- renderPlot({
+      validate(need(length(spike_ids()) > 0, "No spike-in features in this dataset."))
+      validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
+      s <- spike_shown$value()
+      validate(need(any(is.finite(s$dr$long$concentration)),
+                    "No known concentrations resolved for these spike-ins - try another source."))
+      long <- s$dr$long[s$dr$long$sample %in% s$show, , drop = FALSE]
+      validate(need(nrow(long) > 0, "No samples in the current 'Showing' selection."))
+      long$group <- spike_group_col(long$sample)
+      .qc_spike_dr_plot(long, dark_theme = dark())
+    })
+
+    output$spike_summary_plot <- renderPlot({
+      validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
+      s <- spike_shown$value()
+      ps <- s$dr$per_sample[s$dr$per_sample$sample %in% s$show, , drop = FALSE]
+      validate(need(nrow(ps) > 0, "No samples in the current 'Showing' selection."))
+      ps$group <- spike_group_col(ps$sample)
+      .qc_spike_summary_plot(ps, input$spike_metric %||% "r_squared", dark_theme = dark())
+    })
+
+    output$spike_cv <- renderUI({
+      v <- spike_shown$value(); req(v)
+      pct <- v$dr$per_sample$pct_spike[is.finite(v$dr$per_sample$pct_spike)]
+      if (length(pct) < 2L || mean(pct) == 0) return(NULL)
+      tags$div(class = "small text-muted mb-2",
+        sprintf("Spike-in fraction across samples: mean %.2f%%, CV %.0f%% (high CV = uneven spike input).",
+                mean(pct), 100 * stats::sd(pct) / mean(pct)))
+    })
+
+    output$spike_table <- DT::renderDT({
+      validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
+      ps <- spike_shown$value()$dr$per_sample
+      dt_table(data.frame(
+        Sample = ps$sample, `% spike` = round(ps$pct_spike, 2),
+        Detected = ps$n_spike_detected, `Fit points` = ps$n_points,
+        Slope = round(ps$slope, 3), `R-squared` = round(ps$r_squared, 3),
+        `Lowest detected conc` = signif(ps$lod, 3), check.names = FALSE))
     })
 
     # --- Filtering: shared flags + removal pools ----------------------------
@@ -1006,15 +1132,21 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       `In Removal Pool` = fl$feature_id %in% pool,
       check.names = FALSE, stringsAsFactors = FALSE)
 
+    # Danger-red TRUEs in the boolean removal columns (survives replaceData since
+    # it is baked into the column definitions, not the data).
+    color_removal <- function(dt) DT::formatStyle(
+      dt, c("Suggested Removal", "In Removal Pool"),
+      color      = DT::styleEqual(TRUE, "var(--bs-danger)", default = NULL),
+      fontWeight = DT::styleEqual(TRUE, "bold", default = NULL))
     output$samp_tbl <- DT::renderDT({
       validate(need(!is.null(state$working), "No dataset loaded."))
-      dt_table(samp_display(samp_flags(), isolate(samp_pool())),
-               selection = list(mode = "multiple"))
+      color_removal(dt_table(samp_display(samp_flags(), isolate(samp_pool())),
+                             selection = list(mode = "multiple")))
     }, server = TRUE)
     output$feat_tbl <- DT::renderDT({
       validate(need(!is.null(state$working), "No dataset loaded."))
-      dt_table(feat_display(feat_flags(), isolate(feat_pool())),
-               selection = list(mode = "multiple"))
+      color_removal(dt_table(feat_display(feat_flags(), isolate(feat_pool())),
+                             selection = list(mode = "multiple")))
     }, server = TRUE)
     samp_proxy <- DT::dataTableProxy("samp_tbl")
     feat_proxy <- DT::dataTableProxy("feat_tbl")
@@ -1110,6 +1242,30 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       state_mutate(state, function(d) restore_features(d, state$original),
                    action = list(action = "restore_features", n_restored = length(removed)))
       showNotification(sprintf("Restored %d removed feature(s).", length(removed)), type = "message")
+    })
+
+    # Remove all spike-in features (sound: size factors use endogenous controlGenes,
+    # so this does not affect normalization). Reversible via "Reset Feature Removal".
+    observeEvent(input$feat_drop_spike, {
+      req(state$working)
+      ids <- rownames(state$working)[.detect_spike_features(state$working)]
+      if (!length(ids)) {
+        showNotification("No spike-in features to remove.", type = "message"); return()
+      }
+      showModal(modalDialog(
+        title = "Remove all spike-in features?",
+        sprintf("Drop %d spike-in (ERCC) feature(s) from the working dataset? This removes the spike-in QC; restore via 'Reset Feature Removal'.", length(ids)),
+        easyClose = TRUE,
+        footer = tagList(modalButton("Cancel"),
+                         actionButton(ns("feat_drop_spike_ok"), "Remove", class = "btn-danger"))))
+    })
+    observeEvent(input$feat_drop_spike_ok, {
+      removeModal()
+      ids <- rownames(state$working)[.detect_spike_features(state$working)]
+      req(length(ids) > 0)
+      state_mutate(state, function(d) drop_features(d, ids),
+                   action = list(action = "drop_spike_in", n_dropped = length(ids)))
+      showNotification(sprintf("Removed %d spike-in feature(s).", length(ids)), type = "message")
     })
 
     observeEvent(input$feat_apply_ok, {

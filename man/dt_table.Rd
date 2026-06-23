@@ -10,6 +10,7 @@ dt_table(
   length_menu = c(10, 25, 50, 100),
   filter = "top",
   scrollX = TRUE,
+  selection = "none",
   options = list(),
   ...
 )
@@ -24,6 +25,11 @@ dt_table(
 \item{filter}{DT column-filter placement; \code{"top"} (default) or \code{"none"}.}
 
 \item{scrollX}{Enable horizontal scrolling for wide tables.}
+
+\item{selection}{Row-selection mode passed to \code{\link[DT:datatable]{DT::datatable()}}. Defaults to
+\code{"none"} so display tables are read-only (DT's own default is \code{"multiple"},
+which makes rows selectable); pass e.g. \code{list(mode = "multiple")} for the
+actionable filtering tables.}
 
 \item{options}{Extra DataTables options, merged over (and overriding) the
 defaults (\code{dom}, \code{pageLength}, \code{lengthMenu}, \code{scrollX}).}
