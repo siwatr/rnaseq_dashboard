@@ -409,16 +409,8 @@ mod_qc_ui <- function(id) {
                      icon = icon("arrows-rotate"), class = "btn-sm btn-outline-secondary"))
     )
   }
-  # View-only "Showing:" control, repeated in every sample-plot sidebar and kept
-  # in sync by the server. Default Keep is empty => show all (no subsetting).
-  showing_ctrl <- function(s) tagList(
-    tags$hr(class = "my-2"),
-    selectInput(ns(paste0(s, "_show_by")), "Showing (display only)",
-                choices = c("All samples" = "__all__"), selected = "__all__"),
-    selectizeInput(ns(paste0(s, "_show_values")), "Keep (blank = show all)",
-                   choices = character(0), multiple = TRUE,
-                   options = list(placeholder = "(blank = show all)"))
-  )
+  # The view-only "Showing:" control (reusable; see R/mod_plot_subset.R) sits in
+  # each plot sidebar via plot_subset_ui(ns, <suffix>), all synced by the server.
   # A threshold numericInput with its own per-field "Auto" button alongside. The
   # label sits on its own line; the input (wide) and the smaller wand button sit
   # on the next line, vertically centred so they read as aligned. `tip` is the
@@ -474,7 +466,7 @@ mod_qc_ui <- function(id) {
                                         "Increasing" = "increasing"),
                             selected = "none")
               ),
-              showing_ctrl("gen"),
+              plot_subset_ui(ns, "gen"),
               uiOutput(ns("auto_ui")),
               actionButton(ns("render"), "Render", class = "btn-primary")
             ),
@@ -487,7 +479,7 @@ mod_qc_ui <- function(id) {
             sidebar = bslib::sidebar(
               title = tags$h4("RLE", class = "fs-6 mb-0"), width = 280,
               uiOutput(ns("rle_group_ui")),
-              showing_ctrl("rle"),
+              plot_subset_ui(ns, "rle"),
               uiOutput(ns("rle_auto_ui")),
               actionButton(ns("rle_render"), "Render", class = "btn-primary")
             ),
@@ -500,7 +492,7 @@ mod_qc_ui <- function(id) {
             sidebar = bslib::sidebar(
               title = tags$h4("Expression density", class = "fs-6 mb-0"), width = 280,
               uiOutput(ns("dens_group_ui")),
-              showing_ctrl("dens"),
+              plot_subset_ui(ns, "dens"),
               uiOutput(ns("dens_auto_ui")),
               actionButton(ns("dens_render"), "Render", class = "btn-primary")
             ),
@@ -531,7 +523,7 @@ mod_qc_ui <- function(id) {
               actionButton(ns("cor_clear_anno"), "Clear annotation",
                            icon = icon("arrows-rotate"),
                            class = "btn-sm btn-outline-secondary mb-2"),
-              showing_ctrl("cor"),
+              plot_subset_ui(ns, "cor"),
               uiOutput(ns("cor_auto_ui")),
               actionButton(ns("cor_render"), "Render", class = "btn-primary")
             ),
@@ -544,7 +536,7 @@ mod_qc_ui <- function(id) {
             sidebar = bslib::sidebar(
               title = tags$h4("Within-group correlation", class = "fs-6 mb-0"), width = 280,
               uiOutput(ns("wg_group_ui")),
-              showing_ctrl("wg"),
+              plot_subset_ui(ns, "wg"),
               uiOutput(ns("wg_auto_ui")),
               actionButton(ns("wg_render"), "Render", class = "btn-primary")
             ),
@@ -581,7 +573,9 @@ mod_qc_ui <- function(id) {
                                     "Dose-response R-squared" = "r_squared"),
                         selected = "r_squared"),
             uiOutput(ns("spike_cv")),
-            .qc_plot(ns("spike_summary_plot")),
+            .qc_plot(ns("spike_summary_plot"))),
+          bslib::nav_panel("Spike-in QC Matrix",
+            tags$small(class = "text-muted", "Per-sample spike-in QC metrics:"),
             shinycssloaders::withSpinner(DT::DTOutput(ns("spike_table")), proxy.height = "200px"))
         )
       )
@@ -724,76 +718,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     output$diag_badge  <- renderUI(.dtype_badge_ui(state))
 
     # --- "Showing:" display subset (view-only; never mutates the dds) --------
-    # One canonical selection (column + kept values) shared across each sample
-    # plot's sidebar control. Editing any tab's control updates the canonical
-    # state, which is fanned back out to every tab so they stay in sync. Default
-    # Keep is empty => show all (no subsetting).
-    .show_tabs <- c("gen", "rle", "dens", "wg", "cor")
-    show_by_rv     <- reactiveVal("__all__")
-    show_values_rv <- reactiveVal(character(0))
-
-    # Value-box choices for the current "show by" column.
-    show_val_choices <- function(by) {
-      if (is.null(by) || identical(by, "__all__")) return(character(0))
-      if (identical(by, "__samples__")) return(colnames(state$working))
-      cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      sort(unique(as.character(cd[[by]])))
-    }
-
-    # Populate / reset all the per-tab controls when a dataset (re)loads.
-    observeEvent(state$working, {
-      cols <- colnames(SummarizedExperiment::colData(state$working))
-      ch <- c("All samples" = "__all__", stats::setNames(cols, cols),
-              "Individual samples" = "__samples__")
-      show_by_rv("__all__"); show_values_rv(character(0))
-      for (s in .show_tabs) {
-        updateSelectInput(session, paste0(s, "_show_by"), choices = ch, selected = "__all__")
-        updateSelectizeInput(session, paste0(s, "_show_values"),
-                             choices = character(0), selected = character(0))
-      }
-    })
-
-    # Per-tab edits -> canonical state (guarded so fan-out echoes are no-ops).
-    lapply(.show_tabs, function(s) {
-      observeEvent(input[[paste0(s, "_show_by")]], {
-        v <- input[[paste0(s, "_show_by")]]
-        if (is.null(v) || identical(v, show_by_rv())) return()
-        show_by_rv(v); show_values_rv(character(0))      # reset values on column switch
-      }, ignoreInit = TRUE)
-      observeEvent(input[[paste0(s, "_show_values")]], {
-        v <- input[[paste0(s, "_show_values")]] %||% character(0)
-        if (setequal(v, show_values_rv())) return()
-        show_values_rv(v)
-      }, ignoreNULL = FALSE, ignoreInit = TRUE)
-    })
-
-    # Canonical state -> fan out to every tab's controls (keeps them in sync).
-    observeEvent(show_by_rv(), {
-      ch <- show_val_choices(show_by_rv())
-      for (s in .show_tabs) {
-        updateSelectInput(session, paste0(s, "_show_by"), selected = show_by_rv())
-        updateSelectizeInput(session, paste0(s, "_show_values"),
-                             choices = ch, selected = show_values_rv())
-      }
-    })
-    observeEvent(show_values_rv(), {
-      for (s in .show_tabs) {
-        updateSelectizeInput(session, paste0(s, "_show_values"), selected = show_values_rv())
-      }
-    }, ignoreNULL = FALSE)
-
-    # Samples currently shown (always non-empty: a blank Keep box = show all).
-    showing_samples <- reactive({
-      req(state$working)
-      all_s <- colnames(state$working)
-      by <- show_by_rv()
-      if (identical(by, "__all__")) return(all_s)
-      vals <- show_values_rv()
-      if (!length(vals)) return(all_s)
-      if (identical(by, "__samples__")) return(intersect(all_s, vals))
-      cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      all_s[as.character(cd[[by]]) %in% vals]
-    })
+    # Reusable control synced across the sample-plot sidebars (R/mod_plot_subset.R);
+    # returns the samples currently shown. Plots filter their data by it; the
+    # deferred `sig`s below depend on showing_samples() so a Showing change marks a
+    # manual plot stale. Dataset-diagnostic / Spike-in tabs are feature-level (omitted).
+    showing_samples <- plot_subset_server(input, output, session, state,
+                                          suffixes = c("gen", "rle", "dens", "wg", "cor"))
 
     # --- Sample QC: General QC + Matrix -------------------------------------
     qc_tbl <- reactive({
@@ -844,7 +774,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
     gen_shown <- deferred("auto", "render", current_spec,
       sig = reactive(list(input$x_axis, input$metric, input$sort,
-                          show_by_rv(), show_values_rv(), state$data_version)))
+                          showing_samples(), state$data_version)))
     output$gen_stale <- stale_note(gen_shown)
 
     output$plot <- renderPlot({
@@ -892,7 +822,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       list(df = df, n = ncol(dds), show = showing_samples())
     })
     rle_shown <- deferred("rle_auto", "rle_render", rle_spec,
-      sig = reactive(list(input$rle_group, show_by_rv(), show_values_rv(), state$data_version)))
+      sig = reactive(list(input$rle_group, showing_samples(), state$data_version)))
     output$rle_stale <- stale_note(rle_shown)
     output$diag_rle <- renderPlot({
       validate(need(!is.null(rle_shown$value()), "Click Render (or enable auto-render)."))
@@ -912,7 +842,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       list(df = df, n = ncol(dds), show = showing_samples())
     })
     dens_shown <- deferred("dens_auto", "dens_render", dens_spec,
-      sig = reactive(list(input$dens_group, show_by_rv(), show_values_rv(), state$data_version)))
+      sig = reactive(list(input$dens_group, showing_samples(), state$data_version)))
     output$dens_stale <- stale_note(dens_shown)
     output$diag_density <- renderPlot({
       validate(need(!is.null(dens_shown$value()), "Click Render (or enable auto-render)."))
@@ -978,8 +908,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
            show = showing_samples())
     })
     cor_shown <- deferred("cor_auto", "cor_render", cor_spec,
-      sig = reactive(list(input$cor_method, input$cor_anno, show_by_rv(),
-                          show_values_rv(), state$data_version)))
+      sig = reactive(list(input$cor_method, input$cor_anno, showing_samples(), state$data_version)))
     output$cor_stale <- stale_note(cor_shown)
     output$cor_plot <- renderPlot({
       validate(need(!is.null(cor_shown$value()), "Click Render to draw the correlation heatmap."))
@@ -1004,7 +933,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
            show = showing_samples())
     })
     wg_shown <- deferred("wg_auto", "wg_render", wg_spec,
-      sig = reactive(list(input$wg_group, show_by_rv(), show_values_rv(), state$data_version)))
+      sig = reactive(list(input$wg_group, showing_samples(), state$data_version)))
     output$wg_stale <- stale_note(wg_shown)
     output$wg_plot <- renderPlot({
       validate(need(!is.null(wg_shown$value()), "Click Render (or enable auto-render)."))
@@ -1196,15 +1125,21 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       `In Removal Pool` = fl$feature_id %in% pool,
       check.names = FALSE, stringsAsFactors = FALSE)
 
+    # Danger-red TRUEs in the boolean removal columns (survives replaceData since
+    # it is baked into the column definitions, not the data).
+    color_removal <- function(dt) DT::formatStyle(
+      dt, c("Suggested Removal", "In Removal Pool"),
+      color      = DT::styleEqual(TRUE, "var(--bs-danger)", default = NULL),
+      fontWeight = DT::styleEqual(TRUE, "bold", default = NULL))
     output$samp_tbl <- DT::renderDT({
       validate(need(!is.null(state$working), "No dataset loaded."))
-      dt_table(samp_display(samp_flags(), isolate(samp_pool())),
-               selection = list(mode = "multiple"))
+      color_removal(dt_table(samp_display(samp_flags(), isolate(samp_pool())),
+                             selection = list(mode = "multiple")))
     }, server = TRUE)
     output$feat_tbl <- DT::renderDT({
       validate(need(!is.null(state$working), "No dataset loaded."))
-      dt_table(feat_display(feat_flags(), isolate(feat_pool())),
-               selection = list(mode = "multiple"))
+      color_removal(dt_table(feat_display(feat_flags(), isolate(feat_pool())),
+                             selection = list(mode = "multiple")))
     }, server = TRUE)
     samp_proxy <- DT::dataTableProxy("samp_tbl")
     feat_proxy <- DT::dataTableProxy("feat_tbl")

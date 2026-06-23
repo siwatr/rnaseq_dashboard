@@ -333,3 +333,9 @@ test_that("QC 'Remove all spike-in features' drops spikes and round-trips via re
     expect_equal(state_meta(state)$n_spike_in, 6L)
   })
 })
+
+test_that("QC UI exposes the Spike-in QC Matrix pill (table isolated from summary)", {
+  html <- paste(as.character(mod_qc_ui("qc")), collapse = " ")
+  expect_match(html, "Spike-in QC Matrix", fixed = TRUE)
+  expect_match(html, "Per-sample summary", fixed = TRUE)
+})
