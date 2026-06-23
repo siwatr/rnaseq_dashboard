@@ -4,13 +4,22 @@
 \alias{suggest_sample_thresholds}
 \title{Suggested auto thresholds for sample flagging}
 \usage{
-suggest_sample_thresholds(dds)
+suggest_sample_thresholds(dds, spike = NULL)
 }
 \arguments{
 \item{dds}{A \code{DESeqDataSet}.}
+
+\item{spike}{Optional per-sample spike summary (\code{\link[=spike_dose_response]{spike_dose_response()}}'s
+\code{per_sample}). When supplied, the list also carries spike suggestions:
+\code{pct_spike_min}/\code{pct_spike_max} (two-sided MAD fence on \% spike-in),
+\code{dose_r2_min} (lower MAD fence on dose-response R^2), and a fixed advisory
+slope range \code{dose_slope_min = 0.5} / \code{dose_slope_max = 1.5} (ideal slope
+~ 1). The lowest-detected-concentration has no auto default (its units
+depend on the concentration source) and is left to the user.}
 }
 \value{
-A list with \code{lib_size_min}, \code{detected_min}, \code{pct_mito_max}.
+A list with \code{lib_size_min}, \code{detected_min}, \code{pct_mito_max} (plus the
+spike fields above when \code{spike} is supplied).
 }
 \description{
 Robust fences (median +/- 3*MAD) for the sample-filter inputs, used to

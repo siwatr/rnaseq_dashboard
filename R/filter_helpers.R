@@ -148,26 +148,54 @@ flag_features <- function(dds, use_filter_by_expr = TRUE, group = NULL,
 #' @param within_group_z Flag a sample when its within-group correlation z-score
 #'   (within its group) is below `-within_group_z`; `NULL` disables the check.
 #' @param method Correlation method for the within-group check.
-#' @return A `data.frame`, one row per sample, with the metric columns plus
-#'   `within_group_corr`, the per-reason logicals `low_lib_size`,
-#'   `low_detected`, `high_mito`, `within_group_outlier`, `flagged`, and `reason`.
+#' @param spike Optional precomputed per-sample spike-in summary - the
+#'   `per_sample` element of [spike_dose_response()] (columns `sample`,
+#'   `n_spike_detected`, `n_points`, `slope`, `r_squared`, `lod`). When `NULL`,
+#'   0-row, or sharing no sample with `dds`, every spike rule is silently
+#'   disabled (back-compatible). Passed in (not recomputed) so the module reuses
+#'   the cached dose-response artifact and this helper stays free of the ERCC
+#'   concentration-resolution parameters.
+#' @param pct_spike_min,pct_spike_max Two-sided fence on % spike-in (canonical
+#'   `pct_spike` from [qc_per_sample_metrics()], not the `spike` frame's copy):
+#'   under-spiked (`< pct_spike_min`) or over-spiked (`> pct_spike_max`). Each
+#'   `NULL` disables that side.
+#' @param min_spike_detected Flag when fewer than this many spike features are
+#'   detected; `NULL` disables.
+#' @param dose_r2_min Flag when the dose-response R^2 is below this; `NULL`
+#'   disables.
+#' @param dose_slope_min,dose_slope_max Flag when the dose-response slope falls
+#'   outside `[dose_slope_min, dose_slope_max]` (ideal titration slope ~ 1); each
+#'   `NULL` disables that side. (The `lod` column - lowest detected concentration -
+#'   is carried for display context only and is intentionally not a filter rule:
+#'   its units depend on the concentration source, so there is no portable cutoff.)
+#' @return A `data.frame`, one row per sample, with the metric columns
+#'   (`library_size`, `detected`, `pct_mito`, `pct_spike`, `within_group_corr`,
+#'   `n_spike_detected`, `dose_r2`, `dose_slope`, `lod`), the per-reason logicals
+#'   (`low_lib_size`, `low_detected`, `high_mito`, `within_group_outlier`,
+#'   `low_spike`, `high_spike`, `low_spike_detected`, `low_dose_r2`, `bad_slope`,
+#'   `few_spike_points`), `flagged`, and `reason`.
 #' @export
 flag_samples <- function(dds, group = NULL, lib_size_min = NULL,
                          detected_min = NULL, pct_mito_max = NULL,
-                         within_group_z = 2, method = c("spearman", "pearson")) {
+                         within_group_z = 2, method = c("spearman", "pearson"),
+                         spike = NULL, pct_spike_min = NULL, pct_spike_max = NULL,
+                         min_spike_detected = NULL, dose_r2_min = NULL,
+                         dose_slope_min = NULL, dose_slope_max = NULL) {
   method <- match.arg(method)
   m <- qc_per_sample_metrics(dds)
   wg <- qc_within_group_correlation(dds, method = method, group = group)
   wg_corr <- wg$mean_corr[match(m$sample, wg$sample)]
   wg_grp  <- wg$group[match(m$sample, wg$sample)]
+  n_samp  <- nrow(m)
+  no_flag <- rep(FALSE, n_samp)
 
   # Each rule is opt-in: a NULL threshold disables it (no flag).
-  low_lib   <- if (is.null(lib_size_min)) rep(FALSE, nrow(m)) else m$library_size < lib_size_min
-  low_det   <- if (is.null(detected_min)) rep(FALSE, nrow(m)) else m$detected < detected_min
-  high_mito <- if (is.null(pct_mito_max)) rep(FALSE, nrow(m)) else m$pct_mito > pct_mito_max
+  low_lib   <- if (is.null(lib_size_min)) no_flag else m$library_size < lib_size_min
+  low_det   <- if (is.null(detected_min)) no_flag else m$detected < detected_min
+  high_mito <- if (is.null(pct_mito_max)) no_flag else m$pct_mito > pct_mito_max
 
   # Within-group outlier: per-group z-score of mean_corr below -within_group_z.
-  wg_out <- rep(FALSE, nrow(m))
+  wg_out <- no_flag
   if (!is.null(within_group_z)) {
     for (g in unique(stats::na.omit(as.character(wg_grp)))) {
       idx <- which(as.character(wg_grp) == g & !is.na(wg_corr))
@@ -177,18 +205,58 @@ flag_samples <- function(dds, group = NULL, lib_size_min = NULL,
     }
   }
 
+  # --- Spike-in (ERCC) criteria (P3e) --------------------------------------
+  # All opt-in. The fit metrics come from the precomputed `spike` summary;
+  # when it is absent or shares no sample, every spike rule is FALSE and the
+  # spike columns are NA (so the frame never reports false data).
+  spike_ok <- !is.null(spike) && is.data.frame(spike) && nrow(spike) > 0 &&
+    any(m$sample %in% spike$sample)
+  si <- if (spike_ok) match(m$sample, spike$sample) else rep(NA_integer_, n_samp)
+  sp_detected <- if (spike_ok) as.numeric(spike$n_spike_detected[si]) else rep(NA_real_, n_samp)
+  sp_npoints  <- if (spike_ok) as.numeric(spike$n_points[si])         else rep(NA_real_, n_samp)
+  sp_r2       <- if (spike_ok) as.numeric(spike$r_squared[si])        else rep(NA_real_, n_samp)
+  sp_slope    <- if (spike_ok) as.numeric(spike$slope[si])            else rep(NA_real_, n_samp)
+  sp_lod      <- if (spike_ok) as.numeric(spike$lod[si])              else rep(NA_real_, n_samp)
+
+  # `is.finite(x) & cond` is non-NA for NA x; the helper just gates on the
+  # threshold being set. pct_spike is canonical from qc_per_sample_metrics.
+  rule <- function(thr, cond) if (is.null(thr)) no_flag else cond
+  low_spike  <- rule(pct_spike_min, is.finite(m$pct_spike) & m$pct_spike < pct_spike_min)
+  high_spike <- rule(pct_spike_max, is.finite(m$pct_spike) & m$pct_spike > pct_spike_max)
+  low_spike_detected <- rule(min_spike_detected,
+                             is.finite(sp_detected) & sp_detected < min_spike_detected)
+  low_dose_r2 <- rule(dose_r2_min, is.finite(sp_r2) & sp_r2 < dose_r2_min)
+  bad_slope <- rule(dose_slope_min, is.finite(sp_slope) & sp_slope < dose_slope_min) |
+               rule(dose_slope_max, is.finite(sp_slope) & sp_slope > dose_slope_max)
+  # A dose rule (R^2/slope) is enabled but a sample has < 3 usable points, so its
+  # slope/R^2 are NA and cannot fire - flag it explicitly so failed samples are
+  # not silently passed (the detected-count rule independently catches zeros).
+  dose_rule_on <- !is.null(dose_r2_min) || !is.null(dose_slope_min) || !is.null(dose_slope_max)
+  few_points <- if (dose_rule_on) (is.finite(sp_npoints) & sp_npoints < 3L) else no_flag
+
   reason <- .reasons(list(
     "low library size"     = low_lib,
     "few detected features" = low_det,
     "high % mito"          = high_mito,
-    "within-group outlier" = wg_out
+    "within-group outlier" = wg_out,
+    "low % spike-in"       = low_spike,
+    "high % spike-in"      = high_spike,
+    "few detected spikes"  = low_spike_detected,
+    "low dose-response R2" = low_dose_r2,
+    "dose-response slope out of range" = bad_slope,
+    "insufficient spike points" = few_points
   ))
   data.frame(
     sample = m$sample, library_size = m$library_size, detected = m$detected,
     pct_mito = m$pct_mito, pct_spike = m$pct_spike, within_group_corr = wg_corr,
+    n_spike_detected = sp_detected, dose_r2 = sp_r2, dose_slope = sp_slope, lod = sp_lod,
     low_lib_size = low_lib, low_detected = low_det, high_mito = high_mito,
-    within_group_outlier = wg_out,
-    flagged = low_lib | low_det | high_mito | wg_out, reason = reason,
+    within_group_outlier = wg_out, low_spike = low_spike, high_spike = high_spike,
+    low_spike_detected = low_spike_detected, low_dose_r2 = low_dose_r2,
+    bad_slope = bad_slope, few_spike_points = few_points,
+    flagged = low_lib | low_det | high_mito | wg_out | low_spike | high_spike |
+      low_spike_detected | low_dose_r2 | bad_slope | few_points,
+    reason = reason,
     row.names = NULL, stringsAsFactors = FALSE, check.names = FALSE
   )
 }
@@ -200,14 +268,30 @@ flag_samples <- function(dds, group = NULL, lib_size_min = NULL,
 #' fence yields `NA` so that input stays blank (rule disabled).
 #'
 #' @param dds A `DESeqDataSet`.
-#' @return A list with `lib_size_min`, `detected_min`, `pct_mito_max`.
+#' @param spike Optional per-sample spike summary ([spike_dose_response()]'s
+#'   `per_sample`). When supplied, the list also carries spike suggestions:
+#'   `pct_spike_min`/`pct_spike_max` (two-sided MAD fence on % spike-in),
+#'   `dose_r2_min` (lower MAD fence on dose-response R^2), and a fixed advisory
+#'   slope range `dose_slope_min = 0.5` / `dose_slope_max = 1.5` (ideal slope
+#'   ~ 1). The lowest-detected-concentration has no auto default (its units
+#'   depend on the concentration source) and is left to the user.
+#' @return A list with `lib_size_min`, `detected_min`, `pct_mito_max` (plus the
+#'   spike fields above when `spike` is supplied).
 #' @export
-suggest_sample_thresholds <- function(dds) {
+suggest_sample_thresholds <- function(dds, spike = NULL) {
   m <- qc_per_sample_metrics(dds)
   lo <- function(x) { f <- .lower_fence(x); if (is.finite(f)) max(0, f) else NA_real_ }
   hi <- function(x) { f <- .upper_fence(x); if (is.finite(f)) f else NA_real_ }
-  list(lib_size_min = lo(m$library_size), detected_min = lo(m$detected),
-       pct_mito_max = hi(m$pct_mito))
+  out <- list(lib_size_min = lo(m$library_size), detected_min = lo(m$detected),
+              pct_mito_max = hi(m$pct_mito))
+  if (!is.null(spike) && is.data.frame(spike) && nrow(spike) > 0) {
+    out$pct_spike_min  <- lo(m$pct_spike)
+    out$pct_spike_max  <- hi(m$pct_spike)
+    out$dose_r2_min    <- lo(spike$r_squared)
+    out$dose_slope_min <- 0.5
+    out$dose_slope_max <- 1.5
+  }
+  out
 }
 
 #' Three-level removal status for plotting

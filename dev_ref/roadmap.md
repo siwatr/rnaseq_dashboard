@@ -39,11 +39,12 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   Mix1/2 ref (`inst/extdata/ercc_concentrations.csv`). Plus polish: reusable "Plot Showing"
   module (`mod_plot_subset.R`), `dt_table` read-only by default, selection-based
   feature_class assignment, per-value DT colours, auto-render threshold → 150. [PR #15]
-- **P3e ⬅️ next** **Filtering by spike-in QC metrics** — let QC → Filtering → Samples flag/select
-  samples by spike content & fit (% spike-in, detected-spike count, dose-response R²/slope,
-  lowest-detected conc), feeding the existing removal-pool flow (`flag_samples()` gains spike
-  criteria).
-- **P3f ⬜** UI-polish bundle — primarily a **ggplot ↔ plotly engine toggle** for the
+- **P3e ✅** **Filtering by spike-in QC metrics** — QC → Filtering → Samples flags/selects samples by
+  spike content & fit (two-sided % spike-in fence, detected-spike count, dose-response R²/slope,
+  +`<3-point` reason), feeding the existing removal-pool flow. `flag_samples()`/`suggest_sample_thresholds()`
+  gain opt-in spike criteria fed by the shared `spike_dr` cache; reuses the Spike-in QC tab's
+  source/assay. New knowledge note [ercc-spike-in.md](ercc-spike-in.md). [PR #17]
+- **P3f ⬅️ next** UI-polish bundle — primarily a **ggplot ↔ plotly engine toggle** for the
   interactive plots; sweep up small UX items.
 - **P3g ⬜** project-wide **Palette page** full wiring (mock landed in P3b): feed `thematic`
   qualitative/sequential palettes + `qc_annotation_colors()` for ComplexHeatmap; pin
@@ -82,6 +83,9 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 - **ERCC dose-response default assay** — should prefer **TPM/FPKM when available**, falling back to
   **CPM with a warning** (the current code defaults to CPM unconditionally). Fix in a future PR; the
   `rnaseq-bioc` skill already documents the desired behaviour.
+- **Two-sided spike highlight on the General QC % spike-in plot** — the "Removal status (this reason)"
+  colour-by maps `pct_spike` to the over-spiked side only; an under-spiked sample shows as
+  "suggested (other)". Symmetrise if users ask.
 - **Within-group-correlation auto-flag tuning** (threshold/z-score UX beyond v1).
 - **Advanced filter builder** for metadata tables (rows of criteria + AND/OR gate) — deferred
   in P2; built-in per-column DT filters cover AND-across-columns; revisit if OR is needed.
@@ -98,3 +102,4 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 | #13 | P3c: sample/feature filtering, auto-flagging & display subset |
 | #14 | Edit-history controls: global Undo/Reset, scoped metadata reset, QC reset-removal |
 | #15 | P3d: ERCC spike-in dose-response & spike-in QC (+ polish bundle) |
+| #17 | P3e: filtering by spike-in QC metrics (+ ERCC reference note) |

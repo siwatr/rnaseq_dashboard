@@ -117,6 +117,98 @@ test_that("flag_samples within-group outlier flags an injected bad replicate", {
   expect_true(fs$within_group_outlier[fs$sample == colnames(dds)[1]])
 })
 
+# ---- flag_samples: spike-in criteria (P3e) ----------------------------------
+
+# A synthetic per-sample dose-response summary aligned to a dds, so the spike
+# rules can be exercised deterministically without depending on the random fit.
+.mock_spike_summary <- function(dds, n_spike_detected = 5L, n_points = 5L,
+                                slope = 1, r_squared = 0.95, lod = 1) {
+  cn <- colnames(dds); n <- length(cn)
+  rep_n <- function(x) if (length(x) == 1L) rep(x, n) else x
+  data.frame(sample = cn, pct_spike = NA_real_,
+             n_spike_detected = rep_n(n_spike_detected), n_points = rep_n(n_points),
+             slope = rep_n(slope), r_squared = rep_n(r_squared), lod = rep_n(lod),
+             stringsAsFactors = FALSE)
+}
+
+test_that("flag_samples adds the spike columns and is unchanged when spike = NULL", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 4, seed = 21)
+  fs <- flag_samples(dds, within_group_z = NULL)        # spike = NULL (default)
+  spike_cols <- c("n_spike_detected", "dose_r2", "dose_slope", "lod", "low_spike",
+                  "high_spike", "low_spike_detected", "low_dose_r2", "bad_slope",
+                  "few_spike_points")
+  expect_true(all(spike_cols %in% colnames(fs)))
+  expect_true(all(is.na(fs$n_spike_detected)))           # no spike summary -> NA metrics
+  expect_false(any(fs$low_spike | fs$high_spike | fs$low_spike_detected |
+                   fs$low_dose_r2 | fs$bad_slope | fs$few_spike_points))
+})
+
+test_that("flag_samples fires detected / R2 / slope spike rules when thresholds set", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 4, seed = 22)
+  sp <- .mock_spike_summary(dds, n_spike_detected = 5L, slope = 1, r_squared = 0.95)
+  fs <- flag_samples(dds, within_group_z = NULL, spike = sp,
+                     min_spike_detected = 6, dose_r2_min = 0.99,
+                     dose_slope_min = 2, dose_slope_max = 3)
+  expect_true(all(fs$low_spike_detected))                # 5 < 6
+  expect_true(all(fs$low_dose_r2))                       # 0.95 < 0.99
+  expect_true(all(fs$bad_slope))                         # slope 1 outside [2, 3]
+  expect_true(all(fs$flagged))
+  expect_true(all(grepl("few detected spikes", fs$reason)))
+})
+
+test_that("flag_samples applies a two-sided % spike-in fence from canonical pct_spike", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 4, seed = 23)
+  ps <- flag_samples(dds, within_group_z = NULL)$pct_spike
+  skip_if(any(!is.finite(ps)))
+  fs_hi <- flag_samples(dds, within_group_z = NULL, pct_spike_max = min(ps) - 1e-9)
+  fs_lo <- flag_samples(dds, within_group_z = NULL, pct_spike_min = max(ps) + 1e-9)
+  expect_true(all(fs_hi$high_spike))                     # everything over the max
+  expect_true(all(fs_lo$low_spike))                      # everything under the min
+  expect_true(all(grepl("high % spike-in", fs_hi$reason)))
+})
+
+test_that("flag_samples flags < 3-point samples and never trips R2/slope on NA fits", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 4, seed = 24)
+  n <- ncol(dds)
+  few <- rep(c(2L, 5L), length.out = n)                  # alternate <3 vs ok
+  sp <- .mock_spike_summary(dds, n_points = few,
+                            slope = ifelse(few < 3L, NA_real_, 1),
+                            r_squared = ifelse(few < 3L, NA_real_, 0.95))
+  fs <- flag_samples(dds, within_group_z = NULL, spike = sp, dose_r2_min = 0.99)
+  expect_equal(fs$few_spike_points, few < 3L)            # dose rule on + <3 points
+  expect_false(any(fs$low_dose_r2[is.na(sp$r_squared)])) # NA R2 cannot fire
+  expect_true(all(grepl("insufficient spike points", fs$reason[fs$few_spike_points])))
+})
+
+test_that("flag_samples ignores a spike summary that shares no sample", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 2, seed = 25)
+  sp_bad <- data.frame(sample = paste0("nope", 1:3), pct_spike = NA_real_,
+                       n_spike_detected = 1L, n_points = 5L, slope = 1,
+                       r_squared = 0.99, lod = 1)
+  fs <- flag_samples(dds, within_group_z = NULL, spike = sp_bad, min_spike_detected = 99)
+  expect_false(any(fs$low_spike_detected))               # non-overlapping -> ignored
+  expect_true(all(is.na(fs$n_spike_detected)))
+})
+
+test_that("suggest_sample_thresholds adds spike suggestions only when given a spike df", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 6, seed = 26)
+  th0 <- suggest_sample_thresholds(dds)
+  expect_false(any(c("pct_spike_min", "dose_slope_min") %in% names(th0)))
+  sp <- spike_dose_response(dds, source = "column")$per_sample
+  th <- suggest_sample_thresholds(dds, spike = sp)
+  expect_true(all(c("pct_spike_min", "pct_spike_max", "dose_r2_min",
+                    "dose_slope_min", "dose_slope_max") %in% names(th)))
+  expect_equal(th$dose_slope_min, 0.5)                   # fixed advisory range
+  expect_equal(th$dose_slope_max, 1.5)
+  expect_false("lod" %in% names(th))                     # no portable lod default
+})
+
 # ---- removal_status ---------------------------------------------------------
 
 test_that("removal_status maps the three colour levels", {

@@ -179,6 +179,42 @@ test_that("flagged samples are highlight-only (pool starts empty)", {
   })
 })
 
+test_that("samp_flags incorporates spike-in criteria when a rule is set", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3,
+                                                      n_spike = 6, seed = 31)), source = "demo")
+    session$flushReact()
+    expect_gt(length(spike_ids()), 0)
+    expect_true(all(c("low_spike_detected", "bad_slope", "few_spike_points") %in%
+                    colnames(samp_flags())))
+    # An impossible detected-spike floor flags every sample for that reason; the
+    # derive must re-key on the new spike threshold.
+    session$setInputs(samp_spike_detected_min = 9999)
+    session$flushReact()
+    fl <- samp_flags()
+    expect_true(all(fl$low_spike_detected))
+    expect_true(all(grepl("few detected spikes", fl$reason)))
+  })
+})
+
+test_that("spike filtering is inert when the dataset has no spike-ins", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3,
+                                                      n_spike = 0, seed = 32)), source = "demo")
+    session$flushReact()
+    expect_equal(length(spike_ids()), 0)
+    session$setInputs(samp_spike_detected_min = 9999)
+    session$flushReact()
+    fl <- samp_flags()
+    expect_false(any(fl$low_spike_detected))
+    expect_true(all(is.na(fl$n_spike_detected)))
+  })
+})
+
 test_that("Showing subset filters plotted samples without bumping data_version", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
