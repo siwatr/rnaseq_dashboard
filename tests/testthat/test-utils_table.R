@@ -11,6 +11,12 @@ test_that("dt_table returns a datatable widget with the standard options", {
   expect_true(!is.null(w$x$filter) && !identical(w$x$filter, "none"))
 })
 
+test_that("dt_table is read-only (no row selection) by default; opt-in selectable", {
+  expect_equal(dt_table(head(mtcars))$x$selection$mode, "none")     # default off
+  w <- dt_table(head(mtcars), selection = list(mode = "multiple"))
+  expect_equal(w$x$selection$mode, "multiple")                      # opt-in
+})
+
 test_that("dt_table lets callers override and extend options", {
   w <- dt_table(head(mtcars), page_length = 25L, options = list(dom = "tp"))
   expect_equal(w$x$options$pageLength, 25L)

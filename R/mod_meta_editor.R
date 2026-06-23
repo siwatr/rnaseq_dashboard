@@ -65,13 +65,11 @@ meta_editor_ui <- function(id, opts, extra_sidebar = NULL, extra_main = NULL) {
       "Set feature class (bulk)",
       selectInput(ns("bulk_value"), "Class", c("endogenous", "spike_in", "exogenous")),
       tags$div(class = "btn-group btn-group-sm w-100 mb-2", role = "group",
-        actionButton(ns("bulk_select_all"), "Select all"),
-        actionButton(ns("bulk_deselect_all"), "Deselect all")),
+        actionButton(ns("bulk_select_all"), "Select all", class = "btn-outline-secondary"),
+        actionButton(ns("bulk_deselect_all"), "Deselect all", class = "btn-outline-secondary")),
       tags$div(class = "d-grid gap-1",
-        actionButton(ns("bulk_apply_selected"), "Set on selected rows",
-                     class = "btn-sm btn-outline-primary"),
-        actionButton(ns("bulk_apply_filtered"), "Set on filtered rows",
-                     class = "btn-sm btn-outline-secondary")),
+        actionButton(ns("bulk_apply_selected"), "Set on selected rows", class = "btn-sm btn-primary"),
+        actionButton(ns("bulk_apply_filtered"), "Set on filtered rows", class = "btn-sm btn-secondary")),
       helpText("Select rows (or filter the table), then assign the class.")
     )))
   }

@@ -556,6 +556,7 @@ mod_qc_ui <- function(id) {
           uiOutput(ns("spike_source_ui")),
           uiOutput(ns("spike_assay_ui")),
           uiOutput(ns("spike_group_ui")),
+          plot_subset_ui(ns, "spike"),
           uiOutput(ns("spike_auto_ui")),
           actionButton(ns("spike_render"), "Render", class = "btn-primary")
         ),
@@ -688,7 +689,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
     auto_box <- function(input_id) renderUI({
       req(state$working)
-      checkboxInput(ns(input_id), "Auto-render", value = ncol(state$working) <= 30L)
+      checkboxInput(ns(input_id), "Auto-render", value = ncol(state$working) <= 150L)
     })
     # Deferred render: update live when auto is on, else only on the button.
     # `sig` is a cheap signature of the inputs the plot depends on; after a manual
@@ -723,7 +724,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # deferred `sig`s below depend on showing_samples() so a Showing change marks a
     # manual plot stale. Dataset-diagnostic / Spike-in tabs are feature-level (omitted).
     showing_samples <- plot_subset_server(input, output, session, state,
-                                          suffixes = c("gen", "rle", "dens", "wg", "cor"))
+                                          suffixes = c("gen", "rle", "dens", "wg", "cor", "spike"))
 
     # --- Sample QC: General QC + Matrix -------------------------------------
     qc_tbl <- reactive({
@@ -968,11 +969,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     spike_spec <- reactive({
       req(state$working, input$spike_source, input$spike_assay)
       source <- input$spike_source; assay <- input$spike_assay
-      state_derive(state, "spike_dr", params = list(source = source, assay = assay),
-                   expr = function() spike_dose_response(state$working, assay = assay, source = source))
+      dr <- state_derive(state, "spike_dr", params = list(source = source, assay = assay),
+                         expr = function() spike_dose_response(state$working, assay = assay, source = source))
+      list(dr = dr, show = showing_samples())   # display subset (plots only)
     })
     spike_shown <- deferred("spike_auto", "spike_render", spike_spec,
-      sig = reactive(list(input$spike_source, input$spike_assay, state$data_version)))
+      sig = reactive(list(input$spike_source, input$spike_assay, showing_samples(), state$data_version)))
     output$spike_stale <- stale_note(spike_shown)
 
     # group column for colouring (applied at render, not part of the cached compute)
@@ -988,17 +990,18 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
           "No spike-in features detected. Tag ERCC controls on the Feature tab to enable this view."))
       }
       v <- spike_shown$value(); if (is.null(v)) return(NULL)
+      dr <- v$dr
       notes <- character(0)
       # Match rate when joining the bundled ERCC reference (non-ERCC / custom
       # spike ids resolve to NA and would yield a meaningless fit silently).
       if (input$spike_source %in% c("mix1", "mix2")) {
-        cby <- v$long$concentration[!duplicated(v$long$feature)]
+        cby <- dr$long$concentration[!duplicated(dr$long$feature)]
         matched <- sum(is.finite(cby))
         if (matched < length(cby)) notes <- c(notes, sprintf(
           "Only %d of %d spike-in id(s) matched the ERCC reference - check the Mix, or designate a concentration column on the Feature tab.",
           matched, length(cby)))
       }
-      n_zero <- sum(v$per_sample$n_spike_detected == 0)
+      n_zero <- sum(dr$per_sample$n_spike_detected == 0)
       if (n_zero > 0L) notes <- c(notes, sprintf(
         "%d of %d sample(s) have no detected spike-ins - often this just means they were not spiked (mixed designs). Consider removing spike-in features (Filtering tab) if your design has none.",
         n_zero, ncol(state$working)))
@@ -1009,23 +1012,27 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     output$spike_dr_plot <- renderPlot({
       validate(need(length(spike_ids()) > 0, "No spike-in features in this dataset."))
       validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
-      dr <- spike_shown$value()
-      validate(need(any(is.finite(dr$long$concentration)),
+      s <- spike_shown$value()
+      validate(need(any(is.finite(s$dr$long$concentration)),
                     "No known concentrations resolved for these spike-ins - try another source."))
-      long <- dr$long; long$group <- spike_group_col(long$sample)
+      long <- s$dr$long[s$dr$long$sample %in% s$show, , drop = FALSE]
+      validate(need(nrow(long) > 0, "No samples in the current 'Showing' selection."))
+      long$group <- spike_group_col(long$sample)
       .qc_spike_dr_plot(long, dark_theme = dark())
     })
 
     output$spike_summary_plot <- renderPlot({
       validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
-      ps <- spike_shown$value()$per_sample
+      s <- spike_shown$value()
+      ps <- s$dr$per_sample[s$dr$per_sample$sample %in% s$show, , drop = FALSE]
+      validate(need(nrow(ps) > 0, "No samples in the current 'Showing' selection."))
       ps$group <- spike_group_col(ps$sample)
       .qc_spike_summary_plot(ps, input$spike_metric %||% "r_squared", dark_theme = dark())
     })
 
     output$spike_cv <- renderUI({
       v <- spike_shown$value(); req(v)
-      pct <- v$per_sample$pct_spike[is.finite(v$per_sample$pct_spike)]
+      pct <- v$dr$per_sample$pct_spike[is.finite(v$dr$per_sample$pct_spike)]
       if (length(pct) < 2L || mean(pct) == 0) return(NULL)
       tags$div(class = "small text-muted mb-2",
         sprintf("Spike-in fraction across samples: mean %.2f%%, CV %.0f%% (high CV = uneven spike input).",
@@ -1034,7 +1041,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     output$spike_table <- DT::renderDT({
       validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
-      ps <- spike_shown$value()$per_sample
+      ps <- spike_shown$value()$dr$per_sample
       dt_table(data.frame(
         Sample = ps$sample, `% spike` = round(ps$pct_spike, 2),
         Detected = ps$n_spike_detected, `Fit points` = ps$n_points,

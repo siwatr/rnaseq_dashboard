@@ -8,17 +8,21 @@
 # separate sidebars), so a page calls plot_subset_server(input, output, session,
 # state, suffixes) once and plot_subset_ui(ns, suffix) in each plot sidebar.
 
-# One sidebar's control: a "show by" column selector + a value multiselect.
-# `suffix` distinguishes the instances on a page (e.g. "gen", "rle"). Choices are
-# populated by the server on load. Blank value box = show all (no subsetting).
+# One sidebar's control: a collapsible "Plot Showing" accordion panel holding a
+# "show by" column selector + a value multiselect. `suffix` distinguishes the
+# instances on a page (e.g. "gen", "rle"). Choices are populated by the server on
+# load. Blank value box = show all (no subsetting).
 plot_subset_ui <- function(ns, suffix) {
-  tagList(
-    tags$hr(class = "my-2"),
-    selectInput(ns(paste0(suffix, "_show_by")), "Showing (display only)",
-                choices = c("All samples" = "__all__"), selected = "__all__"),
-    selectizeInput(ns(paste0(suffix, "_show_values")), "Keep (blank = show all)",
-                   choices = character(0), multiple = TRUE,
-                   options = list(placeholder = "(blank = show all)"))
+  bslib::accordion(
+    open = FALSE,
+    bslib::accordion_panel(
+      "Plot Showing",
+      selectInput(ns(paste0(suffix, "_show_by")), "Show by (display only)",
+                  choices = c("All samples" = "__all__"), selected = "__all__"),
+      selectizeInput(ns(paste0(suffix, "_show_values")), "Keep (blank = show all)",
+                     choices = character(0), multiple = TRUE,
+                     options = list(placeholder = "(blank = show all)"))
+    )
   )
 }
 

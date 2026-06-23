@@ -263,8 +263,9 @@ test_that("QC UI exposes the Filtering tab, pool actions, and per-sidebar Showin
   expect_match(html, "Remove Samples")               # renamed apply buttons
   expect_match(html, "Remove Features")
   expect_match(html, "Set auto threshold for all settings")
-  expect_match(html, "Showing \\(display only\\)")   # the per-sidebar Showing control
+  expect_match(html, "Plot Showing")                 # per-sidebar Showing accordion
   expect_match(html, "gen_show_by")                  # one of the synced controls
+  expect_match(html, "spike_show_by")                # Showing now on the spike tab too
   expect_match(html, "samp_lib_auto")                # a per-field Auto button
 })
 
