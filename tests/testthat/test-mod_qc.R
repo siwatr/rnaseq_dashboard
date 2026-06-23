@@ -179,6 +179,67 @@ test_that("flagged samples are highlight-only (pool starts empty)", {
   })
 })
 
+test_that("samp_flags incorporates spike-in criteria when a rule is set", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3,
+                                                      n_spike = 6, seed = 31)), source = "demo")
+    session$flushReact()
+    expect_gt(length(spike_ids()), 0)
+    expect_true(all(c("low_spike_detected", "bad_slope", "few_spike_points") %in%
+                    colnames(samp_flags())))
+    # An impossible detected-spike floor flags every sample for that reason; the
+    # derive must re-key on the new spike threshold.
+    session$setInputs(samp_spike_detected_min = 9999)
+    session$flushReact()
+    fl <- samp_flags()
+    expect_true(all(fl$low_spike_detected))
+    expect_true(all(grepl("few detected spikes", fl$reason)))
+  })
+})
+
+test_that("spike filtering is inert when the dataset has no spike-ins", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3,
+                                                      n_spike = 0, seed = 32)), source = "demo")
+    session$flushReact()
+    expect_equal(length(spike_ids()), 0)
+    session$setInputs(samp_spike_detected_min = 9999)
+    session$flushReact()
+    fl <- samp_flags()
+    expect_false(any(fl$low_spike_detected))
+    expect_true(all(is.na(fl$n_spike_detected)))
+  })
+})
+
+test_that("spike observed assay prefers a length-normalized assay (TPM > FPKM > CPM)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    dds <- add_normalized_assays(
+      ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 4, seed = 33)),
+      c("CPM", "TPM"))
+    state_load(state, dds, source = "demo")
+    session$flushReact()
+    expect_equal(spike_default_assay(), "TPM")
+    expect_equal(samp_spike_assay(), "TPM")        # fallback before the spike tab UI renders
+  })
+})
+
+test_that("spike observed assay falls back to CPM without TPM/FPKM", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2,
+                                                      n_spike = 4, seed = 34)), source = "demo")
+    session$flushReact()
+    expect_equal(spike_default_assay(), "CPM")
+  })
+})
+
 test_that("Showing subset filters plotted samples without bumping data_version", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
@@ -262,11 +323,35 @@ test_that("QC UI exposes the Filtering tab, pool actions, and per-sidebar Showin
   expect_match(html, "Add selected to pool")
   expect_match(html, "Remove Samples")               # renamed apply buttons
   expect_match(html, "Remove Features")
-  expect_match(html, "Set auto threshold for all settings")
+  expect_match(html, "samp_filters_ui")              # filter accordion built server-side
   expect_match(html, "Plot Showing")                 # per-sidebar Showing accordion
   expect_match(html, "gen_show_by")                  # one of the synced controls
   expect_match(html, "spike_show_by")                # Showing now on the spike tab too
-  expect_match(html, "samp_lib_auto")                # a per-field Auto button
+})
+
+test_that("the sample-filter accordion is one card; spike panel a sibling only with spikes", {
+  skip_if_not_installed("DESeq2")
+  render_filters <- function(n_spike) {
+    state <- new_app_state()
+    out <- NULL
+    shiny::testServer(mod_qc_server, args = list(state = state), {
+      state_load(state, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2,
+                                                        n_spike = n_spike, seed = 41)), source = "demo")
+      session$flushReact()
+      out <<- paste(as.character(output$samp_filters_ui$html), collapse = " ")
+    })
+    out
+  }
+  with_spike <- render_filters(4)
+  expect_equal(lengths(regmatches(with_spike, gregexpr("class=\"accordion\"", with_spike))), 1L)
+  expect_match(with_spike, "Sample QC filters")
+  expect_match(with_spike, "Spike-in \\(ERCC\\) filters")
+  expect_match(with_spike, "samp_lib_auto")          # general per-field Auto button
+  expect_match(with_spike, "samp_spike_auto")        # scoped spike Auto button
+
+  no_spike <- render_filters(0)
+  expect_match(no_spike, "Sample QC filters")
+  expect_no_match(no_spike, "Spike-in \\(ERCC\\) filters")   # panel omitted, not a 2nd card
 })
 
 test_that("QC per-tab Reset Feature Removal restores removed features and is undoable", {

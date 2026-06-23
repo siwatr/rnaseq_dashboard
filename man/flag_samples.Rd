@@ -11,7 +11,14 @@ flag_samples(
   detected_min = NULL,
   pct_mito_max = NULL,
   within_group_z = 2,
-  method = c("spearman", "pearson")
+  method = c("spearman", "pearson"),
+  spike = NULL,
+  pct_spike_min = NULL,
+  pct_spike_max = NULL,
+  min_spike_detected = NULL,
+  dose_r2_min = NULL,
+  dose_slope_min = NULL,
+  dose_slope_max = NULL
 )
 }
 \arguments{
@@ -28,11 +35,39 @@ check; defaults to a design variable.}
 (within its group) is below \code{-within_group_z}; \code{NULL} disables the check.}
 
 \item{method}{Correlation method for the within-group check.}
+
+\item{spike}{Optional precomputed per-sample spike-in summary - the
+\code{per_sample} element of \code{\link[=spike_dose_response]{spike_dose_response()}} (columns \code{sample},
+\code{n_spike_detected}, \code{n_points}, \code{slope}, \code{r_squared}, \code{lod}). When \code{NULL},
+0-row, or sharing no sample with \code{dds}, every spike rule is silently
+disabled (back-compatible). Passed in (not recomputed) so the module reuses
+the cached dose-response artifact and this helper stays free of the ERCC
+concentration-resolution parameters.}
+
+\item{pct_spike_min, pct_spike_max}{Two-sided fence on \% spike-in (canonical
+\code{pct_spike} from \code{\link[=qc_per_sample_metrics]{qc_per_sample_metrics()}}, not the \code{spike} frame's copy):
+under-spiked (\verb{< pct_spike_min}) or over-spiked (\verb{> pct_spike_max}). Each
+\code{NULL} disables that side.}
+
+\item{min_spike_detected}{Flag when fewer than this many spike features are
+detected; \code{NULL} disables.}
+
+\item{dose_r2_min}{Flag when the dose-response R^2 is below this; \code{NULL}
+disables.}
+
+\item{dose_slope_min, dose_slope_max}{Flag when the dose-response slope falls
+outside \verb{[dose_slope_min, dose_slope_max]} (ideal titration slope ~ 1); each
+\code{NULL} disables that side. (The \code{lod} column - lowest detected concentration -
+is carried for display context only and is intentionally not a filter rule:
+its units depend on the concentration source, so there is no portable cutoff.)}
 }
 \value{
-A \code{data.frame}, one row per sample, with the metric columns plus
-\code{within_group_corr}, the per-reason logicals \code{low_lib_size},
-\code{low_detected}, \code{high_mito}, \code{within_group_outlier}, \code{flagged}, and \code{reason}.
+A \code{data.frame}, one row per sample, with the metric columns
+(\code{library_size}, \code{detected}, \code{pct_mito}, \code{pct_spike}, \code{within_group_corr},
+\code{n_spike_detected}, \code{dose_r2}, \code{dose_slope}, \code{lod}), the per-reason logicals
+(\code{low_lib_size}, \code{low_detected}, \code{high_mito}, \code{within_group_outlier},
+\code{low_spike}, \code{high_spike}, \code{low_spike_detected}, \code{low_dose_r2}, \code{bad_slope},
+\code{few_spike_points}), \code{flagged}, and \code{reason}.
 }
 \description{
 Per-sample flags from \code{\link[=qc_per_sample_metrics]{qc_per_sample_metrics()}} plus the within-group

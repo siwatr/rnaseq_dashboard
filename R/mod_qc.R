@@ -23,9 +23,46 @@
 .removal_labels <- c(pass = "QC pass", suggested_other = "Suggested drop (other)",
                      suggested_this = "Suggested drop (this reason)")
 # Sample QC metric -> the flag_samples() reason column it corresponds to (used to
-# pick the "this reason" highlight). % spike-in has no drop reason.
+# pick the "this reason" highlight). One column per metric, so % spike-in maps to
+# the over-spiked side only; under-spiked samples (low_spike) still show as
+# "suggested (other)" on that plot.
 .metric_reason <- c(library_size = "low_lib_size", detected = "low_detected",
-                    pct_mito = "high_mito")
+                    pct_mito = "high_mito", pct_spike = "high_spike")
+
+# Advisory notes for a dose-response result, shared by the Spike-in QC tab
+# message and the Filtering sidebar: the ERCC reference match rate (when a
+# bundled Mix is the source) and the count of samples with no detected spikes.
+.spike_match_notes <- function(dr, source, n_samples) {
+  notes <- character(0)
+  if (source %in% c("mix1", "mix2")) {
+    cby <- dr$long$concentration[!duplicated(dr$long$feature)]
+    matched <- sum(is.finite(cby))
+    if (matched < length(cby)) notes <- c(notes, sprintf(
+      "Only %d of %d spike-in id(s) matched the ERCC reference - check the Mix, or designate a concentration column on the Feature tab.",
+      matched, length(cby)))
+  }
+  n_zero <- sum(dr$per_sample$n_spike_detected == 0)
+  if (n_zero > 0L) notes <- c(notes, sprintf(
+    "%d of %d sample(s) have no detected spike-ins - often this just means they were not spiked (mixed designs). Consider removing spike-in features (Filtering tab) if your design has none.",
+    n_zero, n_samples))
+  notes
+}
+
+# A threshold numericInput with its own per-field "Auto" wand button alongside.
+# The label sits on its own line; the input (wide) + the smaller wand button sit
+# on the next line, vertically centred. `tip` is the button's hover text. Used in
+# the QC sample-filter accordion (built server-side via renderUI so the general
+# and spike-in panels are true siblings in one accordion card).
+.qc_thr_input <- function(ns, input_id, label, auto_id, tip, ...) {
+  tags$div(class = "mb-2",
+    tags$label(label, class = "form-label mb-1", `for` = ns(input_id)),
+    tags$div(class = "d-flex align-items-center gap-1",
+      tags$div(class = "flex-grow-1", numericInput(ns(input_id), label = NULL, ...)),
+      bslib::tooltip(
+        actionButton(ns(auto_id), NULL, icon = icon("wand-magic-sparkles"),
+                     class = "btn-sm btn-outline-primary"),
+        tip)))
+}
 
 # Metric -> axis label. Library size is reported in millions on its axis.
 .qc_metric_labels <- c(
@@ -411,20 +448,6 @@ mod_qc_ui <- function(id) {
   }
   # The view-only "Showing:" control (reusable; see R/mod_plot_subset.R) sits in
   # each plot sidebar via plot_subset_ui(ns, <suffix>), all synced by the server.
-  # A threshold numericInput with its own per-field "Auto" button alongside. The
-  # label sits on its own line; the input (wide) and the smaller wand button sit
-  # on the next line, vertically centred so they read as aligned. `tip` is the
-  # button's hover text (e.g. "Auto threshold: min. library size").
-  thr_input <- function(input_id, label, auto_id, tip, ...) {
-    tags$div(class = "mb-2",
-      tags$label(label, class = "form-label mb-1", `for` = ns(input_id)),
-      tags$div(class = "d-flex align-items-center gap-1",
-        tags$div(class = "flex-grow-1", numericInput(ns(input_id), label = NULL, ...)),
-        bslib::tooltip(
-          actionButton(ns(auto_id), NULL, icon = icon("wand-magic-sparkles"),
-                       class = "btn-sm btn-outline-primary"),
-          tip)))
-  }
   bslib::navset_card_tab(
     title = tags$h3("QC & filtering", class = "fs-6 mb-0 pe-3"),
 
@@ -593,19 +616,11 @@ mod_qc_ui <- function(id) {
               title = tags$h4("Sample filtering", class = "fs-6 mb-0"), width = 300,
               helpText("Flags are advisory. A blank threshold disables that check; the ",
                        tags$strong("Auto"), " buttons fill data-driven thresholds."),
-              uiOutput(ns("samp_group_ui")),
-              thr_input("samp_lib_min", "Min library size (blank = off)", "samp_lib_auto",
-                        tip = "Auto threshold: min. library size", value = NA, min = 0),
-              thr_input("samp_detected_min", "Min detected features (blank = off)",
-                        "samp_detected_auto", tip = "Auto threshold: min. detected features",
-                        value = NA, min = 0),
-              thr_input("samp_mito_max", "Max % mitochondrial (blank = off)", "samp_mito_auto",
-                        tip = "Auto threshold: max. % mitochondrial", value = NA, min = 0, max = 100),
-              numericInput(ns("samp_wg_z"), "Within-group outlier z-cutoff (blank = off)",
-                           value = 2, min = 0, step = 0.5),
-              actionButton(ns("samp_auto"), "Set auto threshold for all settings",
-                           icon = icon("wand-magic-sparkles"),
-                           class = "btn-sm btn-outline-primary w-100 mb-2"),
+              # One accordion with the general sample-QC filters and (when the
+              # dataset has spike-ins) the spike-in filters as sibling panels.
+              # Built server-side (renderUI) so the conditional spike panel is a
+              # true sibling in the same accordion card, not a separate card.
+              uiOutput(ns("samp_filters_ui")),
               tags$hr(),
               pool_buttons("samp"),
               uiOutput(ns("samp_counts")),
@@ -739,7 +754,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cols <- colnames(SummarizedExperiment::colData(state$working))
       selectInput(ns("group"), "Group / colour by",
                   choices = c(stats::setNames(cols, cols),
-                              "Removal status (this metric)" = "__removal__",
+                              "Suggested removal" = "__removal__",
                               "In removal pool" = "__pool__"),
                   selected = default_group_col())
     })
@@ -752,7 +767,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         fl <- samp_flags(); i <- match(samples, fl$sample)
         rcol <- .metric_reason[[metric]]
         this <- if (!is.null(rcol)) fl[[rcol]][i] else NULL
-        list(values = removal_status(fl$flagged[i], this), lab = "Removal status",
+        list(values = removal_status(fl$flagged[i], this), lab = "Suggested removal",
              palette = .removal_palette, labels = .removal_labels)
       } else if (identical(col, "__pool__")) {
         inp <- samples %in% samp_pool()
@@ -958,10 +973,24 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       selectInput(ns("spike_source"), "Concentration source", choices = choices,
                   selected = if (conc_col_ok()) "column" else "mix1")
     })
+    # Observed-abundance assay for the dose-response. Read counts scale with molar
+    # input *and* transcript length, and ERCCs span ~250-2000 nt, so a
+    # length-normalized assay (TPM > FPKM) tracks the known molar concentration
+    # more faithfully than CPM. Prefer them when present; fall back to CPM + note.
+    spike_default_assay <- reactive({
+      present <- SummarizedExperiment::assayNames(state$working)
+      if ("TPM" %in% present) "TPM" else if ("FPKM" %in% present) "FPKM" else "CPM"
+    })
     output$spike_assay_ui <- renderUI({
       req(state$working)
-      present <- intersect(c("CPM", "TPM", "FPKM"), SummarizedExperiment::assayNames(state$working))
-      selectInput(ns("spike_assay"), "Observed assay", choices = union("CPM", present), selected = "CPM")
+      present <- intersect(c("TPM", "FPKM", "CPM"), SummarizedExperiment::assayNames(state$working))
+      tagList(
+        selectInput(ns("spike_assay"), "Observed assay", choices = union(present, "CPM"),
+                    selected = spike_default_assay()),
+        if (identical(spike_default_assay(), "CPM"))
+          helpText("Tip: add a length-normalized assay (TPM/FPKM) on the Assay tab - it tracks ",
+                   "molar spike-in input more accurately than CPM for titration.")
+      )
     })
     output$spike_group_ui <- group_box("spike_group")
     output$spike_auto_ui  <- auto_box("spike_auto")
@@ -990,21 +1019,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
           "No spike-in features detected. Tag ERCC controls on the Feature tab to enable this view."))
       }
       v <- spike_shown$value(); if (is.null(v)) return(NULL)
-      dr <- v$dr
-      notes <- character(0)
-      # Match rate when joining the bundled ERCC reference (non-ERCC / custom
-      # spike ids resolve to NA and would yield a meaningless fit silently).
-      if (input$spike_source %in% c("mix1", "mix2")) {
-        cby <- dr$long$concentration[!duplicated(dr$long$feature)]
-        matched <- sum(is.finite(cby))
-        if (matched < length(cby)) notes <- c(notes, sprintf(
-          "Only %d of %d spike-in id(s) matched the ERCC reference - check the Mix, or designate a concentration column on the Feature tab.",
-          matched, length(cby)))
-      }
-      n_zero <- sum(dr$per_sample$n_spike_detected == 0)
-      if (n_zero > 0L) notes <- c(notes, sprintf(
-        "%d of %d sample(s) have no detected spike-ins - often this just means they were not spiked (mixed designs). Consider removing spike-in features (Filtering tab) if your design has none.",
-        n_zero, ncol(state$working)))
+      notes <- .spike_match_notes(v$dr, input$spike_source, ncol(state$working))
       if (!length(notes)) return(NULL)
       tags$div(class = "alert alert-warning py-2 small mb-2", lapply(notes, tags$div))
     })
@@ -1055,17 +1070,46 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     # Advisory flags, cached on data_version + the rule inputs. Shared by the
     # Filtering tables and the General QC "Removal status" colour-by.
+    # Canonical spike source / observed assay - shared with the Spike-in (ERCC)
+    # tab so both hit one "spike_dr" cache entry. Defaults match that tab's
+    # renderUI selections, so the key is identical even before it is first
+    # visited (input$spike_* are then NULL).
+    samp_spike_src   <- reactive(input$spike_source %||% (if (isTRUE(conc_col_ok())) "column" else "mix1"))
+    samp_spike_assay <- reactive(input$spike_assay %||% spike_default_assay())
+    # Per-sample dose-response summary feeding the spike filtering rules; NULL
+    # when the dataset has no spike features (rules then stay disabled).
+    samp_spike_summary <- reactive({
+      req(state$working)
+      if (!length(spike_ids())) return(NULL)
+      src <- samp_spike_src(); asy <- samp_spike_assay()
+      state_derive(state, "spike_dr", params = list(source = src, assay = asy),
+                   expr = function() spike_dose_response(state$working, assay = asy, source = src))
+    })
+
     samp_flags <- reactive({
       req(state$working)
+      sp_ps <- { sp <- samp_spike_summary(); if (is.null(sp)) NULL else sp$per_sample }
       params <- list(group = input$samp_group, lib = .blank_na(input$samp_lib_min),
                      det = .blank_na(input$samp_detected_min),
-                     mito = .blank_na(input$samp_mito_max), z = .blank_na(input$samp_wg_z))
+                     mito = .blank_na(input$samp_mito_max), z = .blank_na(input$samp_wg_z),
+                     src = samp_spike_src(), asy = samp_spike_assay(),
+                     spmin = .blank_na(input$samp_spike_min), spmax = .blank_na(input$samp_spike_max),
+                     sdet = .blank_na(input$samp_spike_detected_min),
+                     r2 = .blank_na(input$samp_dose_r2_min),
+                     slmin = .blank_na(input$samp_slope_min), slmax = .blank_na(input$samp_slope_max))
       state_derive(state, "samp_flags", params = params, expr = function() {
         flag_samples(state$working, group = input$samp_group,
                      lib_size_min = .blank_na(input$samp_lib_min),
                      detected_min = .blank_na(input$samp_detected_min),
                      pct_mito_max = .blank_na(input$samp_mito_max),
-                     within_group_z = .blank_na(input$samp_wg_z))
+                     within_group_z = .blank_na(input$samp_wg_z),
+                     spike = sp_ps,
+                     pct_spike_min = .blank_na(input$samp_spike_min),
+                     pct_spike_max = .blank_na(input$samp_spike_max),
+                     min_spike_detected = .blank_na(input$samp_spike_detected_min),
+                     dose_r2_min = .blank_na(input$samp_dose_r2_min),
+                     dose_slope_min = .blank_na(input$samp_slope_min),
+                     dose_slope_max = .blank_na(input$samp_slope_max))
       })
     })
     feat_flags <- reactive({
@@ -1081,6 +1125,70 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
 
     output$samp_group_ui <- group_box("samp_group", label = "Within-group grouping")
+    # Does the dataset have spike-ins? Change-detected reactive so the filter
+    # accordion below re-renders only when this flips, not on every edit.
+    has_spike <- reactive(length(spike_ids()) > 0)
+    # Build the sample-filter accordion server-side so the general and (optional)
+    # spike-in panels are sibling panels in ONE accordion card. Stays rendered
+    # while the tab is hidden so the threshold inputs always exist (the General
+    # QC removal colour-by reads them).
+    output$samp_filters_ui <- renderUI({
+      nsf <- session$ns
+      general <- bslib::accordion_panel(
+        "Sample QC filters", icon = icon("filter"),
+        uiOutput(nsf("samp_group_ui")),
+        .qc_thr_input(nsf, "samp_lib_min", "Min library size (blank = off)", "samp_lib_auto",
+                      tip = "Auto threshold: min. library size", value = NA, min = 0),
+        .qc_thr_input(nsf, "samp_detected_min", "Min detected features (blank = off)",
+                      "samp_detected_auto", tip = "Auto threshold: min. detected features",
+                      value = NA, min = 0),
+        .qc_thr_input(nsf, "samp_mito_max", "Max % mitochondrial (blank = off)", "samp_mito_auto",
+                      tip = "Auto threshold: max. % mitochondrial", value = NA, min = 0, max = 100),
+        numericInput(nsf("samp_wg_z"), "Within-group outlier z-cutoff (blank = off)",
+                     value = 2, min = 0, step = 0.5),
+        actionButton(nsf("samp_auto"), "Set auto thresholds",
+                     icon = icon("wand-magic-sparkles"), class = "btn-sm btn-outline-primary w-100"))
+      panels <- list(general)
+      if (isTRUE(has_spike())) {
+        spike <- bslib::accordion_panel(
+          "Spike-in (ERCC) filters", icon = icon("vial"),
+          helpText("Uses the concentration source & observed assay set on the Spike-in (ERCC) tab."),
+          uiOutput(nsf("samp_spike_note")),
+          .qc_thr_input(nsf, "samp_spike_min", "Min % spike-in (blank = off)", "samp_spike_min_auto",
+                        tip = "Auto threshold: min. % spike-in (under-spiked)", value = NA, min = 0, max = 100),
+          .qc_thr_input(nsf, "samp_spike_max", "Max % spike-in (blank = off)", "samp_spike_max_auto",
+                        tip = "Auto threshold: max. % spike-in (over-spiked)", value = NA, min = 0, max = 100),
+          numericInput(nsf("samp_spike_detected_min"), "Min detected spikes (blank = off)",
+                       value = NA, min = 0, step = 1),
+          .qc_thr_input(nsf, "samp_dose_r2_min", "Min dose-response R2 (blank = off)", "samp_dose_r2_auto",
+                        tip = "Auto threshold: min. dose-response R-squared", value = NA, min = 0, max = 1, step = 0.05),
+          tags$div(class = "d-flex gap-2",
+            tags$div(class = "flex-grow-1",
+              numericInput(nsf("samp_slope_min"), "Slope min", value = NA, step = 0.1)),
+            tags$div(class = "flex-grow-1",
+              numericInput(nsf("samp_slope_max"), "Slope max", value = NA, step = 0.1))),
+          actionButton(nsf("samp_spike_auto"), "Set auto spike thresholds",
+                       icon = icon("wand-magic-sparkles"), class = "btn-sm btn-outline-primary w-100"))
+        panels <- c(panels, list(spike))
+      }
+      do.call(bslib::accordion, c(list(open = "Sample QC filters"), panels))
+    })
+    outputOptions(output, "samp_filters_ui", suspendWhenHidden = FALSE)
+    # Reuse the QC tab's match-rate / no-detection warning, but only nag when a
+    # spike rule is actually enabled (else it is noise on the Filtering tab).
+    output$samp_spike_note <- renderUI({
+      # Decide whether any spike rule is on first, so merely having spike-ins
+      # present (no rule enabled) never forces the dose-response compute here.
+      on <- any(vapply(list(input$samp_spike_min, input$samp_spike_max,
+                            input$samp_spike_detected_min, input$samp_dose_r2_min,
+                            input$samp_slope_min, input$samp_slope_max),
+                       function(x) !is.null(.blank_na(x)), logical(1)))
+      if (!on) return(NULL)
+      sp <- samp_spike_summary(); if (is.null(sp)) return(NULL)
+      notes <- .spike_match_notes(sp, samp_spike_src(), ncol(state$working))
+      if (!length(notes)) return(NULL)
+      tags$div(class = "alert alert-warning py-2 small mb-2", lapply(notes, tags$div))
+    })
     output$feat_group_ui <- renderUI({
       req(state$working)
       cols <- colnames(SummarizedExperiment::colData(state$working))
@@ -1088,17 +1196,30 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                   selected = default_group_col())
     })
 
-    # Sample thresholds: fill data-driven defaults on load and on the Auto button
-    # (a degenerate fence -> NA -> blank input -> that rule stays disabled).
-    fill_samp_thresholds <- function() {
+    # Sample thresholds: fill data-driven defaults (a degenerate fence -> NA ->
+    # blank input -> that rule stays disabled). The two accordion groups have
+    # scoped Auto buttons: the general button fills lib/detected/mito; the spike
+    # button fills the spike criteria. On load only the general fields are filled
+    # (spike criteria stay blank / opt-in).
+    fill_samp_general <- function() {
       req(state$working)
       th <- suggest_sample_thresholds(state$working)
       updateNumericInput(session, "samp_lib_min", value = th$lib_size_min)
       updateNumericInput(session, "samp_detected_min", value = th$detected_min)
       updateNumericInput(session, "samp_mito_max", value = th$pct_mito_max)
     }
-    observeEvent(state$working, fill_samp_thresholds())
-    observeEvent(input$samp_auto, fill_samp_thresholds())
+    fill_samp_spike <- function() {
+      sp <- samp_spike_summary(); if (is.null(sp)) return(invisible())
+      th <- suggest_sample_thresholds(state$working, spike = sp$per_sample)
+      updateNumericInput(session, "samp_spike_min", value = th$pct_spike_min)
+      updateNumericInput(session, "samp_spike_max", value = th$pct_spike_max)
+      updateNumericInput(session, "samp_dose_r2_min", value = th$dose_r2_min)
+      updateNumericInput(session, "samp_slope_min", value = th$dose_slope_min)
+      updateNumericInput(session, "samp_slope_max", value = th$dose_slope_max)
+    }
+    observeEvent(state$working, fill_samp_general())
+    observeEvent(input$samp_auto, fill_samp_general())
+    observeEvent(input$samp_spike_auto, fill_samp_spike())
     # Per-field Auto buttons fill just their own threshold.
     observeEvent(input$samp_lib_auto, updateNumericInput(
       session, "samp_lib_min", value = suggest_sample_thresholds(state$working)$lib_size_min))
@@ -1106,6 +1227,17 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       session, "samp_detected_min", value = suggest_sample_thresholds(state$working)$detected_min))
     observeEvent(input$samp_mito_auto, updateNumericInput(
       session, "samp_mito_max", value = suggest_sample_thresholds(state$working)$pct_mito_max))
+    # Per-field spike Auto buttons (data-driven fence; slope range is fixed).
+    spike_auto_val <- function(field) {
+      sp <- samp_spike_summary(); if (is.null(sp)) return(NA_real_)
+      suggest_sample_thresholds(state$working, spike = sp$per_sample)[[field]]
+    }
+    observeEvent(input$samp_spike_min_auto, updateNumericInput(
+      session, "samp_spike_min", value = spike_auto_val("pct_spike_min")))
+    observeEvent(input$samp_spike_max_auto, updateNumericInput(
+      session, "samp_spike_max", value = spike_auto_val("pct_spike_max")))
+    observeEvent(input$samp_dose_r2_auto, updateNumericInput(
+      session, "samp_dose_r2_min", value = spike_auto_val("dose_r2_min")))
 
     # Features default to adopting the suggestion (re-seeded when rules change);
     # samples stay opt-in (highlight only). Both pools reset on any data change.
@@ -1117,13 +1249,25 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # Tables: a read-only boolean "Suggested Removal" column + a separate boolean
     # "In Removal Pool" column; native row-selection is transient staging the
     # pool buttons act on.
-    samp_display <- function(fl, pool) data.frame(
-      Sample = fl$sample, `Library size (M)` = round(fl$library_size / 1e6, 3),
-      Detected = fl$detected, `% mito` = round(fl$pct_mito, 2),
-      `Within-grp corr` = round(fl$within_group_corr, 3),
-      `Suggested Removal` = fl$flagged, Reason = fl$reason,
-      `In Removal Pool` = fl$sample %in% pool,
-      check.names = FALSE, stringsAsFactors = FALSE)
+    samp_display <- function(fl, pool) {
+      df <- data.frame(
+        Sample = fl$sample, `Library size (M)` = round(fl$library_size / 1e6, 3),
+        Detected = fl$detected, `% mito` = round(fl$pct_mito, 2),
+        `Within-grp corr` = round(fl$within_group_corr, 3),
+        check.names = FALSE, stringsAsFactors = FALSE)
+      # Spike columns only when the dataset has spike-ins (finite n_spike_detected,
+      # which is 0+ when spikes exist and NA when there are none).
+      if (any(is.finite(fl$n_spike_detected))) {
+        df$`% spike`         <- round(fl$pct_spike, 2)
+        df$`Spikes detected` <- fl$n_spike_detected
+        df$`Dose R2`         <- round(fl$dose_r2, 3)
+        df$`Dose slope`      <- round(fl$dose_slope, 2)
+      }
+      df$`Suggested Removal` <- fl$flagged
+      df$Reason              <- fl$reason
+      df$`In Removal Pool`   <- fl$sample %in% pool
+      df
+    }
     feat_display <- function(fl, pool) data.frame(
       Feature = fl$feature_id, Class = fl$feature_class,
       `Total count` = round(fl$total_count), Detected = fl$n_detected,
