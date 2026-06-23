@@ -614,42 +614,58 @@ mod_qc_ui <- function(id) {
               title = tags$h4("Sample filtering", class = "fs-6 mb-0"), width = 300,
               helpText("Flags are advisory. A blank threshold disables that check; the ",
                        tags$strong("Auto"), " buttons fill data-driven thresholds."),
-              uiOutput(ns("samp_group_ui")),
-              thr_input("samp_lib_min", "Min library size (blank = off)", "samp_lib_auto",
-                        tip = "Auto threshold: min. library size", value = NA, min = 0),
-              thr_input("samp_detected_min", "Min detected features (blank = off)",
-                        "samp_detected_auto", tip = "Auto threshold: min. detected features",
-                        value = NA, min = 0),
-              thr_input("samp_mito_max", "Max % mitochondrial (blank = off)", "samp_mito_auto",
-                        tip = "Auto threshold: max. % mitochondrial", value = NA, min = 0, max = 100),
-              numericInput(ns("samp_wg_z"), "Within-group outlier z-cutoff (blank = off)",
-                           value = 2, min = 0, step = 0.5),
-              # Spike-in (ERCC) criteria - only when the dataset has spike-ins.
+              # Collapsible threshold groups (cf. the "Plot Showing" module): the
+              # general sample-QC filters and the spike-in (ERCC) filters, each
+              # with its own scoped "Set auto thresholds" button.
+              bslib::accordion(
+                open = "Sample QC filters",
+                bslib::accordion_panel(
+                  "Sample QC filters", icon = icon("filter"),
+                  uiOutput(ns("samp_group_ui")),
+                  thr_input("samp_lib_min", "Min library size (blank = off)", "samp_lib_auto",
+                            tip = "Auto threshold: min. library size", value = NA, min = 0),
+                  thr_input("samp_detected_min", "Min detected features (blank = off)",
+                            "samp_detected_auto", tip = "Auto threshold: min. detected features",
+                            value = NA, min = 0),
+                  thr_input("samp_mito_max", "Max % mitochondrial (blank = off)", "samp_mito_auto",
+                            tip = "Auto threshold: max. % mitochondrial", value = NA, min = 0, max = 100),
+                  numericInput(ns("samp_wg_z"), "Within-group outlier z-cutoff (blank = off)",
+                               value = 2, min = 0, step = 0.5),
+                  actionButton(ns("samp_auto"), "Set auto thresholds",
+                               icon = icon("wand-magic-sparkles"),
+                               class = "btn-sm btn-outline-primary w-100")
+                )
+              ),
+              # Spike-in (ERCC) filters - only when the dataset has spike-ins.
               # Uses the concentration source / observed assay chosen on the
               # Spike-in (ERCC) tab. All blank = off (opt-in).
               conditionalPanel(
                 condition = "output.has_spike", ns = ns,
-                tags$hr(),
-                tags$div(class = "fw-semibold small mb-1", "Spike-in (ERCC) criteria"),
-                helpText("Uses the concentration source & observed assay set on the Spike-in (ERCC) tab."),
-                uiOutput(ns("samp_spike_note")),
-                thr_input("samp_spike_min", "Min % spike-in (blank = off)", "samp_spike_min_auto",
-                          tip = "Auto threshold: min. % spike-in (under-spiked)", value = NA, min = 0, max = 100),
-                thr_input("samp_spike_max", "Max % spike-in (blank = off)", "samp_spike_max_auto",
-                          tip = "Auto threshold: max. % spike-in (over-spiked)", value = NA, min = 0, max = 100),
-                numericInput(ns("samp_spike_detected_min"), "Min detected spikes (blank = off)",
-                             value = NA, min = 0, step = 1),
-                thr_input("samp_dose_r2_min", "Min dose-response R2 (blank = off)", "samp_dose_r2_auto",
-                          tip = "Auto threshold: min. dose-response R-squared", value = NA, min = 0, max = 1, step = 0.05),
-                tags$div(class = "d-flex gap-2",
-                  tags$div(class = "flex-grow-1",
-                    numericInput(ns("samp_slope_min"), "Slope min", value = NA, step = 0.1)),
-                  tags$div(class = "flex-grow-1",
-                    numericInput(ns("samp_slope_max"), "Slope max", value = NA, step = 0.1)))
+                bslib::accordion(
+                  open = FALSE,
+                  bslib::accordion_panel(
+                    "Spike-in (ERCC) filters", icon = icon("vial"),
+                    helpText("Uses the concentration source & observed assay set on the Spike-in (ERCC) tab."),
+                    uiOutput(ns("samp_spike_note")),
+                    thr_input("samp_spike_min", "Min % spike-in (blank = off)", "samp_spike_min_auto",
+                              tip = "Auto threshold: min. % spike-in (under-spiked)", value = NA, min = 0, max = 100),
+                    thr_input("samp_spike_max", "Max % spike-in (blank = off)", "samp_spike_max_auto",
+                              tip = "Auto threshold: max. % spike-in (over-spiked)", value = NA, min = 0, max = 100),
+                    numericInput(ns("samp_spike_detected_min"), "Min detected spikes (blank = off)",
+                                 value = NA, min = 0, step = 1),
+                    thr_input("samp_dose_r2_min", "Min dose-response R2 (blank = off)", "samp_dose_r2_auto",
+                              tip = "Auto threshold: min. dose-response R-squared", value = NA, min = 0, max = 1, step = 0.05),
+                    tags$div(class = "d-flex gap-2",
+                      tags$div(class = "flex-grow-1",
+                        numericInput(ns("samp_slope_min"), "Slope min", value = NA, step = 0.1)),
+                      tags$div(class = "flex-grow-1",
+                        numericInput(ns("samp_slope_max"), "Slope max", value = NA, step = 0.1))),
+                    actionButton(ns("samp_spike_auto"), "Set auto spike thresholds",
+                                 icon = icon("wand-magic-sparkles"),
+                                 class = "btn-sm btn-outline-primary w-100")
+                  )
+                )
               ),
-              actionButton(ns("samp_auto"), "Set auto threshold for all settings",
-                           icon = icon("wand-magic-sparkles"),
-                           class = "btn-sm btn-outline-primary w-100 mb-2"),
               tags$hr(),
               pool_buttons("samp"),
               uiOutput(ns("samp_counts")),
@@ -783,7 +799,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cols <- colnames(SummarizedExperiment::colData(state$working))
       selectInput(ns("group"), "Group / colour by",
                   choices = c(stats::setNames(cols, cols),
-                              "Removal status (this metric)" = "__removal__",
+                              "Suggested removal" = "__removal__",
                               "In removal pool" = "__pool__"),
                   selected = default_group_col())
     })
@@ -796,7 +812,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         fl <- samp_flags(); i <- match(samples, fl$sample)
         rcol <- .metric_reason[[metric]]
         this <- if (!is.null(rcol)) fl[[rcol]][i] else NULL
-        list(values = removal_status(fl$flagged[i], this), lab = "Removal status",
+        list(values = removal_status(fl$flagged[i], this), lab = "Suggested removal",
              palette = .removal_palette, labels = .removal_labels)
       } else if (identical(col, "__pool__")) {
         inp <- samples %in% samp_pool()
@@ -1002,10 +1018,24 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       selectInput(ns("spike_source"), "Concentration source", choices = choices,
                   selected = if (conc_col_ok()) "column" else "mix1")
     })
+    # Observed-abundance assay for the dose-response. Read counts scale with molar
+    # input *and* transcript length, and ERCCs span ~250-2000 nt, so a
+    # length-normalized assay (TPM > FPKM) tracks the known molar concentration
+    # more faithfully than CPM. Prefer them when present; fall back to CPM + note.
+    spike_default_assay <- reactive({
+      present <- SummarizedExperiment::assayNames(state$working)
+      if ("TPM" %in% present) "TPM" else if ("FPKM" %in% present) "FPKM" else "CPM"
+    })
     output$spike_assay_ui <- renderUI({
       req(state$working)
-      present <- intersect(c("CPM", "TPM", "FPKM"), SummarizedExperiment::assayNames(state$working))
-      selectInput(ns("spike_assay"), "Observed assay", choices = union("CPM", present), selected = "CPM")
+      present <- intersect(c("TPM", "FPKM", "CPM"), SummarizedExperiment::assayNames(state$working))
+      tagList(
+        selectInput(ns("spike_assay"), "Observed assay", choices = union(present, "CPM"),
+                    selected = spike_default_assay()),
+        if (identical(spike_default_assay(), "CPM"))
+          helpText("Tip: add a length-normalized assay (TPM/FPKM) on the Assay tab - it tracks ",
+                   "molar spike-in input more accurately than CPM for titration.")
+      )
     })
     output$spike_group_ui <- group_box("spike_group")
     output$spike_auto_ui  <- auto_box("spike_auto")
@@ -1090,7 +1120,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # renderUI selections, so the key is identical even before it is first
     # visited (input$spike_* are then NULL).
     samp_spike_src   <- reactive(input$spike_source %||% (if (isTRUE(conc_col_ok())) "column" else "mix1"))
-    samp_spike_assay <- reactive(input$spike_assay %||% "CPM")
+    samp_spike_assay <- reactive(input$spike_assay %||% spike_default_assay())
     # Per-sample dose-response summary feeding the spike filtering rules; NULL
     # when the dataset has no spike features (rules then stay disabled).
     samp_spike_summary <- reactive({
@@ -1166,26 +1196,29 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
 
     # Sample thresholds: fill data-driven defaults (a degenerate fence -> NA ->
-    # blank input -> that rule stays disabled). On load only the lib/detected/
-    # mito fields are filled; spike criteria stay blank (opt-in) and are filled
-    # only by the all/per-field Auto buttons.
-    fill_samp_thresholds <- function(include_spike = FALSE) {
+    # blank input -> that rule stays disabled). The two accordion groups have
+    # scoped Auto buttons: the general button fills lib/detected/mito; the spike
+    # button fills the spike criteria. On load only the general fields are filled
+    # (spike criteria stay blank / opt-in).
+    fill_samp_general <- function() {
       req(state$working)
-      sp <- if (include_spike && !is.null(samp_spike_summary())) samp_spike_summary()$per_sample else NULL
-      th <- suggest_sample_thresholds(state$working, spike = sp)
+      th <- suggest_sample_thresholds(state$working)
       updateNumericInput(session, "samp_lib_min", value = th$lib_size_min)
       updateNumericInput(session, "samp_detected_min", value = th$detected_min)
       updateNumericInput(session, "samp_mito_max", value = th$pct_mito_max)
-      if (!is.null(sp)) {
-        updateNumericInput(session, "samp_spike_min", value = th$pct_spike_min)
-        updateNumericInput(session, "samp_spike_max", value = th$pct_spike_max)
-        updateNumericInput(session, "samp_dose_r2_min", value = th$dose_r2_min)
-        updateNumericInput(session, "samp_slope_min", value = th$dose_slope_min)
-        updateNumericInput(session, "samp_slope_max", value = th$dose_slope_max)
-      }
     }
-    observeEvent(state$working, fill_samp_thresholds())
-    observeEvent(input$samp_auto, fill_samp_thresholds(include_spike = TRUE))
+    fill_samp_spike <- function() {
+      sp <- samp_spike_summary(); if (is.null(sp)) return(invisible())
+      th <- suggest_sample_thresholds(state$working, spike = sp$per_sample)
+      updateNumericInput(session, "samp_spike_min", value = th$pct_spike_min)
+      updateNumericInput(session, "samp_spike_max", value = th$pct_spike_max)
+      updateNumericInput(session, "samp_dose_r2_min", value = th$dose_r2_min)
+      updateNumericInput(session, "samp_slope_min", value = th$dose_slope_min)
+      updateNumericInput(session, "samp_slope_max", value = th$dose_slope_max)
+    }
+    observeEvent(state$working, fill_samp_general())
+    observeEvent(input$samp_auto, fill_samp_general())
+    observeEvent(input$samp_spike_auto, fill_samp_spike())
     # Per-field Auto buttons fill just their own threshold.
     observeEvent(input$samp_lib_auto, updateNumericInput(
       session, "samp_lib_min", value = suggest_sample_thresholds(state$working)$lib_size_min))

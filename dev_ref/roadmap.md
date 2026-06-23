@@ -43,7 +43,9 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   spike content & fit (two-sided % spike-in fence, detected-spike count, dose-response R²/slope,
   +`<3-point` reason), feeding the existing removal-pool flow. `flag_samples()`/`suggest_sample_thresholds()`
   gain opt-in spike criteria fed by the shared `spike_dr` cache; reuses the Spike-in QC tab's
-  source/assay. New knowledge note [ercc-spike-in.md](ercc-spike-in.md). [PR #17]
+  source/assay (observed assay now **TPM > FPKM > CPM**-preferred, the former deferred fix).
+  Filtering sidebar reorganized into collapsible "Sample QC filters" / "Spike-in (ERCC) filters"
+  accordions with scoped Auto buttons. New knowledge note [ercc-spike-in.md](ercc-spike-in.md). [PR #17]
 - **P3f ⬅️ next** UI-polish bundle — primarily a **ggplot ↔ plotly engine toggle** for the
   interactive plots; sweep up small UX items.
 - **P3g ⬜** project-wide **Palette page** full wiring (mock landed in P3b): feed `thematic`
@@ -80,11 +82,8 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 ---
 
 ## Deferred / wishlist (revisit when relevant)
-- **ERCC dose-response default assay** — should prefer **TPM/FPKM when available**, falling back to
-  **CPM with a warning** (the current code defaults to CPM unconditionally). Fix in a future PR; the
-  `rnaseq-bioc` skill already documents the desired behaviour.
-- **Two-sided spike highlight on the General QC % spike-in plot** — the "Removal status (this reason)"
-  colour-by maps `pct_spike` to the over-spiked side only; an under-spiked sample shows as
+- **Two-sided spike highlight on the General QC % spike-in plot** — the "Suggested removal" colour-by
+  maps `pct_spike` to the over-spiked side only; an under-spiked sample shows as
   "suggested (other)". Symmetrise if users ask.
 - **Within-group-correlation auto-flag tuning** (threshold/z-score UX beyond v1).
 - **Advanced filter builder** for metadata tables (rows of criteria + AND/OR gate) — deferred

@@ -215,6 +215,31 @@ test_that("spike filtering is inert when the dataset has no spike-ins", {
   })
 })
 
+test_that("spike observed assay prefers a length-normalized assay (TPM > FPKM > CPM)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    dds <- add_normalized_assays(
+      ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2, n_spike = 4, seed = 33)),
+      c("CPM", "TPM"))
+    state_load(state, dds, source = "demo")
+    session$flushReact()
+    expect_equal(spike_default_assay(), "TPM")
+    expect_equal(samp_spike_assay(), "TPM")        # fallback before the spike tab UI renders
+  })
+})
+
+test_that("spike observed assay falls back to CPM without TPM/FPKM", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 2,
+                                                      n_spike = 4, seed = 34)), source = "demo")
+    session$flushReact()
+    expect_equal(spike_default_assay(), "CPM")
+  })
+})
+
 test_that("Showing subset filters plotted samples without bumping data_version", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
@@ -298,7 +323,8 @@ test_that("QC UI exposes the Filtering tab, pool actions, and per-sidebar Showin
   expect_match(html, "Add selected to pool")
   expect_match(html, "Remove Samples")               # renamed apply buttons
   expect_match(html, "Remove Features")
-  expect_match(html, "Set auto threshold for all settings")
+  expect_match(html, "Set auto thresholds")          # scoped general-filters Auto button
+  expect_match(html, "Sample QC filters")            # collapsible filter group
   expect_match(html, "Plot Showing")                 # per-sidebar Showing accordion
   expect_match(html, "gen_show_by")                  # one of the synced controls
   expect_match(html, "spike_show_by")                # Showing now on the spike tab too
