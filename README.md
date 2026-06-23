@@ -42,5 +42,5 @@ devtools::test()        # run unit tests
 devtools::check()       # full R CMD check
 ```
 
-See [CLAUDE.md](CLAUDE.md) and [rough_design.md](rough_design.md) for design and
-conventions.
+See [CLAUDE.md](CLAUDE.md) for conventions, [dev_ref/rough_design.md](dev_ref/rough_design.md)
+for the design narrative, and [dev_ref/roadmap.md](dev_ref/roadmap.md) for the phase plan.

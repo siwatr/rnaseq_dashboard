@@ -1,7 +1,6 @@
 ^\.claude$
 ^claude_plan$
 ^sandbox$
-^rough_design\.md$
 ^README\.md$
 ^CLAUDE\.md$
 ^environment\.yml$
