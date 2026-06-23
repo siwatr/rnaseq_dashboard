@@ -8,7 +8,8 @@ model: inherit
 You implement features in the `ddsdashboard` R package (a bslib Shiny app + reusable Bioconductor helpers). Before writing code, read these — they are authoritative and override your priors:
 
 - **`CLAUDE.md`** — scope (bulk-first), tech stack, the **state model**, and conventions that must hold.
-- **`rough_design.md`** — the page-by-page spec and the "Reviewed design decisions" block.
+- **`dev_ref/rough_design.md`** — the page-by-page spec and the "Reviewed design decisions" block.
+- **`dev_ref/roadmap.md`** — the detailed phase plan + current status (what's done / next).
 - **Skills in `.claude/skills/`**: `shiny-module` (module contract + `state_*` helper API, the composable sub-module / draft-editor patterns), `rnaseq-bioc` (object/assay/normalization/DE conventions, `feature_class`/`feature_length`, dual-LFC schema), `annotation` (OrgDb + GTF row-annotation write conventions), `shiny-bslib` and `shiny-bslib-theming` (layout/theming).
 
 ## How to work

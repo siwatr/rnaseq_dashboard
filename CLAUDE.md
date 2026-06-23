@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for working in this repository. See [rough_design.md](rough_design.md) for the full design narrative — this file is the distilled, load-bearing version.
+Guidance for working in this repository — the distilled, load-bearing version. The full design narrative (the *why*) is in [dev_ref/rough_design.md](dev_ref/rough_design.md); the detailed, living phase plan + status is in [dev_ref/roadmap.md](dev_ref/roadmap.md) (the source of truth for what's done / next).
 
 ## What this is
 
@@ -37,7 +37,7 @@ R/
   utils_table.R           # dt_table() — the standard read-only DT wrapper (filters + rows-per-page)
   mock_data.R             # make_mock_dds() etc. — fixtures used by tests + the demo
 data-raw/                 # scripts that build mock dds/sce fixtures for tests + demo
-dev_ref/                  # developer reference notes (e.g. normalization-scran-vs-deseq.md)
+dev_ref/                  # developer reference notes (rough_design.md, roadmap.md, normalization-scran-vs-deseq.md, object-states-and-resets.md) — all build-ignored
 tests/testthat/           # unit tests for helpers + module servers (shiny::testServer)
 inst/extdata/             # bundled reference data (ERCC Mix1/Mix2 concentrations: ercc_concentrations.csv, see ERCC_SOURCE.md)
 ```
@@ -120,7 +120,7 @@ Pages (navbar order). The first navbar entry, **Input**, is itself a sub-tabbed 
 
 ## Workflow
 
-- Build the app in **phases** (bulk-first; see roadmap in [rough_design.md](rough_design.md)): P1 = layout + status bar + import (rds + tabular) + export shell *(done)*; P2 = metadata edit, annotation (OrgDb + GTF), normalization, GTF memory minimization + session memory monitor, feature-info annotation UI redesign *(done)*; theming pass (custom palette + dark mode + `thematic`) *(done)*; **P3 = QC + sample/feature filtering (+ ERCC)**, split into sub-PRs — **P3a = per-sample QC metrics + Sample QC tab *(done)***; **P3b = dataset diagnostics (VST `meanSdPlot`, RLE, density) + Sample Correlation heatmap *(done)***; **P3c = filtering (Samples/Features pills: auto-flag → removal-pool → `state_mutate`; + view-only "Showing:" subset & removal-status colouring) *(done)***; **P3d = ERCC spike-in dose–response (titration QC) + spike-in visibility (Feature class counts, status badge, "Spike-in Conc." designation, remove-all-spikes) *(done)***; **P3e = UI-polish bundle (ggplot↔plotly engine toggle) ← next**; P3f = project-wide Palette page (mock landed in P3b; full wiring later); P4 = PCA dim-reduction; P5 = DESeq2 + DE plots + heatmap; P6 (later) = single-cell + pseudobulk.
+- Build the app in **phases** (bulk-first). **The detailed phase plan + current status lives in [dev_ref/roadmap.md](dev_ref/roadmap.md) — consult/update it as the source of truth** (don't duplicate the full list here). At a glance: P1 (skeleton), P2 (annotation + normalization + theming), and **P3a–d** (QC, filtering, edit-history controls, ERCC dose-response) are **done**; **P3e (UI-polish: ggplot↔plotly toggle) is next**, then P3f (Palette wiring), P4 (PCA), P5 (DESeq2 + DE plots + heatmap), P6 (single-cell).
 - **Build mock-`dds` fixtures early** (`data-raw/`, used by `tests/`) so every phase has data to test against.
 - **Commit after each meaningful, self-contained change** with a descriptive message.
 - Heavy Bioconductor objects: don't print full matrices to logs; prefer `show()` / dimensions / `head()`.
