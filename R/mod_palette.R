@@ -165,13 +165,13 @@ mod_palette_server <- function(id, state) {
         state$palette <- p
         auto <- palette_discrete(lvls, NULL, cur_palette())
         for (i in seq_along(lvls)) update_picker(pin_id(col, i), unname(auto[[lvls[i]]]))
-      })
+      }, ignoreInit = TRUE)
 
       remove_obs <- observeEvent(input[[paste0("remove_", key)]], {
         p <- state$palette; p$colData[[col]] <- NULL; state$palette <- p
         unregister_col(key)                              # drop this column's observers
         bump()
-      })
+      }, ignoreInit = TRUE)
 
       obs_handles[[key]] <- c(pin_obs, list(pal_obs, reset_obs, remove_obs))
 

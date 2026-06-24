@@ -39,6 +39,25 @@ test_that("adding a mapping populates state$palette, a pin updates it, remove cl
   })
 })
 
+test_that("a removed mapping can be re-added (stale Remove button must not re-fire)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(add_col = "condition", add_btn = 1)
+    session$flushReact()
+    session$setInputs(remove_condition = 1)                  # remove
+    session$flushReact()
+    expect_null(state$palette$colData$condition)
+    # Re-add: the freshly registered Remove observer must ignore the stale
+    # remove_condition counter (still 1) instead of immediately deleting again.
+    session$setInputs(add_col = "condition", add_btn = 2)
+    session$flushReact()
+    expect_false(is.null(state$palette$colData$condition))
+  })
+})
+
 test_that("observers re-register against new levels after a dataset change", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
