@@ -30,7 +30,12 @@ new_app_state <- function() {
     # Global, session-scoped UI preference (not data-dependent, so NOT in meta):
     # the plot engine toggle (FALSE = static ggplot, TRUE = interactive plotly).
     # Read by plot modules; untouched by load/reset.
-    plot_interactive = FALSE
+    plot_interactive = FALSE,
+    # Project colour palette (the Palette page). A UI preference like
+    # plot_interactive: per-attribute colour mappings, untouched by load/reset,
+    # no data_version impact. Shape: list(colData = list(<col> = list(type,
+    # palette, pins)), ...). Empty list = fall back to thematic / default colours.
+    palette = list()
   )
   # A plain environment so writing cache entries does not trigger reactivity
   # (avoids reactive-write-in-reactive churn); staleness is keyed on data_version.

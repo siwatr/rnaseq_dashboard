@@ -138,6 +138,18 @@ test_that("qc_annotation_colors returns NULL for NULL/empty input", {
   expect_null(qc_annotation_colors(data.frame()))
 })
 
+test_that("qc_annotation_colors applies a palette config (pin) to the right level", {
+  df <- data.frame(condition = factor(c("control", "treated")))
+  # No config -> historical Okabe-Ito default, unchanged behaviour.
+  base <- qc_annotation_colors(df)
+  expect_equal(unname(base$condition["control"]), "#E69F00")
+  # With a config: an explicit colour on `treated` overrides; `control` follows.
+  cfg <- list(condition = list(name = "Okabe-Ito", colors = c(treated = "gray50")))
+  pinned <- qc_annotation_colors(df, cfg)
+  expect_equal(unname(pinned$condition["treated"]), "#7F7F7F")
+  expect_equal(unname(pinned$condition["control"]), "#E69F00")
+})
+
 test_that("qc_within_group_correlation summarizes per-sample within-group similarity", {
   skip_if_not_installed("DESeq2")
   dds <- ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3, n_spike = 2, seed = 7))

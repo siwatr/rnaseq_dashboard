@@ -277,34 +277,32 @@ qc_expression_long <- function(dds, assay = "logcounts") {
   )
 }
 
-# Okabe-Ito: an 8-colour, colour-blind-safe qualitative palette (no dependency).
-# Extended by interpolation when more levels are needed.
-.okabe_ito <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
-                "#0072B2", "#D55E00", "#CC79A7", "#999999")
-.qualitative_palette <- function(n) {
-  if (n <= length(.okabe_ito)) .okabe_ito[seq_len(n)]
-  else grDevices::colorRampPalette(.okabe_ito)(n)
-}
-
 #' Deterministic annotation colour mappings
 #'
 #' Builds a stable `col` list for [ComplexHeatmap::HeatmapAnnotation()] from an
 #' annotation `data.frame` (one column per metadata variable). Because
 #' ComplexHeatmap randomizes annotation colours per draw when `col` is omitted,
 #' supplying this keeps colours fixed across re-renders. Each column maps to:
-#' a named character vector (level -> colour, from a colour-blind-safe
-#' qualitative palette) for discrete columns, or a [circlize::colorRamp2()]
-#' function (viridis-like) for numeric columns.
+#' a named character vector (level -> colour) for discrete columns, or a
+#' [circlize::colorRamp2()] function (viridis-like) for numeric columns.
+#'
+#' Discrete colours come from [palette_discrete()], so a project palette `config`
+#' (per-column base palette + pins) makes the heatmap annotations agree with the
+#' ggplot scales. With `config = NULL` it falls back to the `"Okabe-Ito"` palette
+#' (the historical default), keeping existing callers unchanged.
 #'
 #' @param df A `data.frame`/`DataFrame` of annotation columns (e.g. selected
 #'   `colData` columns), or `NULL`.
+#' @param config Optional per-column palette config (the `colData` slot of
+#'   `state$palette`): a named list with `$palette` and `$pins` per column. `NULL`
+#'   uses the default palette and no pins.
 #' @return A named list suitable for `HeatmapAnnotation(col = ...)`, or `NULL`
 #'   when `df` is `NULL`/empty.
 #' @export
-qc_annotation_colors <- function(df) {
+qc_annotation_colors <- function(df, config = NULL) {
   if (is.null(df) || ncol(as.data.frame(df)) == 0L) return(NULL)
   df <- as.data.frame(df)
-  stats::setNames(lapply(df, function(x) {
+  stats::setNames(Map(function(x, name) {
     if (is.numeric(x) && any(is.finite(x))) {
       rng <- range(x, na.rm = TRUE)
       if (!is.finite(diff(rng)) || diff(rng) == 0) rng <- c(rng[1] - 0.5, rng[1] + 0.5)
@@ -313,7 +311,8 @@ qc_annotation_colors <- function(df) {
                            c("#440154", "#21908C", "#FDE725"))
     } else {
       lv <- sort(unique(as.character(x)))
-      stats::setNames(.qualitative_palette(length(lv)), lv)
+      cfg <- config[[name]]
+      palette_discrete(lv, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
     }
-  }), names(df))
+  }, df, names(df)), names(df))
 }

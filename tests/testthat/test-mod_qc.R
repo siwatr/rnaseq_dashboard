@@ -69,6 +69,37 @@ test_that("QC builders add a hover `text` aesthetic only when interactive", {
   expect_true(has_text(suppressWarnings(ddsdashboard:::.qc_spike_dr_plot(dr, interactive = TRUE))))
 })
 
+test_that(".qc_group_scale adds a fixed manual scale only when a palette is supplied", {
+  # No palette -> NULL (the plot keeps thematic's default discrete scale).
+  expect_null(ddsdashboard:::.qc_group_scale(NULL, "fill"))
+  expect_null(ddsdashboard:::.qc_group_scale(NULL, c("fill", "colour")))
+  # A palette -> one Scale per requested aesthetic, with the pinned values.
+  pal <- c(control = "#E69F00", treated = "#000000")
+  s_fill <- ddsdashboard:::.qc_group_scale(pal, "fill")
+  expect_length(s_fill, 1L)
+  expect_s3_class(s_fill[[1]], "Scale")
+  expect_true("fill" %in% s_fill[[1]]$aesthetics)
+  expect_length(ddsdashboard:::.qc_group_scale(pal, c("fill", "colour")), 2L)
+})
+
+test_that("a project-palette pin flows into the QC group plot's manual scale", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 1, seed = 9)
+  tbl <- qc_per_sample_metrics(dds)
+  tbl$group <- factor(SummarizedExperiment::colData(dds)$condition[
+    match(tbl$sample, colnames(dds))])
+  pal <- palette_discrete(levels(tbl$group), colors = c(treated = "gray50"),
+                          name = "Okabe-Ito")
+  # With a palette the bar plot renders `treated` bars in the pinned hex.
+  p <- ddsdashboard:::.qc_metric_plot(tbl, "sample", "library_size", "condition", palette = pal)
+  fills <- unique(ggplot2::ggplot_build(p)$data[[1]]$fill)
+  expect_true("#7F7F7F" %in% fills)             # pinned treated colour rendered
+  expect_true("#E69F00" %in% fills)             # auto-filled control colour rendered
+  # Without a palette, no manual fill scale is attached (thematic default path).
+  p0 <- ddsdashboard:::.qc_metric_plot(tbl, "sample", "library_size", "condition")
+  expect_null(p0$scales$get_scales("fill"))
+})
+
 test_that(".qc_metric_plot sorts the discrete x-axis by the metric value", {
   skip_if_not_installed("DESeq2")
   dds <- make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 1, seed = 5)
