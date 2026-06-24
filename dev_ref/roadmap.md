@@ -56,9 +56,21 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   when data changes or the toggle flips off/on). Sample-name (+ value) hover `text` aes on the 7
   toggled plots. **Excluded:** VST mean–SD and the ComplexHeatmap correlation heatmap. `plotly` is a
   `Suggests` (on-demand, graceful fallback). [PR #18]
-- **P3g ⬅️ next** project-wide **Palette page** full wiring (mock landed in P3b): feed `thematic`
-  qualitative/sequential palettes + `qc_annotation_colors()` for ComplexHeatmap; pin
-  metadata levels to fixed colours.
+- **P3g-a ✅** project-wide **Palette page** — discrete **colData** wiring. New `palette_helpers.R`
+  engine (`palette_qualitative*`, `norm_color`, `palette_discrete`) is the single resolver for discrete
+  level→colour mappings: explicit pins layered on a named base palette (ggplot default / Okabe-Ito /
+  Viridis-d / Set2 / Dark2). `qc_annotation_colors(df, config)` and the QC ggplot group scales (via a
+  shared `palette =` plumbing + `.qc_group_scale()`) both read it, so the QC plots and the correlation
+  heatmap agree; per-level pins are honoured. Palette page is empty-by-default, opt-in per column
+  (accordion panel, `shinyWidgets::colorPickr` with `col2rgb` R-name/CSS normalization + textInput
+  fallback, live preview). `state$palette` is a UI pref (untouched by load/reset, no `data_version`).
+  [PR #TBD]
+- **P3g-b ⬅️ next** project-wide **Palette page** — continuous palettes + rowData/assays/Other groups +
+  config import/export. `palette_continuous(values, spec)` → `circlize::colorRamp2` (heatmap) **and** a
+  ggplot `scale_*_gradientn(colours/values/limits)` spec, with `p<pct>` percentile anchors resolved
+  against plotted data. rowData / assays / **Other** tabs (fold in the removal-status discrete map + the
+  correlation-heatmap score ramp). JSON config import/export (`jsonlite`). The ggplot continuous
+  *consumers* land with P4 (PCA colour-by-gene) and P5 (heatmap), reusing this resolver.
 
 ## Phase 4 — Dimensionality reduction ⬜
 - PCA-focused (t-SNE/UMAP gated by sample count). Top-variable genes (default 500, assay

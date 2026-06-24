@@ -3,6 +3,21 @@ test_that("new_app_state seeds the plot-engine UI flag off by default", {
   expect_false(shiny::isolate(st$plot_interactive))
 })
 
+test_that("new_app_state seeds an empty palette; load/reset leave it untouched", {
+  skip_if_not_installed("DESeq2")
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  st <- new_app_state()
+  expect_identical(st$palette, list())
+  st$palette <- list(colData = list(condition = list(palette = "Okabe-Ito",
+                                                      pins = c(treated = "#000000"))))
+  state_load(st, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1),
+             source = "demo")
+  expect_equal(st$palette$colData$condition$pins[["treated"]], "#000000")  # survives load
+  state_mutate(st, function(d) d, action = list(action = "noop"))
+  state_reset(st)
+  expect_equal(st$palette$colData$condition$pins[["treated"]], "#000000")  # survives reset
+})
+
 test_that("state_load / mutate / derive / undo / reset behave correctly", {
   skip_if_not_installed("DESeq2")
   shiny::reactiveConsole(TRUE)

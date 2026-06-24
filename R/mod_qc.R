@@ -116,6 +116,21 @@
   if (isTRUE(interactive)) ggplot2::aes(text = .data$text) else NULL
 }
 
+# Fixed discrete group colour scale from the project palette (a named
+# level -> colour vector, via palette_discrete()); NULL keeps thematic's default
+# scale. `aes` selects which scales to set: RLE/summary use "fill", density/dose
+# use "colour", within-group uses both. Returns a list of scales (or NULL) to add
+# to a ggplot with `+`.
+.qc_group_scale <- function(palette, aes = "colour") {
+  if (is.null(palette)) return(NULL)
+  out <- list()
+  if ("fill" %in% aes)
+    out <- c(out, list(ggplot2::scale_fill_manual(values = palette, drop = FALSE, name = "group")))
+  if ("colour" %in% aes)
+    out <- c(out, list(ggplot2::scale_colour_manual(values = palette, drop = FALSE, name = "group")))
+  out
+}
+
 .qc_metric_plot <- function(tbl, x_var, metric, group_lab = NULL,
                             sort = "none", dark_theme = FALSE,
                             palette = NULL, palette_labels = NULL,
@@ -181,7 +196,8 @@
 # Dose-response scatter: known concentration vs observed expression (log-log),
 # coloured by group, with a per-sample lm line. `long` carries a `group` column.
 # Zeros (undetected) are dropped before the log scales.
-.qc_spike_dr_plot <- function(long, dark_theme = FALSE, interactive = FALSE) {
+.qc_spike_dr_plot <- function(long, dark_theme = FALSE, interactive = FALSE,
+                              palette = NULL) {
   d <- long[is.finite(long$concentration) & is.finite(long$expression) &
             long$concentration > 0 & long$expression > 0, , drop = FALSE]
   if (!nrow(d)) return(.qc_msg_plot("No detected spike-ins with known concentration."))
@@ -195,12 +211,14 @@
     ggplot2::scale_x_log10() + ggplot2::scale_y_log10() +
     ggplot2::labs(x = "known concentration (attomoles/uL)", y = "observed expression",
                   colour = "group") +
+    .qc_group_scale(palette, "colour") +
     .qc_theme(dark_theme)
 }
 
 # Per-sample spike summary: a chosen metric across samples (bar, sorted), filled
 # by group. `df` is spike_dose_response()$per_sample with a `group` column.
-.qc_spike_summary_plot <- function(df, metric, dark_theme = FALSE, interactive = FALSE) {
+.qc_spike_summary_plot <- function(df, metric, dark_theme = FALSE, interactive = FALSE,
+                                   palette = NULL) {
   lab <- .spike_metric_labels[[metric]] %||% metric
   d <- df[is.finite(df[[metric]]), , drop = FALSE]
   if (!nrow(d)) return(.qc_msg_plot(paste("No", lab, "to show.")))
@@ -210,6 +228,7 @@
     ggplot2::geom_col(mapping = .hover_aes(interactive)) +
     ggplot2::labs(x = "sample", y = lab, fill = "group") +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
+    .qc_group_scale(palette, "fill") +
     .qc_theme(dark_theme)
 }
 
@@ -267,13 +286,15 @@
 }
 
 # Relative log expression boxplots. df: sample (factor), group, value.
-.qc_rle_plot <- function(df, dark_theme = FALSE, n_samples = NULL, interactive = FALSE) {
+.qc_rle_plot <- function(df, dark_theme = FALSE, n_samples = NULL, interactive = FALSE,
+                         palette = NULL) {
   n <- n_samples %||% length(unique(df$sample))
   df$text <- sprintf("Sample: %s", df$sample)
   p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$sample, y = .data$value, fill = .data$group)) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
     ggplot2::geom_boxplot(outlier.size = 0.4, mapping = .hover_aes(interactive)) +
     ggplot2::labs(x = "sample", y = "relative log expression", fill = "group") +
+    .qc_group_scale(palette, "fill") +
     .qc_theme(dark_theme)
   if (n > 30) {
     p + ggplot2::theme(axis.text.x = ggplot2::element_blank())
@@ -283,13 +304,15 @@
 }
 
 # Per-sample log-expression density. df: sample (factor), group, value.
-.qc_density_plot <- function(df, dark_theme = FALSE, n_samples = NULL, interactive = FALSE) {
+.qc_density_plot <- function(df, dark_theme = FALSE, n_samples = NULL, interactive = FALSE,
+                             palette = NULL) {
   n <- n_samples %||% length(unique(df$sample))
   df$text <- sprintf("Sample: %s", df$sample)
   p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$value, group = .data$sample,
                                         colour = .data$group)) +
     ggplot2::geom_density(mapping = .hover_aes(interactive)) +
     ggplot2::labs(x = "log2 expression", y = "density", colour = "group") +
+    .qc_group_scale(palette, "colour") +
     .qc_theme(dark_theme)
   if (n > 30) p + ggplot2::theme(legend.position = "none") else p
 }
@@ -297,7 +320,8 @@
 # Within-group correlation: boxplot per group + sample points. df from
 # qc_within_group_correlation() (sample, group, mean_corr). Singleton groups
 # (NA mean_corr) are dropped.
-.qc_within_group_plot <- function(df, dark_theme = FALSE, interactive = FALSE) {
+.qc_within_group_plot <- function(df, dark_theme = FALSE, interactive = FALSE,
+                                  palette = NULL) {
   d <- df[!is.na(df$mean_corr), , drop = FALSE]
   if (!nrow(d)) return(.qc_msg_plot("No multi-sample groups to summarize."))
   d$text <- sprintf("Sample: %s<br>mean corr: %s", d$sample, signif(d$mean_corr, 4))
@@ -312,6 +336,7 @@
     ggplot2::geom_jitter(mapping = jit_aes, width = 0.15, height = 0, size = 2) +
     ggplot2::labs(x = "group", y = "mean within-group correlation",
                   fill = "group", colour = "group") +
+    .qc_group_scale(palette, c("fill", "colour")) +
     .qc_theme(dark_theme)
 }
 
@@ -322,7 +347,8 @@
 # `method` is shown in the legend title + plot title. Placeholder body palette -
 # tune via the Themer "Heatmap" sub-tab.
 .qc_correlation_heatmap <- function(cor_mat, anno_df = NULL, dark_theme = FALSE,
-                                    n_samples = ncol(cor_mat), method = "spearman") {
+                                    n_samples = ncol(cor_mat), method = "spearman",
+                                    palette_config = NULL) {
   if (!requireNamespace("ComplexHeatmap", quietly = TRUE)) return(NULL)
   fg <- if (isTRUE(dark_theme)) "grey90" else "grey10"
   legend_lab <- if (identical(method, "pearson")) "Pearson r" else "Spearman rho"
@@ -337,7 +363,8 @@
   top <- NULL
   if (!is.null(anno_df) && ncol(as.data.frame(anno_df)) > 0) {
     adf <- as.data.frame(anno_df)[colnames(cor_mat), , drop = FALSE]
-    top <- ComplexHeatmap::HeatmapAnnotation(df = adf, col = qc_annotation_colors(adf))
+    top <- ComplexHeatmap::HeatmapAnnotation(df = adf,
+                                             col = qc_annotation_colors(adf, palette_config))
   }
   show_names <- n_samples <= 30
   gp <- grid::gpar(col = fg)
@@ -811,6 +838,16 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cd <- as.data.frame(SummarizedExperiment::colData(state$working))
       stats::setNames(as.character(cd[[col]]), rownames(cd))
     }
+    # Project-palette colours for a colData column's levels, or NULL when the
+    # Palette page has no mapping configured for `col` (-> thematic default).
+    # Feeds the QC ggplot group scales (matched by level name, so order-agnostic).
+    group_palette <- function(col, levels) {
+      cfg <- state$palette$colData[[col]]
+      levels <- unique(as.character(levels))
+      levels <- levels[!is.na(levels)]
+      if (is.null(cfg) || !length(levels)) return(NULL)
+      palette_discrete(levels, cfg$pins, cfg$palette %||% "ggplot default")
+    }
 
     # --- DRY UI builders (data-dependent, so server-rendered) ---------------
     group_box <- function(input_id, label = "Group / colour by") renderUI({
@@ -895,7 +932,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         cd <- as.data.frame(SummarizedExperiment::colData(state$working))
         v <- if (!is.null(col) && col %in% colnames(cd)) as.factor(cd[samples, col])
              else factor(rep("all", length(samples)))
-        list(values = v, lab = col, palette = NULL, labels = NULL)
+        list(values = v, lab = col, palette = group_palette(col, levels(v)), labels = NULL)
       }
     }
 
@@ -966,7 +1003,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
-      .qc_rle_plot(d, dark(), length(levels(d$sample)), interactive = interactive)
+      .qc_rle_plot(d, dark(), length(levels(d$sample)), interactive = interactive,
+                   palette = group_palette(input$rle_group, d$group))
     }
     dual_plot("diag_rle", rle_gg, n_elements = reactive({
       v <- rle_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
@@ -989,7 +1027,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
-      .qc_density_plot(d, dark(), length(levels(d$sample)), interactive = interactive)
+      .qc_density_plot(d, dark(), length(levels(d$sample)), interactive = interactive,
+                       palette = group_palette(input$dens_group, d$group))
     }
     dual_plot("diag_density", dens_gg, n_elements = reactive({
       v <- dens_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
@@ -1063,7 +1102,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cm <- s$cm[show, show, drop = FALSE]
       anno <- if (is.null(s$anno_df)) NULL else s$anno_df[show, , drop = FALSE]
       ComplexHeatmap::draw(.qc_correlation_heatmap(
-        cm, anno, dark_theme = dark(), n_samples = length(show), method = s$method))
+        cm, anno, dark_theme = dark(), n_samples = length(show), method = s$method,
+        palette_config = state$palette$colData))
     })
 
     # --- Sample Correlation: Within-group -----------------------------------
@@ -1081,7 +1121,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(!is.null(wg_shown$value()), "Click Render (or enable auto-render)."))
       s <- wg_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
-      .qc_within_group_plot(d, dark_theme = dark(), interactive = interactive)
+      .qc_within_group_plot(d, dark_theme = dark(), interactive = interactive,
+                            palette = group_palette(input$wg_group, d$group))
     }
     dual_plot("wg_plot", wg_gg, n_elements = reactive({
       v <- wg_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
@@ -1162,7 +1203,9 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       long <- s$dr$long[s$dr$long$sample %in% s$show, , drop = FALSE]
       validate(need(nrow(long) > 0, "No samples in the current 'Showing' selection."))
       long$group <- spike_group_col(long$sample)
-      .qc_spike_dr_plot(long, dark_theme = dark(), interactive = interactive)
+      .qc_spike_dr_plot(long, dark_theme = dark(), interactive = interactive,
+                        palette = group_palette(input$spike_group %||% default_group_col(),
+                                                long$group))
     }
     dual_plot("spike_dr_plot", spike_dr_gg, n_elements = reactive({
       v <- spike_shown$value(); if (is.null(v)) 0L else sum(v$dr$long$sample %in% v$show)
@@ -1175,7 +1218,9 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(nrow(ps) > 0, "No samples in the current 'Showing' selection."))
       ps$group <- spike_group_col(ps$sample)
       .qc_spike_summary_plot(ps, input$spike_metric %||% "r_squared", dark_theme = dark(),
-                             interactive = interactive)
+                             interactive = interactive,
+                             palette = group_palette(input$spike_group %||% default_group_col(),
+                                                     ps$group))
     }
     dual_plot("spike_summary_plot", spike_summary_gg, n_elements = reactive({
       v <- spike_shown$value(); if (is.null(v)) 0L else sum(v$dr$per_sample$sample %in% v$show)

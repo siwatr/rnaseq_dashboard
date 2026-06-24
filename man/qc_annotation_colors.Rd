@@ -4,11 +4,15 @@
 \alias{qc_annotation_colors}
 \title{Deterministic annotation colour mappings}
 \usage{
-qc_annotation_colors(df)
+qc_annotation_colors(df, config = NULL)
 }
 \arguments{
 \item{df}{A \code{data.frame}/\code{DataFrame} of annotation columns (e.g. selected
 \code{colData} columns), or \code{NULL}.}
+
+\item{config}{Optional per-column palette config (the \code{colData} slot of
+\code{state$palette}): a named list with \verb{$palette} and \verb{$pins} per column. \code{NULL}
+uses the default palette and no pins.}
 }
 \value{
 A named list suitable for \code{HeatmapAnnotation(col = ...)}, or \code{NULL}
@@ -19,7 +23,12 @@ Builds a stable \code{col} list for \code{\link[ComplexHeatmap:HeatmapAnnotation
 annotation \code{data.frame} (one column per metadata variable). Because
 ComplexHeatmap randomizes annotation colours per draw when \code{col} is omitted,
 supplying this keeps colours fixed across re-renders. Each column maps to:
-a named character vector (level -> colour, from a colour-blind-safe
-qualitative palette) for discrete columns, or a \code{\link[circlize:colorRamp2]{circlize::colorRamp2()}}
-function (viridis-like) for numeric columns.
+a named character vector (level -> colour) for discrete columns, or a
+\code{\link[circlize:colorRamp2]{circlize::colorRamp2()}} function (viridis-like) for numeric columns.
+}
+\details{
+Discrete colours come from \code{\link[=palette_discrete]{palette_discrete()}}, so a project palette \code{config}
+(per-column base palette + pins) makes the heatmap annotations agree with the
+ggplot scales. With \code{config = NULL} it falls back to the \code{"Okabe-Ito"} palette
+(the historical default), keeping existing callers unchanged.
 }
