@@ -32,6 +32,17 @@ table.dataTable tbody tr.selected > * {
   color: #fff !important;
 }
 
+// --- (1b) Navbar form controls: size to content --------------------------
+// Shiny's `.shiny-input-container` defaults to width:300px (+ a block
+// margin-bottom), so an inline navbar input like the "Interactive plots" switch
+// renders as a 300px-wide box - the empty right portion shows up as a large gap
+// before the next item (the dark-mode toggle). Scope to the navbar so page /
+// sidebar inputs keep the default width.
+.navbar .shiny-input-container {
+  width: auto;
+  margin-bottom: 0;
+}
+
 // --- (2) Dark-mode DataTables fixes --------------------------------------
 [data-bs-theme="dark"] {
   // Table body: follow the Bootstrap dark surface + text tokens.
