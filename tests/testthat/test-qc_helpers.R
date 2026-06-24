@@ -150,6 +150,18 @@ test_that("qc_annotation_colors applies a palette config (pin) to the right leve
   expect_equal(unname(pinned$condition["control"]), "#E69F00")
 })
 
+test_that("qc_annotation_colors uses a continuous config for numeric columns", {
+  skip_if_not_installed("circlize")
+  df <- data.frame(score = c(1, 2, 3, 4, 5))
+  # No config -> default viridis-like ramp (a colorRamp2 closure).
+  expect_type(qc_annotation_colors(df)$score, "closure")
+  # Configured continuous palette + anchors -> colorRamp2 over the anchor range.
+  cfg <- list(score = list(name = "viridis: magma", min = "0", max = "10"))
+  fn <- qc_annotation_colors(df, cfg)$score
+  expect_type(fn, "closure")
+  expect_match(fn(0), "^#")
+})
+
 test_that("qc_within_group_correlation summarizes per-sample within-group similarity", {
   skip_if_not_installed("DESeq2")
   dds <- ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3, n_spike = 2, seed = 7))

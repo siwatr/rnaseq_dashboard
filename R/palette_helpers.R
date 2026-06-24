@@ -210,3 +210,101 @@ palette_discrete <- function(levels, colors = NULL, name = "Okabe-Ito",
   }
   out
 }
+
+# ---- Continuous palettes ----------------------------------------------------
+# Continuous colour mappings (numeric metadata, assays, correlation scores).
+# A spec is name + min/max anchors (+ a custom ramp). Anchors are stored
+# data-independently and resolved against the plotted values at draw time, so a
+# config travels across datasets. Sequential/divergent/viridis palettes apply;
+# qualitative ones do not.
+
+#' Grouped continuous-palette choices for a `selectInput`
+#'
+#' Like [palette_choices()] but only the continuous-capable groups (viridis,
+#' Brewer sequential/divergent) plus a `"Custom ramp"`. Names are clean labels,
+#' values are resolvable palette names.
+#' @return A named list of named character vectors.
+#' @export
+palette_continuous_choices <- function() {
+  grp <- c("viridis", "Brewer: Sequential", "Brewer: Divergent")
+  out <- stats::setNames(lapply(grp, function(t) {
+    v <- palette_names(t); stats::setNames(v, .pal_label(v))
+  }), grp)
+  c(out, list(Custom = c("Custom ramp" = "Custom ramp")))
+}
+
+# Resolve one anchor: a number, a "p<pct>" percentile of `values`, or NA.
+.resolve_anchor <- function(x, values) {
+  if (is.null(x) || length(x) != 1L || is.na(x)) return(NA_real_)
+  x <- trimws(as.character(x))
+  if (!nzchar(x)) return(NA_real_)
+  m <- regmatches(x, regexec("^[pP]([0-9]*\\.?[0-9]+)$", x))[[1]]
+  if (length(m) == 2L) {
+    pct <- suppressWarnings(as.numeric(m[2L]))
+    if (is.na(pct) || pct < 0 || pct > 100 || !length(values)) return(NA_real_)
+    return(unname(stats::quantile(values, pct / 100, na.rm = TRUE)))
+  }
+  suppressWarnings(as.numeric(x))
+}
+
+#' Resolve a continuous colour range from anchors + data
+#'
+#' @param values Numeric values being coloured (NA/non-finite dropped).
+#' @param min,max Anchors: a number, a `"p<pct>"` percentile string, or `NULL`
+#'   (fall back to the data min/max).
+#' @return A length-2 numeric `c(lo, hi)` with `hi > lo`.
+#' @export
+palette_resolve_range <- function(values, min = NULL, max = NULL) {
+  values <- values[is.finite(values)]
+  lo <- .resolve_anchor(min, values); hi <- .resolve_anchor(max, values)
+  if (is.na(lo)) lo <- if (length(values)) min(values) else 0
+  if (is.na(hi)) hi <- if (length(values)) max(values) else 1
+  if (!is.finite(lo)) lo <- 0
+  if (!is.finite(hi)) hi <- lo + 1
+  if (hi <= lo) hi <- lo + 1e-9
+  c(lo, hi)
+}
+
+# Stop colours for a continuous palette (named palette, or a custom ramp).
+.continuous_stops <- function(name, custom = NULL, n = 9L) {
+  if (identical(name, "Custom ramp")) {
+    cols <- norm_color(if (length(custom)) custom else c("#440154", "#21908C", "#FDE725"))
+    cols <- cols[!is.na(cols)]
+    if (length(cols) < 2L) cols <- c("#440154", "#FDE725")
+    return(grDevices::colorRampPalette(cols)(n))
+  }
+  norm_color(palette_colors(name, n))
+}
+
+#' Continuous colour mapping for ComplexHeatmap
+#'
+#' Builds a [circlize::colorRamp2()] function over the range from
+#' [palette_resolve_range()].
+#' @param name Palette name (see [palette_continuous_choices()]).
+#' @param values Numeric values being coloured (for anchor resolution).
+#' @param min,max Anchors (number / `"p<pct>"` / `NULL`).
+#' @param custom Anchor colours when `name = "Custom ramp"`.
+#' @param n Number of ramp stops.
+#' @return A `colorRamp2` function, or `NULL` if circlize is unavailable.
+#' @export
+palette_colorramp2 <- function(name, values, min = NULL, max = NULL,
+                               custom = NULL, n = 9L) {
+  if (!requireNamespace("circlize", quietly = TRUE)) return(NULL)
+  rng <- palette_resolve_range(values, min, max)
+  cols <- .continuous_stops(name, custom, n)
+  circlize::colorRamp2(seq(rng[1L], rng[2L], length.out = length(cols)), cols)
+}
+
+#' Continuous colour mapping for a ggplot gradient scale
+#'
+#' Returns the pieces for `scale_*_gradientn(colours, values, limits)` (no
+#' `scales` dependency: `values` are evenly spaced in `[0, 1]`).
+#' @inheritParams palette_colorramp2
+#' @return A list with `colours`, `values`, `limits`.
+#' @export
+palette_gradientn <- function(name, values, min = NULL, max = NULL,
+                              custom = NULL, n = 9L) {
+  rng <- palette_resolve_range(values, min, max)
+  cols <- .continuous_stops(name, custom, n)
+  list(colours = cols, values = seq(0, 1, length.out = length(cols)), limits = rng)
+}

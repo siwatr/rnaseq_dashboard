@@ -304,9 +304,14 @@ qc_annotation_colors <- function(df, config = NULL) {
   df <- as.data.frame(df)
   stats::setNames(Map(function(x, name) {
     if (is.numeric(x) && any(is.finite(x))) {
-      rng <- range(x, na.rm = TRUE)
-      if (!is.finite(diff(rng)) || diff(rng) == 0) rng <- c(rng[1] - 0.5, rng[1] + 0.5)
       if (!requireNamespace("circlize", quietly = TRUE)) return(NULL)
+      cfg <- config[[name]]
+      if (!is.null(cfg) && !is.null(cfg$name)) {   # configured continuous palette
+        return(palette_colorramp2(cfg$name, values = x, min = cfg$min,
+                                  max = cfg$max, custom = cfg$custom))
+      }
+      rng <- range(x, na.rm = TRUE)               # default viridis-like ramp
+      if (!is.finite(diff(rng)) || diff(rng) == 0) rng <- c(rng[1] - 0.5, rng[1] + 0.5)
       circlize::colorRamp2(seq(rng[1], rng[2], length.out = 3),
                            c("#440154", "#21908C", "#FDE725"))
     } else {

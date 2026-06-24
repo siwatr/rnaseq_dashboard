@@ -91,3 +91,38 @@ test_that("palette_discrete handles empty / factor input", {
   f <- factor(c("x", "y", "x"), levels = c("y", "x"))
   expect_named(palette_discrete(f), c("y", "x"))      # factor level order
 })
+
+test_that("palette_continuous_choices offers continuous groups + a custom ramp", {
+  ch <- palette_continuous_choices()
+  expect_true("Custom" %in% names(ch))
+  expect_identical(unname(ch[["Custom"]]), "Custom ramp")
+  expect_false("Qualitative" %in% names(ch))     # qualitative excluded
+  if (requireNamespace("viridisLite", quietly = TRUE))
+    expect_true("viridis: magma" %in% unname(ch[["viridis"]]))
+})
+
+test_that("palette_resolve_range handles numbers, p<pct> percentiles, and fallbacks", {
+  v <- 1:100
+  expect_equal(palette_resolve_range(v, 0, 100), c(0, 100))
+  expect_equal(palette_resolve_range(v), c(1, 100))                 # data min/max
+  pr <- palette_resolve_range(v, "p10", "p90")
+  expect_equal(round(pr), c(11, 90))                                # ~10th/90th pct
+  expect_equal(palette_resolve_range(v, NULL, 50), c(1, 50))        # mixed
+  # Degenerate / empty inputs stay valid (hi > lo).
+  r0 <- palette_resolve_range(numeric(0)); expect_true(r0[2] > r0[1])
+  rc <- palette_resolve_range(c(5, 5, 5)); expect_true(rc[2] > rc[1])
+  expect_true(is.na(ddsdashboard:::.resolve_anchor("p200", 1:10)))  # invalid pct
+})
+
+test_that("palette_colorramp2 + palette_gradientn resolve named + custom ramps", {
+  skip_if_not_installed("circlize")
+  f <- palette_colorramp2("viridis: viridis", values = 0:10, min = 0, max = 10)
+  expect_type(f, "closure")
+  expect_match(f(0), "^#")                                          # maps a value to hex
+  # Custom ramp uses the supplied anchor colours.
+  g <- palette_gradientn("Custom ramp", values = 0:10, custom = c("#000000", "#ffffff"))
+  expect_named(g, c("colours", "values", "limits"))
+  expect_equal(g$limits, c(0, 10))
+  expect_equal(g$values, seq(0, 1, length.out = length(g$colours)))
+  expect_true(all(grepl("^#[0-9A-F]{6}$", g$colours)))
+})

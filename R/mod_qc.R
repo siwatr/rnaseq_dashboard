@@ -348,13 +348,16 @@
 # tune via the Themer "Heatmap" sub-tab.
 .qc_correlation_heatmap <- function(cor_mat, anno_df = NULL, dark_theme = FALSE,
                                     n_samples = ncol(cor_mat), method = "spearman",
-                                    palette_config = NULL) {
+                                    palette_config = NULL, cor_config = NULL) {
   if (!requireNamespace("ComplexHeatmap", quietly = TRUE)) return(NULL)
   fg <- if (isTRUE(dark_theme)) "grey90" else "grey10"
   legend_lab <- if (identical(method, "pearson")) "Pearson r" else "Spearman rho"
   title_lab  <- if (identical(method, "pearson")) "Pearson" else "Spearman"
   rng <- range(cor_mat, na.rm = TRUE)
-  col_fun <- if (requireNamespace("circlize", quietly = TRUE)) {
+  col_fun <- if (!is.null(cor_config) && !is.null(cor_config$name)) {
+    palette_colorramp2(cor_config$name, values = as.numeric(cor_mat),
+                       min = cor_config$min, max = cor_config$max, custom = cor_config$custom)
+  } else if (requireNamespace("circlize", quietly = TRUE)) {
     circlize::colorRamp2(c(rng[1], mean(rng), rng[2]),
                          c("#fff7fb", "#74a9cf", "#023858"))
   } else {
@@ -848,6 +851,14 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       if (is.null(cfg) || !length(levels)) return(NULL)
       palette_discrete(levels, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
     }
+    # Removal-status colours: the project "Other" map if configured, else the
+    # built-in green/yellow/red. Levels come from .removal_palette's names.
+    removal_palette <- function() {
+      cfg <- state$palette$other$removal_status
+      if (is.null(cfg)) return(.removal_palette)
+      palette_discrete(names(.removal_palette), cfg$colors, cfg$name %||% "Okabe-Ito",
+                       cfg$custom)
+    }
 
     # --- DRY UI builders (data-dependent, so server-rendered) ---------------
     group_box <- function(input_id, label = "Group / colour by") renderUI({
@@ -921,7 +932,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         rcol <- .metric_reason[[metric]]
         this <- if (!is.null(rcol)) fl[[rcol]][i] else NULL
         list(values = removal_status(fl$flagged[i], this), lab = "Suggested removal",
-             palette = .removal_palette, labels = .removal_labels)
+             palette = removal_palette(), labels = .removal_labels)
       } else if (identical(col, "__pool__")) {
         inp <- samples %in% samp_pool()
         list(values = factor(ifelse(inp, "in removal pool", "kept"),
@@ -1103,7 +1114,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       anno <- if (is.null(s$anno_df)) NULL else s$anno_df[show, , drop = FALSE]
       ComplexHeatmap::draw(.qc_correlation_heatmap(
         cm, anno, dark_theme = dark(), n_samples = length(show), method = s$method,
-        palette_config = state$palette$colData))
+        palette_config = state$palette$colData, cor_config = state$palette$other$correlation))
     })
 
     # --- Sample Correlation: Within-group -----------------------------------
