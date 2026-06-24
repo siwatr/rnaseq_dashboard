@@ -1,3 +1,8 @@
+test_that("new_app_state seeds the plot-engine UI flag off by default", {
+  st <- new_app_state()
+  expect_false(shiny::isolate(st$plot_interactive))
+})
+
 test_that("state_load / mutate / derive / undo / reset behave correctly", {
   skip_if_not_installed("DESeq2")
   shiny::reactiveConsole(TRUE)

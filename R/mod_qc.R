@@ -109,9 +109,17 @@
 # metric vs metric). Colour/fill by `group`. When `palette` (a named colour
 # vector over the group levels) is supplied, a fixed manual scale is used instead
 # of the qualitative palette (for the semantic removal-status colouring).
+# A hover `text` aesthetic, added to a geom only when `interactive` (so static
+# ggplot never warns about an unknown aesthetic). Pair with ggplotly(tooltip =
+# "text"). The data passed to the geom must carry a `text` column.
+.hover_aes <- function(interactive) {
+  if (isTRUE(interactive)) ggplot2::aes(text = .data$text) else NULL
+}
+
 .qc_metric_plot <- function(tbl, x_var, metric, group_lab = NULL,
                             sort = "none", dark_theme = FALSE,
-                            palette = NULL, palette_labels = NULL) {
+                            palette = NULL, palette_labels = NULL,
+                            interactive = FALSE) {
   yy <- .qc_axis(tbl, metric)
   bar <- identical(x_var, "sample")
   if (bar) {
@@ -120,16 +128,19 @@
     } else {
       tbl$sample[order(yy$v, decreasing = identical(sort, "decreasing"))]
     }
-    df <- data.frame(x = factor(tbl$sample, levels = lvls), y = yy$v, group = tbl$group)
+    df <- data.frame(x = factor(tbl$sample, levels = lvls), y = yy$v, group = tbl$group,
+                     text = sprintf("Sample: %s<br>%s: %s", tbl$sample, yy$lab, signif(yy$v, 4)))
     p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$x, y = .data$y, fill = .data$group)) +
-      ggplot2::geom_col() +
+      ggplot2::geom_col(mapping = .hover_aes(interactive)) +
       ggplot2::labs(x = "sample", y = yy$lab, fill = group_lab %||% "group") +
       ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
   } else {
     xx <- .qc_axis(tbl, x_var)
-    df <- data.frame(x = xx$v, y = yy$v, group = tbl$group)
+    df <- data.frame(x = xx$v, y = yy$v, group = tbl$group,
+                     text = sprintf("Sample: %s<br>%s: %s<br>%s: %s", tbl$sample,
+                                    xx$lab, signif(xx$v, 4), yy$lab, signif(yy$v, 4)))
     p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$x, y = .data$y, colour = .data$group)) +
-      ggplot2::geom_point(size = 2) +
+      ggplot2::geom_point(size = 2, mapping = .hover_aes(interactive)) +
       ggplot2::labs(x = xx$lab, y = yy$lab, colour = group_lab %||% "group")
   }
   if (!is.null(palette)) {
@@ -145,11 +156,12 @@
 # distribution of log-expression over endogenous features, before vs after the
 # proposed filter. A cleaner after-curve (less low-expression mass) means the
 # filter is doing its job. df from qc_filter_density() (sample, value, status).
-.qc_filter_density_plot <- function(df, dark_theme = FALSE) {
+.qc_filter_density_plot <- function(df, dark_theme = FALSE, interactive = FALSE) {
+  df$text <- sprintf("Sample: %s (%s)", df$sample, df$status)
   ggplot2::ggplot(df, ggplot2::aes(x = .data$value,
                                    group = interaction(.data$sample, .data$status),
                                    colour = .data$status)) +
-    ggplot2::geom_density(linewidth = 0.4, alpha = 0.7) +
+    ggplot2::geom_density(linewidth = 0.4, alpha = 0.7, mapping = .hover_aes(interactive)) +
     ggplot2::scale_colour_manual(values = c(before = "#9aa0a6", after = "#1f77b4"),
                                  name = NULL) +
     ggplot2::labs(x = "log2 expression", y = "density") +
@@ -169,13 +181,15 @@
 # Dose-response scatter: known concentration vs observed expression (log-log),
 # coloured by group, with a per-sample lm line. `long` carries a `group` column.
 # Zeros (undetected) are dropped before the log scales.
-.qc_spike_dr_plot <- function(long, dark_theme = FALSE) {
+.qc_spike_dr_plot <- function(long, dark_theme = FALSE, interactive = FALSE) {
   d <- long[is.finite(long$concentration) & is.finite(long$expression) &
             long$concentration > 0 & long$expression > 0, , drop = FALSE]
   if (!nrow(d)) return(.qc_msg_plot("No detected spike-ins with known concentration."))
+  d$text <- sprintf("Feature: %s<br>Sample: %s<br>conc: %s<br>expr: %s",
+                    d$feature, d$sample, signif(d$concentration, 4), signif(d$expression, 4))
   ggplot2::ggplot(d, ggplot2::aes(x = .data$concentration, y = .data$expression,
                                   colour = .data$group)) +
-    ggplot2::geom_point(size = 1.4, alpha = 0.7) +
+    ggplot2::geom_point(size = 1.4, alpha = 0.7, mapping = .hover_aes(interactive)) +
     ggplot2::geom_smooth(ggplot2::aes(group = .data$sample), method = "lm",
                          formula = y ~ x, se = FALSE, linewidth = 0.4) +
     ggplot2::scale_x_log10() + ggplot2::scale_y_log10() +
@@ -186,13 +200,14 @@
 
 # Per-sample spike summary: a chosen metric across samples (bar, sorted), filled
 # by group. `df` is spike_dose_response()$per_sample with a `group` column.
-.qc_spike_summary_plot <- function(df, metric, dark_theme = FALSE) {
+.qc_spike_summary_plot <- function(df, metric, dark_theme = FALSE, interactive = FALSE) {
   lab <- .spike_metric_labels[[metric]] %||% metric
   d <- df[is.finite(df[[metric]]), , drop = FALSE]
   if (!nrow(d)) return(.qc_msg_plot(paste("No", lab, "to show.")))
+  d$text <- sprintf("Sample: %s<br>%s: %s", d$sample, lab, signif(d[[metric]], 4))
   d$sample <- factor(d$sample, levels = d$sample[order(d[[metric]])])
   ggplot2::ggplot(d, ggplot2::aes(x = .data$sample, y = .data[[metric]], fill = .data$group)) +
-    ggplot2::geom_col() +
+    ggplot2::geom_col(mapping = .hover_aes(interactive)) +
     ggplot2::labs(x = "sample", y = lab, fill = "group") +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
     .qc_theme(dark_theme)
@@ -252,11 +267,12 @@
 }
 
 # Relative log expression boxplots. df: sample (factor), group, value.
-.qc_rle_plot <- function(df, dark_theme = FALSE, n_samples = NULL) {
+.qc_rle_plot <- function(df, dark_theme = FALSE, n_samples = NULL, interactive = FALSE) {
   n <- n_samples %||% length(unique(df$sample))
+  df$text <- sprintf("Sample: %s", df$sample)
   p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$sample, y = .data$value, fill = .data$group)) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
-    ggplot2::geom_boxplot(outlier.size = 0.4) +
+    ggplot2::geom_boxplot(outlier.size = 0.4, mapping = .hover_aes(interactive)) +
     ggplot2::labs(x = "sample", y = "relative log expression", fill = "group") +
     .qc_theme(dark_theme)
   if (n > 30) {
@@ -267,11 +283,12 @@
 }
 
 # Per-sample log-expression density. df: sample (factor), group, value.
-.qc_density_plot <- function(df, dark_theme = FALSE, n_samples = NULL) {
+.qc_density_plot <- function(df, dark_theme = FALSE, n_samples = NULL, interactive = FALSE) {
   n <- n_samples %||% length(unique(df$sample))
+  df$text <- sprintf("Sample: %s", df$sample)
   p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$value, group = .data$sample,
                                         colour = .data$group)) +
-    ggplot2::geom_density() +
+    ggplot2::geom_density(mapping = .hover_aes(interactive)) +
     ggplot2::labs(x = "log2 expression", y = "density", colour = "group") +
     .qc_theme(dark_theme)
   if (n > 30) p + ggplot2::theme(legend.position = "none") else p
@@ -280,14 +297,19 @@
 # Within-group correlation: boxplot per group + sample points. df from
 # qc_within_group_correlation() (sample, group, mean_corr). Singleton groups
 # (NA mean_corr) are dropped.
-.qc_within_group_plot <- function(df, dark_theme = FALSE) {
+.qc_within_group_plot <- function(df, dark_theme = FALSE, interactive = FALSE) {
   d <- df[!is.na(df$mean_corr), , drop = FALSE]
   if (!nrow(d)) return(.qc_msg_plot("No multi-sample groups to summarize."))
+  d$text <- sprintf("Sample: %s<br>mean corr: %s", d$sample, signif(d$mean_corr, 4))
+  jit_aes <- if (isTRUE(interactive)) {
+    ggplot2::aes(colour = .data$group, text = .data$text)
+  } else {
+    ggplot2::aes(colour = .data$group)
+  }
   ggplot2::ggplot(d, ggplot2::aes(x = .data$group, y = .data$mean_corr)) +
     ggplot2::geom_boxplot(ggplot2::aes(fill = .data$group), alpha = 0.35,
                           outlier.shape = NA) +
-    ggplot2::geom_jitter(ggplot2::aes(colour = .data$group),
-                         width = 0.15, height = 0, size = 2) +
+    ggplot2::geom_jitter(mapping = jit_aes, width = 0.15, height = 0, size = 2) +
     ggplot2::labs(x = "group", y = "mean within-group correlation",
                   fill = "group", colour = "group") +
     .qc_theme(dark_theme)
@@ -397,6 +419,39 @@
 # Spinner-wrapped plot output (busy indicator for slow renders).
 .qc_plot <- function(id) shinycssloaders::withSpinner(plotOutput(id), proxy.height = "300px")
 
+# --- ggplot <-> plotly engine toggle (P3f) ----------------------------------
+# A ggplotly() figure serializes every glyph to the browser, so cost scales with
+# the number of *rendered elements* (rows of the plotted data), not sample count
+# - e.g. RLE/density are ~ features x samples while a per-sample bar is ~ samples.
+# So the interactive engine is gated per plot on an element budget rather than a
+# sample cap. The budget is an option() so deployments / power users can tune it
+# without a settings page; default chosen so light per-sample plots go interactive
+# while heavy distribution plots fall back to static (with a per-plot override).
+.plotly_max_elements <- function() {
+  getOption("ddsdashboard.plotly_max_elements", 5000L)
+}
+
+# Muffle ggplot2's "Ignoring unknown aesthetics: text" - emitted at construction
+# for the interactive builders' plotly-only hover aes; expected and noise-only.
+.muffle_unknown_aes <- function(expr) {
+  withCallingHandlers(expr, warning = function(w) {
+    if (grepl("unknown aesthetic", conditionMessage(w), ignore.case = TRUE))
+      invokeRestart("muffleWarning")
+  })
+}
+
+# Convert a ggplot to an interactive plotly figure. Tooltip is driven by the
+# `text` aesthetic the builders add when interactive (see .hover_aes). Theming
+# (thematic / dark mode) is intentionally NOT restyled here yet - a full bright/
+# dark theme pass is planned post-P5.
+.to_plotly <- function(p) plotly::ggplotly(p, tooltip = "text")
+
+# UI placeholder for a toggleable plot: a container the server fills with either
+# a plotOutput (static) or a plotlyOutput (interactive). Replaces .qc_plot() for
+# the engine-toggled QC plots; the spinner moves inside the container (built
+# server-side) so it still fires during the actual render.
+.qc_dual_plot <- function(id) uiOutput(id)
+
 # A blank numericInput reads back as NA; map that to NULL so the flag helpers
 # treat that threshold as "rule disabled" (no flag).
 .blank_na <- function(x) if (is.null(x) || length(x) != 1L || is.na(x)) NULL else x
@@ -493,7 +548,7 @@ mod_qc_ui <- function(id) {
               uiOutput(ns("auto_ui")),
               actionButton(ns("render"), "Render", class = "btn-primary")
             ),
-            uiOutput(ns("gen_stale")), .qc_plot(ns("plot"))
+            uiOutput(ns("gen_stale")), .qc_dual_plot(ns("plot_container"))
           )
         ),
         bslib::nav_panel(
@@ -506,7 +561,7 @@ mod_qc_ui <- function(id) {
               uiOutput(ns("rle_auto_ui")),
               actionButton(ns("rle_render"), "Render", class = "btn-primary")
             ),
-            uiOutput(ns("rle_stale")), .qc_plot(ns("diag_rle")), .qc_help_note("rle")
+            uiOutput(ns("rle_stale")), .qc_dual_plot(ns("diag_rle_container")), .qc_help_note("rle")
           )
         ),
         bslib::nav_panel(
@@ -519,7 +574,7 @@ mod_qc_ui <- function(id) {
               uiOutput(ns("dens_auto_ui")),
               actionButton(ns("dens_render"), "Render", class = "btn-primary")
             ),
-            uiOutput(ns("dens_stale")), .qc_plot(ns("diag_density")), .qc_help_note("density")
+            uiOutput(ns("dens_stale")), .qc_dual_plot(ns("diag_density_container")), .qc_help_note("density")
           )
         ),
         bslib::nav_panel(
@@ -563,7 +618,7 @@ mod_qc_ui <- function(id) {
               uiOutput(ns("wg_auto_ui")),
               actionButton(ns("wg_render"), "Render", class = "btn-primary")
             ),
-            uiOutput(ns("wg_stale")), .qc_plot(ns("wg_plot")), .qc_help_note("within_group")
+            uiOutput(ns("wg_stale")), .qc_dual_plot(ns("wg_plot_container")), .qc_help_note("within_group")
           )
         )
       )
@@ -587,7 +642,7 @@ mod_qc_ui <- function(id) {
         uiOutput(ns("spike_stale")),
         bslib::navset_pill(
           bslib::nav_panel("Dose-response",
-            .qc_plot(ns("spike_dr_plot")), .qc_help_note("spike_dr")),
+            .qc_dual_plot(ns("spike_dr_plot_container")), .qc_help_note("spike_dr")),
           bslib::nav_panel("Per-sample summary",
             selectInput(ns("spike_metric"), "Metric",
                         choices = c("% spike-in" = "pct_spike",
@@ -597,7 +652,7 @@ mod_qc_ui <- function(id) {
                                     "Dose-response R-squared" = "r_squared"),
                         selected = "r_squared"),
             uiOutput(ns("spike_cv")),
-            .qc_plot(ns("spike_summary_plot"))),
+            .qc_dual_plot(ns("spike_summary_plot_container"))),
           bslib::nav_panel("Spike-in QC Matrix",
             tags$small(class = "text-muted", "Per-sample spike-in QC metrics:"),
             shinycssloaders::withSpinner(DT::DTOutput(ns("spike_table")), proxy.height = "200px"))
@@ -668,7 +723,7 @@ mod_qc_ui <- function(id) {
                        "The removal pool is pre-seeded with the suggestion; search the table then 'Select all' + 'Add selected to pool' for bulk edits."),
             select_buttons("feat", "Reset Feature Removal"),
             shinycssloaders::withSpinner(DT::DTOutput(ns("feat_tbl")), proxy.height = "300px"),
-            .qc_plot(ns("feat_density")), .qc_help_note("filter_density")
+            .qc_dual_plot(ns("feat_density_container")), .qc_help_note("filter_density")
           )
         )
       )
@@ -684,6 +739,67 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     dark <- function() isTRUE(dark_mode())
+
+    # Interactive (plotly) engine is *available* when the global toggle is on and
+    # the package is installed; whether a given plot actually renders interactive
+    # is decided per plot against the element budget (see dual_plot).
+    use_plotly_base <- reactive({
+      isTRUE(state$plot_interactive) && requireNamespace("plotly", quietly = TRUE) &&
+        !is.null(state$working)
+    })
+
+    # Wire a toggleable plot. `gg(interactive)` returns the ggplot (or validate()):
+    # the static output always builds it with interactive = FALSE (no plotly-only
+    # `text` aes, so no warning); the plotly output with interactive = TRUE.
+    # `n_elements()` is a cheap reactive estimate of rendered glyphs (rows of the
+    # plotted data). A plot renders interactive when the engine is on AND it is
+    # within the element budget OR the user clicked its per-plot "render anyway"
+    # (a sticky override, reset when the data changes or the global toggle flips -
+    # so flipping the toggle off/on is the way back to the default gate). The
+    # static fallback shows a one-line note + the override button above the plot.
+    dual_plot <- function(id, gg, n_elements, height = "300px") {
+      forced <- reactiveVal(FALSE)
+      observeEvent(input[[paste0(id, "_force")]], forced(TRUE))
+      observeEvent(state$data_version, forced(FALSE))     # new data -> re-gate
+      observeEvent(state$plot_interactive, forced(FALSE)) # toggle flip -> re-gate
+
+      over_budget <- reactive(isTRUE(use_plotly_base()) && n_elements() > .plotly_max_elements())
+      interactive_here <- reactive(isTRUE(use_plotly_base()) &&
+                                   (n_elements() <= .plotly_max_elements() || isTRUE(forced())))
+
+      # `gg` is intentionally a plain function, not memoized: the expensive work
+      # already sits behind `deferred()`/`state_derive`, and only one of the two
+      # outputs is ever in the DOM, so there is no shared double-compute to cache.
+      output[[paste0(id, "_static")]] <- renderPlot(gg(FALSE))
+      if (requireNamespace("plotly", quietly = TRUE)) {
+        # renderPlot natively turns a validate()/req() condition into its grey
+        # message; renderPlotly does NOT, so catch it and render the message as a
+        # figure. The plotly-only `text` aes warning is muffled at construction.
+        output[[paste0(id, "_plotly")]] <- plotly::renderPlotly(.muffle_unknown_aes({
+          p <- tryCatch(gg(TRUE), shiny.silent.error = function(e) {
+            msg <- conditionMessage(e)
+            .qc_msg_plot(if (nzchar(msg)) msg else "Click Render (or enable auto-render).")
+          })
+          .to_plotly(p)
+        }))
+      }
+      output[[paste0(id, "_container")]] <- renderUI({
+        inner <- if (isTRUE(interactive_here())) {
+          plotly::plotlyOutput(ns(paste0(id, "_plotly")), height = height)
+        } else {
+          plotOutput(ns(paste0(id, "_static")), height = height)
+        }
+        tagList(
+          if (isTRUE(over_budget()) && !isTRUE(forced()) && !is.null(state$working))
+            tags$div(class = "alert alert-secondary py-2 px-2 small mb-2",
+              tags$div(sprintf(
+                "This plot would draw ~%s plotting elements (%d samples) - interactive rendering may be slow, so it is shown as a static image.",
+                format(n_elements(), big.mark = ","), ncol(state$working))),
+              actionButton(ns(paste0(id, "_force")), "Render interactive anyway",
+                           icon = icon("bolt"), class = "btn-sm btn-outline-primary mt-1")),
+          shinycssloaders::withSpinner(inner, proxy.height = height))
+      })
+    }
 
     # Default grouping column: the design variable / condition, else first col.
     default_group_col <- function() {
@@ -793,7 +909,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                           showing_samples(), state$data_version)))
     output$gen_stale <- stale_note(gen_shown)
 
-    output$plot <- renderPlot({
+    plot_gg <- function(interactive) {
       validate(need(!is.null(gen_shown$value()),
                     "Click Render (or enable auto-render) to draw the plot."))
       s <- gen_shown$value()
@@ -802,8 +918,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       ae <- sample_aes(input$group %||% default_group_col(), s$metric, tbl$sample)
       tbl$group <- ae$values
       .qc_metric_plot(tbl, s$x_axis, s$metric, ae$lab, sort = s$sort,
-                      dark_theme = dark(), palette = ae$palette, palette_labels = ae$labels)
-    })
+                      dark_theme = dark(), palette = ae$palette, palette_labels = ae$labels,
+                      interactive = interactive)
+    }
+    dual_plot("plot", plot_gg, n_elements = reactive({
+      v <- gen_shown$value(); if (is.null(v)) 0L else sum(v$tbl$sample %in% v$show)
+    }))
 
     output$tbl <- DT::renderDT({
       validate(need(!is.null(state$working), "No dataset loaded."))
@@ -840,14 +960,17 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     rle_shown <- deferred("rle_auto", "rle_render", rle_spec,
       sig = reactive(list(input$rle_group, showing_samples(), state$data_version)))
     output$rle_stale <- stale_note(rle_shown)
-    output$diag_rle <- renderPlot({
+    rle_gg <- function(interactive) {
       validate(need(!is.null(rle_shown$value()), "Click Render (or enable auto-render)."))
       s <- rle_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
-      .qc_rle_plot(d, dark(), length(levels(d$sample)))
-    })
+      .qc_rle_plot(d, dark(), length(levels(d$sample)), interactive = interactive)
+    }
+    dual_plot("diag_rle", rle_gg, n_elements = reactive({
+      v <- rle_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
+    }))
 
     dens_spec <- reactive({
       req(state$working, input$dens_group)
@@ -860,14 +983,17 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     dens_shown <- deferred("dens_auto", "dens_render", dens_spec,
       sig = reactive(list(input$dens_group, showing_samples(), state$data_version)))
     output$dens_stale <- stale_note(dens_shown)
-    output$diag_density <- renderPlot({
+    dens_gg <- function(interactive) {
       validate(need(!is.null(dens_shown$value()), "Click Render (or enable auto-render)."))
       s <- dens_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
-      .qc_density_plot(d, dark(), length(levels(d$sample)))
-    })
+      .qc_density_plot(d, dark(), length(levels(d$sample)), interactive = interactive)
+    }
+    dual_plot("diag_density", dens_gg, n_elements = reactive({
+      v <- dens_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
+    }))
 
     # --- Dataset diagnostics: Mean-SD ---------------------------------------
     output$diag_auto_ui <- auto_box("diag_auto")
@@ -951,12 +1077,15 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     wg_shown <- deferred("wg_auto", "wg_render", wg_spec,
       sig = reactive(list(input$wg_group, showing_samples(), state$data_version)))
     output$wg_stale <- stale_note(wg_shown)
-    output$wg_plot <- renderPlot({
+    wg_gg <- function(interactive) {
       validate(need(!is.null(wg_shown$value()), "Click Render (or enable auto-render)."))
       s <- wg_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
-      .qc_within_group_plot(d, dark_theme = dark())
-    })
+      .qc_within_group_plot(d, dark_theme = dark(), interactive = interactive)
+    }
+    dual_plot("wg_plot", wg_gg, n_elements = reactive({
+      v <- wg_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
+    }))
 
     # --- Spike-in (ERCC) dose-response --------------------------------------
     spike_ids <- reactive(rownames(state$working)[.detect_spike_features(state$working)])
@@ -1024,7 +1153,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       tags$div(class = "alert alert-warning py-2 small mb-2", lapply(notes, tags$div))
     })
 
-    output$spike_dr_plot <- renderPlot({
+    spike_dr_gg <- function(interactive) {
       validate(need(length(spike_ids()) > 0, "No spike-in features in this dataset."))
       validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
       s <- spike_shown$value()
@@ -1033,17 +1162,24 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       long <- s$dr$long[s$dr$long$sample %in% s$show, , drop = FALSE]
       validate(need(nrow(long) > 0, "No samples in the current 'Showing' selection."))
       long$group <- spike_group_col(long$sample)
-      .qc_spike_dr_plot(long, dark_theme = dark())
-    })
+      .qc_spike_dr_plot(long, dark_theme = dark(), interactive = interactive)
+    }
+    dual_plot("spike_dr_plot", spike_dr_gg, n_elements = reactive({
+      v <- spike_shown$value(); if (is.null(v)) 0L else sum(v$dr$long$sample %in% v$show)
+    }))
 
-    output$spike_summary_plot <- renderPlot({
+    spike_summary_gg <- function(interactive) {
       validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
       s <- spike_shown$value()
       ps <- s$dr$per_sample[s$dr$per_sample$sample %in% s$show, , drop = FALSE]
       validate(need(nrow(ps) > 0, "No samples in the current 'Showing' selection."))
       ps$group <- spike_group_col(ps$sample)
-      .qc_spike_summary_plot(ps, input$spike_metric %||% "r_squared", dark_theme = dark())
-    })
+      .qc_spike_summary_plot(ps, input$spike_metric %||% "r_squared", dark_theme = dark(),
+                             interactive = interactive)
+    }
+    dual_plot("spike_summary_plot", spike_summary_gg, n_elements = reactive({
+      v <- spike_shown$value(); if (is.null(v)) 0L else sum(v$dr$per_sample$sample %in% v$show)
+    }))
 
     output$spike_cv <- renderUI({
       v <- spike_shown$value(); req(v)
@@ -1336,11 +1472,18 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
 
     # Before/after filtering density: keep = everything not in the removal pool.
-    output$feat_density <- renderPlot({
+    feat_density_gg <- function(interactive) {
       req(state$working)
       keep <- setdiff(rownames(state$working), feat_pool())
-      .qc_filter_density_plot(qc_filter_density(state$working, keep), dark_theme = dark())
-    })
+      .qc_filter_density_plot(qc_filter_density(state$working, keep), dark_theme = dark(),
+                              interactive = interactive)
+    }
+    # Element estimate without recomputing the density frame: the before+after
+    # curves span at most 2 x (endogenous features) x samples.
+    dual_plot("feat_density", feat_density_gg, n_elements = reactive({
+      req(state$working)
+      2L * sum(.endogenous_mask(state$working)) * ncol(state$working)
+    }))
 
     # Apply removal: confirm, then a single state_mutate (undoable, logged).
     confirm_modal <- function(ok_id, msg) showModal(modalDialog(

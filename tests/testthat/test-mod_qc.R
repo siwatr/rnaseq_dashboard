@@ -29,7 +29,9 @@ test_that("QC module re-renders when auto-render is enabled (no button press)", 
     session$setInputs(x_axis = "pct_spike", metric = "detected",
                       group = "condition", sort = "none", auto = TRUE)
     session$flushReact()
-    expect_false(is.null(output$plot))
+    # Default engine = static; the General QC plot now renders via the dual-output
+    # container into output$plot_static (output$plot_plotly is the interactive path).
+    expect_false(is.null(output$plot_static))
   })
 })
 
@@ -45,6 +47,26 @@ test_that(".qc_metric_plot builds for sample and metric x-axes, both themes", {
                                           dark_theme = TRUE)
   expect_s3_class(p_bar, "ggplot")
   expect_s3_class(p_sc, "ggplot")
+})
+
+test_that("QC builders add a hover `text` aesthetic only when interactive", {
+  skip_if_not_installed("DESeq2")
+  has_text <- function(p) any(vapply(p$layers,
+    function(l) "text" %in% names(l$mapping), logical(1)))
+  dds <- make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 3, seed = 17)
+  tbl <- qc_per_sample_metrics(dds); tbl$group <- factor(rep("all", nrow(tbl)))
+  # text aes is a plotly-only aesthetic ggplot2 warns about at construction;
+  # suppress that expected warning here (the app muffles it via .muffle_unknown_aes).
+  mk <- function(...) suppressWarnings(ddsdashboard:::.qc_metric_plot(...))
+  # General QC (bar + scatter): text aes present iff interactive = TRUE.
+  expect_false(has_text(mk(tbl, "sample", "library_size")))
+  expect_true(has_text(mk(tbl, "sample", "library_size", interactive = TRUE)))
+  expect_true(has_text(mk(tbl, "pct_spike", "library_size", interactive = TRUE)))
+  # Dose-response scatter carries feature/sample hover only when interactive.
+  dr <- spike_dose_response(dds, source = "column")$long
+  dr$group <- factor("all")
+  expect_false(has_text(ddsdashboard:::.qc_spike_dr_plot(dr)))
+  expect_true(has_text(suppressWarnings(ddsdashboard:::.qc_spike_dr_plot(dr, interactive = TRUE))))
 })
 
 test_that(".qc_metric_plot sorts the discrete x-axis by the metric value", {
@@ -424,4 +446,87 @@ test_that("QC UI exposes the Spike-in QC Matrix pill (table isolated from summar
   html <- paste(as.character(mod_qc_ui("qc")), collapse = " ")
   expect_match(html, "Spike-in QC Matrix", fixed = TRUE)
   expect_match(html, "Per-sample summary", fixed = TRUE)
+})
+
+# Read a renderUI container's HTML (testServer returns list(html=, deps=)).
+.container_html <- function(o) paste(as.character(if (is.list(o)) o$html else o), collapse = " ")
+
+test_that("plot-engine toggle switches the container output type (under the element budget)", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("plotly")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2,
+                                                      n_spike = 2, seed = 51)), source = "demo")
+    session$flushReact()
+    expect_false(use_plotly_base())                          # default = static
+    expect_match(.container_html(output$plot_container), "plot_static")
+    state$plot_interactive <- TRUE                           # global toggle on
+    session$flushReact()
+    expect_true(use_plotly_base())
+    # General QC plot has ~samples elements (well under the 5000 budget) -> plotly.
+    expect_match(.container_html(output$plot_container), "plot_plotly")
+  })
+})
+
+test_that("interactive path renders a placeholder figure (not a widget error) when gg() validates", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("plotly")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2,
+                                                      n_spike = 2, seed = 53)), source = "demo")
+    state$plot_interactive <- TRUE
+    session$flushReact()
+    expect_true(use_plotly_base())
+    # Empty 'Showing' selection -> plot_gg() validate(need(nrow > 0)) fires; the
+    # plotly path must catch it and render a message figure, not error.
+    session$setInputs(gen_show_by = "condition", gen_show_values = "____none____")
+    session$flushReact()
+    expect_no_error(output$plot_plotly)
+  })
+})
+
+test_that("over the element budget a plot stays static with a sticky 'render anyway' override", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("plotly")
+  withr::local_options(ddsdashboard.plotly_max_elements = 1L)   # any plot is over budget
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 2,
+                                                      n_spike = 1, seed = 52)), source = "demo")
+    state$plot_interactive <- TRUE
+    # Render the General QC plot so its element count is real (> the budget of 1).
+    session$setInputs(x_axis = "sample", metric = "library_size",
+                      group = "condition", sort = "none", auto = TRUE)
+    session$flushReact()
+    # Over budget -> static fallback + the per-plot render-anyway note/button.
+    expect_match(.container_html(output$plot_container), "plot_static")
+    expect_match(.container_html(output$plot_container), "render interactive anyway",
+                 ignore.case = TRUE)
+    # Click the per-plot override -> interactive; the note is gone.
+    session$setInputs(plot_force = 1)
+    session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_plotly")
+    # A parameter change keeps it forced (no re-nag).
+    session$setInputs(metric = "detected")
+    session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_plotly")
+    # A data edit (data_version bump) resets the override -> back to static.
+    state_mutate(state, function(d) d, action = list(action = "noop"))
+    session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_static")
+    # Re-force, then flipping the global toggle off/on also resets it.
+    session$setInputs(plot_force = 2); session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_plotly")
+    state$plot_interactive <- FALSE; session$flushReact()
+    state$plot_interactive <- TRUE;  session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_static")
+  })
+})
+
+test_that("the element budget is option-overridable (getOption default 5000)", {
+  expect_equal(ddsdashboard:::.plotly_max_elements(), 5000L)
+  withr::local_options(ddsdashboard.plotly_max_elements = 123L)
+  expect_equal(ddsdashboard:::.plotly_max_elements(), 123L)
 })

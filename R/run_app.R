@@ -170,10 +170,14 @@ app_ui <- function(themer_mode = FALSE) {
     bslib::nav_panel(tags$h2("Export", class = "fs-6 mb-0"),    mod_export_ui("export")),
     if (isTRUE(themer_mode)) .themer_ui(),
     bslib::nav_spacer(),
-    bslib::nav_item(mod_statusbar_ui("statusbar")),
-    # Light/dark switch; no `mode` arg => follows the OS prefers-color-scheme and
-    # persists the user's choice per browser.
-    bslib::nav_item(bslib::input_dark_mode(id = "dark_mode"))
+    # Status bar + global view controls share ONE nav_item so they sit together
+    # (separate nav_items get navbar spacing between them). The dark-mode switch
+    # keeps its global, un-namespaced id so app_server reads input$dark_mode.
+    # No `mode` arg => follows the OS prefers-color-scheme, persisted per browser.
+    bslib::nav_item(
+      tags$div(class = "d-flex align-items-center gap-2",
+               mod_statusbar_ui("statusbar"),
+               bslib::input_dark_mode(id = "dark_mode")))
   )
 }
 

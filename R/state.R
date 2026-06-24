@@ -26,7 +26,11 @@ new_app_state <- function() {
     history      = list(),
     undo_stack   = list(),
     n_edits      = 0L,      # net edits applied vs original (load/reset -> 0, undo -1)
-    meta         = list()
+    meta         = list(),
+    # Global, session-scoped UI preference (not data-dependent, so NOT in meta):
+    # the plot engine toggle (FALSE = static ggplot, TRUE = interactive plotly).
+    # Read by plot modules; untouched by load/reset.
+    plot_interactive = FALSE
   )
   # A plain environment so writing cache entries does not trigger reactivity
   # (avoids reactive-write-in-reactive churn); staleness is keyed on data_version.
