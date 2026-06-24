@@ -4,28 +4,23 @@
 \alias{palette_discrete}
 \title{Resolve a discrete level -> colour mapping}
 \usage{
-palette_discrete(
-  levels,
-  colors = NULL,
-  type = "Qualitative",
-  name = "Okabe-Ito",
-  custom = NULL
-)
+palette_discrete(levels, colors = NULL, name = "Okabe-Ito", custom = NULL)
 }
 \arguments{
 \item{levels}{Character/factor levels to colour.}
 
 \item{colors}{Named character vector (\code{level = colour}) of explicit colours;
-may be hex / R names / CSS names (normalized via \code{\link[=norm_color]{norm_color()}}). Invalid or
-non-matching entries are ignored. \code{NULL} for none.}
+may be hex / R names / CSS names. Invalid or non-matching entries are
+ignored. \code{NULL} for none.}
 
-\item{type, name}{The base palette (see \code{\link[=palette_names]{palette_names()}}) for unmapped levels.}
+\item{name}{The base palette name (see \code{\link[=palette_names]{palette_names()}}) for unmapped levels.}
 
-\item{custom}{Custom-ramp anchors when \code{type = "Custom"}.}
+\item{custom}{Custom-ramp anchors when \code{name = "Custom palette"}.}
 }
 \value{
 A named character vector (\verb{level = #RRGGBB}) over all \code{levels}, in
-their original order.
+their original order. All colours are normalized to 6-digit hex (via
+\code{\link[=norm_color]{norm_color()}}) so equality checks against picker echoes are stable.
 }
 \description{
 The single resolver behind every discrete colour scale in the app: an explicit

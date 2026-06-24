@@ -312,8 +312,7 @@ qc_annotation_colors <- function(df, config = NULL) {
     } else {
       lv <- sort(unique(as.character(x)))
       cfg <- config[[name]]
-      palette_discrete(lv, cfg$colors, cfg$type %||% "Qualitative",
-                       cfg$name %||% "Okabe-Ito", cfg$custom)
+      palette_discrete(lv, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
     }
   }, df, names(df)), names(df))
 }

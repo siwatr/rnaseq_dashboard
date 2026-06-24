@@ -31,7 +31,7 @@
 # Reference swatch: a small gradient bar for a palette (discrete bands for
 # qualitative, a smooth ramp for sequential/divergent). Static / pure.
 .pal_ref_swatch <- function(name, type) {
-  cols <- palette_colors(type, name, if (identical(type, "Qualitative")) 8L else 9L)
+  cols <- palette_colors(name, if (identical(type, "Qualitative")) 8L else 9L)
   if (!length(cols)) return(NULL)
   tags$div(class = "mb-2",
     tags$div(class = "small mb-1", name),
@@ -174,39 +174,29 @@ mod_palette_server <- function(id, state) {
       cur_lvls <- function() .pal_levels(shiny::isolate(coldata_df())[[col]])
       n0 <- length(cur_lvls())
 
-      # Apply a named (non-Custom) palette: regenerate the full colour map and
-      # push every picker to its new colour.
-      apply_named <- function(type, name) {
+      # Apply a named palette: regenerate the full colour map and push every
+      # picker to its new colour. Colours are normalized (palette_discrete), so a
+      # picker echo equals the stored value and won't be mistaken for an edit.
+      apply_named <- function(name) {
         lvls <- cur_lvls()
-        cols <- palette_discrete(lvls, NULL, type, name)
+        cols <- palette_discrete(lvls, NULL, name)
         p <- state$palette
-        p$colData[[col]]$type <- type
         p$colData[[col]]$name <- name
         p$colData[[col]]$colors <- cols
         state$palette <- p
         for (i in seq_along(lvls)) update_picker(pin_id(col, i), unname(cols[[lvls[i]]]))
       }
 
-      # Palette type: repopulate the name choices; for a real palette also apply
-      # its first entry. "Custom" keeps the current colours (user-defined).
-      type_obs <- observeEvent(input[[paste0("type_", key)]], {
-        type <- input[[paste0("type_", key)]]
-        if (identical(type, "Custom")) {
-          set_cfg(col, "type", "Custom"); set_cfg(col, "name", "Custom palette")
-          updateSelectInput(session, paste0("name_", key),
-                            choices = "Custom palette", selected = "Custom palette")
-        } else {
-          nm <- palette_names(type)
-          updateSelectInput(session, paste0("name_", key), choices = nm, selected = nm[1])
-          apply_named(type, nm[1])
-        }
-      }, ignoreInit = TRUE)
-
-      # Palette name within the current (non-Custom) type.
+      # Palette selector (one optgroup selectize). Selecting a named palette
+      # regenerates the colours; selecting "Custom palette" just marks the column
+      # custom and keeps the current colours (the editable starting point). The
+      # pin-edit flip below also lands here via updateSelectInput.
       name_obs <- observeEvent(input[[paste0("name_", key)]], {
-        if (identical(state$palette$colData[[col]]$type, "Custom")) return()
-        apply_named(state$palette$colData[[col]]$type %||% "Qualitative",
-                    input[[paste0("name_", key)]])
+        if (is.null(state$palette$colData[[col]])) return()
+        name <- input[[paste0("name_", key)]]
+        if (is.null(name)) return()
+        if (identical(name, "Custom palette")) set_cfg(col, "name", "Custom palette")
+        else apply_named(name)
       }, ignoreInit = TRUE)
 
       # One observer per level: a hand-edit updates that colour and flips the
@@ -223,24 +213,18 @@ mod_palette_server <- function(id, state) {
           if (identical(unname(cols[[lev]]), unname(hex))) return()       # no change
           cols[[lev]] <- unname(hex)
           p$colData[[col]]$colors <- cols
-          was_named <- !identical(p$colData[[col]]$type, "Custom")
-          if (was_named) { p$colData[[col]]$type <- "Custom"
-                           p$colData[[col]]$name <- "Custom palette" }
+          was_named <- !identical(p$colData[[col]]$name, "Custom palette")
+          if (was_named) p$colData[[col]]$name <- "Custom palette"
           state$palette <- p
-          if (was_named) {                                  # reflect in the selectors
-            updateSelectInput(session, paste0("type_", key), selected = "Custom")
-            updateSelectInput(session, paste0("name_", key),
-                              choices = "Custom palette", selected = "Custom palette")
-          }
+          if (was_named)                                    # reflect in the selector
+            updateSelectInput(session, paste0("name_", key), selected = "Custom palette")
         }, ignoreInit = TRUE)
       })
 
-      # Reset: back to the default palette (Qualitative / Okabe-Ito).
+      # Reset: back to the default palette (Okabe-Ito).
       reset_obs <- observeEvent(input[[paste0("reset_", key)]], {
-        updateSelectInput(session, paste0("type_", key), selected = "Qualitative")
-        updateSelectInput(session, paste0("name_", key),
-                          choices = palette_names("Qualitative"), selected = "Okabe-Ito")
-        apply_named("Qualitative", "Okabe-Ito")
+        apply_named("Okabe-Ito")
+        updateSelectInput(session, paste0("name_", key), selected = "Okabe-Ito")
       }, ignoreInit = TRUE)
 
       remove_obs <- observeEvent(input[[paste0("remove_", key)]], {
@@ -249,7 +233,7 @@ mod_palette_server <- function(id, state) {
         bump()
       }, ignoreInit = TRUE)
 
-      obs_handles[[key]] <- c(pin_obs, list(type_obs, name_obs, reset_obs, remove_obs))
+      obs_handles[[key]] <- c(pin_obs, list(name_obs, reset_obs, remove_obs))
 
       # Live preview swatch row (reads state$palette, so it updates on every edit).
       output[[paste0("preview_", key)]] <- renderPlot({
@@ -257,8 +241,7 @@ mod_palette_server <- function(id, state) {
         if (!col %in% colnames(cd)) return(NULL)
         cfg <- state$palette$colData[[col]]; req(cfg)
         lv <- .pal_levels(cd[[col]])
-        cols <- palette_discrete(lv, cfg$colors, cfg$type %||% "Qualitative",
-                                 cfg$name %||% "Okabe-Ito", cfg$custom)
+        cols <- palette_discrete(lv, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
         df <- data.frame(level = factor(names(cols), levels = names(cols)), y = 1L)
         ggplot2::ggplot(df, ggplot2::aes(x = .data$level, y = .data$y, fill = .data$level)) +
           ggplot2::geom_col(width = 1) +
@@ -278,15 +261,17 @@ mod_palette_server <- function(id, state) {
       req(col, is.null(state$palette$colData[[col]]))
       lvls <- .pal_levels(coldata_df()[[col]])
       p <- state$palette
-      p$colData[[col]] <- list(type = "Qualitative", name = "Okabe-Ito",
-                               colors = palette_discrete(lvls, NULL, "Qualitative", "Okabe-Ito"))
+      p$colData[[col]] <- list(name = "Okabe-Ito",
+                               colors = palette_discrete(lvls, NULL, "Okabe-Ito"))
       state$palette <- p
       register_col(col)
       bump()
     })
 
-    # Collapse all open accordion panels.
-    observeEvent(input$collapse_all, bslib::accordion_panel_close(ns("acc"), values = TRUE))
+    # Collapse all open accordion panels. The id is the *unnamespaced* "acc":
+    # accordion_panel_close -> session$sendInputMessage already applies the
+    # module namespace, so passing ns("acc") would double-namespace and no-op.
+    observeEvent(input$collapse_all, bslib::accordion_panel_close("acc", values = TRUE))
 
     # Dataset change: rebuild the panels so a surviving config's pickers reflect
     # the new levels. Observers read levels live (see register_col), so they need
@@ -321,9 +306,8 @@ mod_palette_server <- function(id, state) {
 # from the resolved colours (the config's `colors`, filled from its palette).
 .palette_panel <- function(ns, col, x, cfg, has_picker, pin_id) {
   lvls <- .pal_levels(x)
-  type <- cfg$type %||% "Qualitative"
   name <- cfg$name %||% "Okabe-Ito"
-  resolved <- palette_discrete(lvls, cfg$colors, type, name, cfg$custom)
+  resolved <- palette_discrete(lvls, cfg$colors, name, cfg$custom)
   key <- .pal_safe(col)
 
   one_picker <- function(i) {
@@ -343,12 +327,8 @@ mod_palette_server <- function(id, state) {
   }
 
   body <- tagList(
-    bslib::layout_columns(
-      col_widths = c(5, 7),
-      selectInput(ns(paste0("type_", key)), "Palette type",
-                  choices = palette_type_names(), selected = type),
-      selectInput(ns(paste0("name_", key)), "Palette",
-                  choices = palette_names(type), selected = name)),
+    selectInput(ns(paste0("name_", key)), "Base palette",
+                choices = palette_choices(), selected = name),
     if (length(lvls) > .pal_many_levels)
       tags$div(class = "alert alert-warning py-1 px-2 small",
                sprintf("%d levels - colours are interpolated; pinning each is tedious.",
@@ -361,7 +341,7 @@ mod_palette_server <- function(id, state) {
       bslib::tooltip(
         actionButton(ns(paste0("reset_", key)), "Reset to palette",
                      icon = icon("rotate-left"), class = "btn-sm btn-outline-secondary"),
-        "Reset to the default palette (Qualitative / Okabe-Ito)."),
+        "Reset to the default palette (Okabe-Ito)."),
       actionButton(ns(paste0("remove_", key)), "Remove mapping",
                    icon = icon("trash"), class = "btn-sm btn-outline-danger"))
   )

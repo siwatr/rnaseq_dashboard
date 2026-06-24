@@ -61,6 +61,19 @@ palette_names <- function(type = "Qualitative") {
     character(0))
 }
 
+#' Grouped palette choices for a `selectInput`
+#'
+#' A named list (type -> palette names) suitable as `selectInput(choices = ...)`,
+#' rendering each type as an `<optgroup>`. The selected value is the palette
+#' *name* (unique across types), which is all [palette_colors()] /
+#' [palette_discrete()] need.
+#' @return A named list of character vectors.
+#' @export
+palette_choices <- function() {
+  types <- palette_type_names()
+  stats::setNames(lapply(types, palette_names), types)
+}
+
 #' Names of the built-in qualitative palettes (back-compat shim)
 #' @return Character vector of qualitative palette names.
 #' @export
@@ -82,21 +95,23 @@ palette_qualitative <- function(name = "Okabe-Ito", n) {
   else grDevices::colorRampPalette(.okabe_ito)(n)
 }
 
-#' Generate `n` colours from a (type, name) palette
+#' Generate `n` colours from a palette name
 #'
-#' Sequential/divergent ramps are sampled to `n` discrete colours; qualitative
-#' palettes are taken verbatim and interpolated only when `n` exceeds their
-#' stops. Unknown palettes / missing optional packages fall back to Okabe-Ito.
+#' Everything needed is inferred from `name` (so a single selector value drives
+#' it): `"Custom palette"` ramps through `custom` (default Okabe-Ito); package
+#' palettes are `"viridis: <opt>"` / `"RColorBrewer: <pal>"`; plus the
+#' dependency-free `"ggplot default"` and `"Okabe-Ito"`. Sequential/divergent
+#' ramps are sampled to `n` discrete colours; qualitative palettes are taken
+#' verbatim and interpolated only past their stops. Unknown palettes / missing
+#' optional packages fall back to Okabe-Ito.
 #'
-#' @param type One of [palette_type_names()].
-#' @param name A palette name from [palette_names()] (`type`).
+#' @param name A palette name from [palette_names()].
 #' @param n Number of colours required.
-#' @param custom For `type = "Custom"`, a character vector of anchor colours to
-#'   ramp through (default Okabe-Ito).
+#' @param custom For `"Custom palette"`, anchor colours to ramp through (default
+#'   Okabe-Ito).
 #' @return A character vector of `n` hex colours.
 #' @export
-palette_colors <- function(type = "Qualitative", name = "Okabe-Ito", n,
-                           custom = NULL) {
+palette_colors <- function(name = "Okabe-Ito", n, custom = NULL) {
   n <- as.integer(n)
   if (is.na(n) || n < 1L) return(character(0))
   ramp <- function(stops) {
@@ -104,7 +119,7 @@ palette_colors <- function(type = "Qualitative", name = "Okabe-Ito", n,
     if (!length(stops)) stops <- .okabe_ito
     if (n <= length(stops)) stops[seq_len(n)] else grDevices::colorRampPalette(stops)(n)
   }
-  if (identical(type, "Custom")) return(ramp(if (length(custom)) custom else .okabe_ito))
+  if (identical(name, "Custom palette")) return(ramp(if (length(custom)) custom else .okabe_ito))
   if (identical(name, "ggplot default")) return(.gg_hue(n))
   if (identical(name, "Okabe-Ito")) return(ramp(.okabe_ito))
   parts <- strsplit(name, ": ", fixed = TRUE)[[1]]
@@ -153,19 +168,20 @@ norm_color <- function(x) {
 #'
 #' @param levels Character/factor levels to colour.
 #' @param colors Named character vector (`level = colour`) of explicit colours;
-#'   may be hex / R names / CSS names (normalized via [norm_color()]). Invalid or
-#'   non-matching entries are ignored. `NULL` for none.
-#' @param type,name The base palette (see [palette_names()]) for unmapped levels.
-#' @param custom Custom-ramp anchors when `type = "Custom"`.
+#'   may be hex / R names / CSS names. Invalid or non-matching entries are
+#'   ignored. `NULL` for none.
+#' @param name The base palette name (see [palette_names()]) for unmapped levels.
+#' @param custom Custom-ramp anchors when `name = "Custom palette"`.
 #' @return A named character vector (`level = #RRGGBB`) over all `levels`, in
-#'   their original order.
+#'   their original order. All colours are normalized to 6-digit hex (via
+#'   [norm_color()]) so equality checks against picker echoes are stable.
 #' @export
-palette_discrete <- function(levels, colors = NULL, type = "Qualitative",
-                             name = "Okabe-Ito", custom = NULL) {
+palette_discrete <- function(levels, colors = NULL, name = "Okabe-Ito",
+                             custom = NULL) {
   levels <- if (is.factor(levels)) levels(levels) else as.character(levels)
   levels <- levels[!is.na(levels)]
   if (!length(levels)) return(stats::setNames(character(0), character(0)))
-  out <- stats::setNames(palette_colors(type, name, length(levels), custom), levels)
+  out <- stats::setNames(norm_color(palette_colors(name, length(levels), custom)), levels)
   if (!is.null(colors) && length(colors)) {
     m <- norm_color(colors)
     names(m) <- names(colors)

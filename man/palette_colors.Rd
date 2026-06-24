@@ -2,25 +2,27 @@
 % Please edit documentation in R/palette_helpers.R
 \name{palette_colors}
 \alias{palette_colors}
-\title{Generate \code{n} colours from a (type, name) palette}
+\title{Generate \code{n} colours from a palette name}
 \usage{
-palette_colors(type = "Qualitative", name = "Okabe-Ito", n, custom = NULL)
+palette_colors(name = "Okabe-Ito", n, custom = NULL)
 }
 \arguments{
-\item{type}{One of \code{\link[=palette_type_names]{palette_type_names()}}.}
-
-\item{name}{A palette name from \code{\link[=palette_names]{palette_names()}} (\code{type}).}
+\item{name}{A palette name from \code{\link[=palette_names]{palette_names()}}.}
 
 \item{n}{Number of colours required.}
 
-\item{custom}{For \code{type = "Custom"}, a character vector of anchor colours to
-ramp through (default Okabe-Ito).}
+\item{custom}{For \code{"Custom palette"}, anchor colours to ramp through (default
+Okabe-Ito).}
 }
 \value{
 A character vector of \code{n} hex colours.
 }
 \description{
-Sequential/divergent ramps are sampled to \code{n} discrete colours; qualitative
-palettes are taken verbatim and interpolated only when \code{n} exceeds their
-stops. Unknown palettes / missing optional packages fall back to Okabe-Ito.
+Everything needed is inferred from \code{name} (so a single selector value drives
+it): \code{"Custom palette"} ramps through \code{custom} (default Okabe-Ito); package
+palettes are \code{"viridis: <opt>"} / \code{"RColorBrewer: <pal>"}; plus the
+dependency-free \code{"ggplot default"} and \code{"Okabe-Ito"}. Sequential/divergent
+ramps are sampled to \code{n} discrete colours; qualitative palettes are taken
+verbatim and interpolated only past their stops. Unknown palettes / missing
+optional packages fall back to Okabe-Ito.
 }

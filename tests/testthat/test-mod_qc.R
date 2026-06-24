@@ -89,7 +89,7 @@ test_that("a project-palette pin flows into the QC group plot's manual scale", {
   tbl$group <- factor(SummarizedExperiment::colData(dds)$condition[
     match(tbl$sample, colnames(dds))])
   pal <- palette_discrete(levels(tbl$group), colors = c(treated = "gray50"),
-                          type = "Qualitative", name = "Okabe-Ito")
+                          name = "Okabe-Ito")
   # With a palette the bar plot renders `treated` bars in the pinned hex.
   p <- ddsdashboard:::.qc_metric_plot(tbl, "sample", "library_size", "condition", palette = pal)
   fills <- unique(ggplot2::ggplot_build(p)$data[[1]]$fill)

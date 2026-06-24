@@ -11,65 +11,69 @@ test_that("norm_color accepts hex, R names, and CSS names; rejects garbage", {
   expect_true(is.na(out[2]))
 })
 
-test_that("palette types + names enumerate the catalogue", {
+test_that("palette types + names + grouped choices enumerate the catalogue", {
   expect_setequal(palette_type_names(),
                   c("Qualitative", "Sequential", "Divergent", "Custom"))
   q <- palette_names("Qualitative")
   expect_identical(q[1], "ggplot default")
   expect_true("Okabe-Ito" %in% q)
   expect_identical(palette_names("Custom"), "Custom palette")
-  # Package palettes are formatted "<pkg>: <name>" when the package is present.
   if (requireNamespace("viridisLite", quietly = TRUE))
     expect_true("viridis: magma" %in% palette_names("Sequential"))
   if (requireNamespace("RColorBrewer", quietly = TRUE)) {
     expect_true(any(grepl("^RColorBrewer: ", palette_names("Qualitative"))))
     expect_true(any(grepl("^RColorBrewer: ", palette_names("Divergent"))))
   }
+  # palette_choices() groups names by type for a selectInput optgroup.
+  ch <- palette_choices()
+  expect_named(ch, palette_type_names())
+  expect_true("Okabe-Ito" %in% ch[["Qualitative"]])
 })
 
-test_that("palette_colors returns n colours across types and interpolates", {
-  expect_length(palette_colors("Qualitative", "Okabe-Ito", 3), 3L)
-  expect_equal(palette_colors("Qualitative", "Okabe-Ito", 2), c("#E69F00", "#56B4E9"))
-  expect_length(palette_colors("Qualitative", "Okabe-Ito", 10), 10L)   # >8 -> interp
-  expect_length(palette_colors("Qualitative", "ggplot default", 4), 4L)
-  expect_equal(palette_colors("Qualitative", "nope", 2),
-               palette_colors("Qualitative", "Okabe-Ito", 2))          # unknown -> fallback
-  expect_length(palette_colors("Qualitative", "Okabe-Ito", 0), 0L)
-  # Sequential / divergent sampled to n discrete colours.
+test_that("palette_colors resolves a palette name to n colours, inferring type", {
+  expect_length(palette_colors("Okabe-Ito", 3), 3L)
+  expect_equal(palette_colors("Okabe-Ito", 2), c("#E69F00", "#56B4E9"))
+  expect_length(palette_colors("Okabe-Ito", 10), 10L)        # >8 -> interpolated
+  expect_length(palette_colors("ggplot default", 4), 4L)
+  expect_equal(palette_colors("nope", 2), palette_colors("Okabe-Ito", 2))  # unknown -> fallback
+  expect_length(palette_colors("Okabe-Ito", 0), 0L)
   if (requireNamespace("viridisLite", quietly = TRUE)) {
-    v <- palette_colors("Sequential", "viridis: viridis", 5)
+    v <- palette_colors("viridis: viridis", 5)
     expect_length(v, 5L); expect_true(all(grepl("^#", v)))
   }
   if (requireNamespace("RColorBrewer", quietly = TRUE)) {
-    b <- palette_colors("Divergent", "RColorBrewer: RdBu", 4)
-    expect_length(b, 4L); expect_true(all(grepl("^#", b)))
-    expect_length(palette_colors("Divergent", "RColorBrewer: RdBu", 2), 2L)  # <3 handled
+    expect_length(palette_colors("RColorBrewer: RdBu", 4), 4L)
+    expect_length(palette_colors("RColorBrewer: RdBu", 2), 2L)   # <3 handled
   }
-  # Custom uses the supplied anchors verbatim (normalization happens downstream
-  # in palette_discrete), else Okabe-Ito.
-  expect_equal(palette_colors("Custom", "Custom palette", 2, custom = c("#000000", "#ffffff")),
+  # "Custom palette" ramps through the supplied anchors (verbatim), else Okabe-Ito.
+  expect_equal(palette_colors("Custom palette", 2, custom = c("#000000", "#ffffff")),
                c("#000000", "#ffffff"))
-  expect_equal(palette_colors("Custom", "Custom palette", 2),
-               palette_colors("Qualitative", "Okabe-Ito", 2))
+  expect_equal(palette_colors("Custom palette", 2), palette_colors("Okabe-Ito", 2))
 })
 
-test_that("palette_discrete fills from the palette and preserves level order", {
-  cols <- palette_discrete(c("b", "a", "c"), type = "Qualitative", name = "Okabe-Ito")
+test_that("palette_discrete fills from the palette, preserves order, normalizes", {
+  cols <- palette_discrete(c("b", "a", "c"), name = "Okabe-Ito")
   expect_named(cols, c("b", "a", "c"))            # order preserved (not sorted)
-  expect_equal(unname(cols), palette_colors("Qualitative", "Okabe-Ito", 3))
-  expect_true(all(grepl("^#", cols)))
+  expect_equal(unname(cols), norm_color(palette_colors("Okabe-Ito", 3)))
+  expect_true(all(grepl("^#[0-9A-F]{6}$", cols)))  # 6-digit, normalized
+  # Sequential palettes (8-digit alpha hex) are normalized to 6 digits, so a
+  # picker echo (#440154) equals the stored value -> no spurious "edit".
+  if (requireNamespace("viridisLite", quietly = TRUE)) {
+    v <- palette_discrete(c("a", "b"), name = "viridis: viridis")
+    expect_true(all(grepl("^#[0-9A-F]{6}$", v)))
+  }
 })
 
 test_that("palette_discrete honours explicit colours (normalized) over the fill", {
   cols <- palette_discrete(c("control", "treated"), colors = c(treated = "gray50"),
-                           type = "Qualitative", name = "Okabe-Ito")
+                           name = "Okabe-Ito")
   expect_equal(unname(cols["treated"]), "#7F7F7F")   # explicit + normalized
   expect_equal(unname(cols["control"]), "#E69F00")   # filled from palette
 })
 
 test_that("palette_discrete ignores invalid and non-matching colours", {
   cols <- palette_discrete(c("a", "b"), colors = c(a = "garbage", z = "#000000"),
-                           type = "Qualitative", name = "Okabe-Ito")
+                           name = "Okabe-Ito")
   expect_equal(unname(cols["a"]), "#E69F00")          # invalid -> palette fill
   expect_false("z" %in% names(cols))                  # non-matching dropped
 })
