@@ -2,14 +2,13 @@
 % Please edit documentation in R/palette_helpers.R
 \name{palette_qualitative_names}
 \alias{palette_qualitative_names}
-\title{Names of the built-in qualitative palettes}
+\title{Names of the built-in qualitative palettes (back-compat shim)}
 \usage{
 palette_qualitative_names()
 }
 \value{
-Character vector of palette names accepted by \code{\link[=palette_qualitative]{palette_qualitative()}}
-and \code{\link[=palette_discrete]{palette_discrete()}}.
+Character vector of qualitative palette names.
 }
 \description{
-Names of the built-in qualitative palettes
+Names of the built-in qualitative palettes (back-compat shim)
 }

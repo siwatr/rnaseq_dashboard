@@ -40,12 +40,14 @@ Suggests:
     org.Mm.eg.db,
     plotly,
     ps,
+    RColorBrewer,
     rtracklayer,
     S4Vectors,
     scater,
     shinyWidgets,
     SingleCellExperiment,
     testthat (>= 3.0.0),
+    viridisLite,
     withr
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.0.0

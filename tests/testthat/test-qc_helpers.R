@@ -143,9 +143,9 @@ test_that("qc_annotation_colors applies a palette config (pin) to the right leve
   # No config -> historical Okabe-Ito default, unchanged behaviour.
   base <- qc_annotation_colors(df)
   expect_equal(unname(base$condition["control"]), "#E69F00")
-  # With a config: a pin on `treated` overrides; `control` follows the palette.
-  cfg <- list(condition = list(palette = "Okabe-Ito",
-                               pins = c(treated = "gray50")))
+  # With a config: an explicit colour on `treated` overrides; `control` follows.
+  cfg <- list(condition = list(type = "Qualitative", name = "Okabe-Ito",
+                               colors = c(treated = "gray50")))
   pinned <- qc_annotation_colors(df, cfg)
   expect_equal(unname(pinned$condition["treated"]), "#7F7F7F")
   expect_equal(unname(pinned$condition["control"]), "#E69F00")

@@ -846,7 +846,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       levels <- unique(as.character(levels))
       levels <- levels[!is.na(levels)]
       if (is.null(cfg) || !length(levels)) return(NULL)
-      palette_discrete(levels, cfg$pins, cfg$palette %||% "ggplot default")
+      palette_discrete(levels, cfg$colors, cfg$type %||% "Qualitative",
+                       cfg$name %||% "Okabe-Ito", cfg$custom)
     }
 
     # --- DRY UI builders (data-dependent, so server-rendered) ---------------

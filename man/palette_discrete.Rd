@@ -4,25 +4,34 @@
 \alias{palette_discrete}
 \title{Resolve a discrete level -> colour mapping}
 \usage{
-palette_discrete(levels, mapping = NULL, palette = "ggplot default")
+palette_discrete(
+  levels,
+  colors = NULL,
+  type = "Qualitative",
+  name = "Okabe-Ito",
+  custom = NULL
+)
 }
 \arguments{
 \item{levels}{Character/factor levels to colour.}
 
-\item{mapping}{Named character vector of pins (\code{level = colour}); colours may
-be hex / R names / CSS names (normalized via \code{\link[=norm_color]{norm_color()}}). Invalid or
-non-matching pins are ignored. \code{NULL} for none.}
+\item{colors}{Named character vector (\code{level = colour}) of explicit colours;
+may be hex / R names / CSS names (normalized via \code{\link[=norm_color]{norm_color()}}). Invalid or
+non-matching entries are ignored. \code{NULL} for none.}
 
-\item{palette}{Base palette name (see \code{\link[=palette_qualitative_names]{palette_qualitative_names()}}) used to
-fill levels without a pin.}
+\item{type, name}{The base palette (see \code{\link[=palette_names]{palette_names()}}) for unmapped levels.}
+
+\item{custom}{Custom-ramp anchors when \code{type = "Custom"}.}
 }
 \value{
 A named character vector (\verb{level = #RRGGBB}) over all \code{levels}, in
 their original order.
 }
 \description{
-The single resolver behind every discrete colour scale in the app: explicit
-per-level pins (\code{mapping}) override an auto-filled base \code{palette}, so the QC
-ggplots and the ComplexHeatmap annotations agree. Deterministic and stable
-across re-renders (level order preserved).
+The single resolver behind every discrete colour scale in the app: an explicit
+per-level colour map (\code{colors}) layered over an auto-filled base palette, so
+the QC ggplots and the ComplexHeatmap annotations agree. Deterministic and
+stable across re-renders (level order preserved). Levels without an explicit
+colour are filled from the \verb{(type, name)} palette — so a new dataset's levels
+still get sensible colours.
 }

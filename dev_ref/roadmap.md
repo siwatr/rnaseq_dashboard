@@ -65,12 +65,18 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   (accordion panel, `shinyWidgets::colorPickr` with `col2rgb` R-name/CSS normalization + textInput
   fallback, live preview). `state$palette` is a UI pref (untouched by load/reset, no `data_version`).
   [PR #TBD]
+  Discrete engine extended with a two-level palette selector (Qualitative/Sequential/Divergent/Custom →
+  name), the full `viridisLite`/`RColorBrewer` catalogue, a Reference tab, Collapse-all, and the
+  remove→re-add fix. Config shape is `list(type, name, colors)`.
 - **P3g-b ⬅️ next** project-wide **Palette page** — continuous palettes + rowData/assays/Other groups +
-  config import/export. `palette_continuous(values, spec)` → `circlize::colorRamp2` (heatmap) **and** a
-  ggplot `scale_*_gradientn(colours/values/limits)` spec, with `p<pct>` percentile anchors resolved
-  against plotted data. rowData / assays / **Other** tabs (fold in the removal-status discrete map + the
-  correlation-heatmap score ramp). JSON config import/export (`jsonlite`). The ggplot continuous
-  *consumers* land with P4 (PCA colour-by-gene) and P5 (heatmap), reusing this resolver.
+  config import/export + factor management. `palette_continuous(values, spec)` → `circlize::colorRamp2`
+  (heatmap) **and** a ggplot `scale_*_gradientn(colours/values/limits)` spec, with `p<pct>` percentile
+  anchors resolved against plotted data. rowData / assays / **Other** tabs (fold in the removal-status
+  discrete map + the correlation-heatmap score ramp). JSON config import/export (`jsonlite`). **Factor
+  management** — coerce a colData/rowData column to factor + reorder its levels (drives both plot order
+  and the palette mapping). The ggplot continuous *consumers* land with P4 (PCA colour-by-gene) and P5
+  (heatmap), reusing this resolver. (The legacy Themer gallery can be retired once its component
+  sub-tab is no longer needed — the Heatmap sub-tab is already superseded by the Reference tab.)
 
 ## Phase 4 — Dimensionality reduction ⬜
 - PCA-focused (t-SNE/UMAP gated by sample count). Top-variable genes (default 500, assay

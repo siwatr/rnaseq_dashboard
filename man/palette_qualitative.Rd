@@ -2,21 +2,19 @@
 % Please edit documentation in R/palette_helpers.R
 \name{palette_qualitative}
 \alias{palette_qualitative}
-\title{Generate \code{n} colours from a named qualitative palette}
+\title{Generate \code{n} colours from the Okabe-Ito palette (or \code{"ggplot default"})}
 \usage{
-palette_qualitative(name = "ggplot default", n)
+palette_qualitative(name = "Okabe-Ito", n)
 }
 \arguments{
-\item{name}{One of \code{\link[=palette_qualitative_names]{palette_qualitative_names()}}. Unknown names fall back to
-\code{"Okabe-Ito"}.}
+\item{name}{\code{"Okabe-Ito"} or \code{"ggplot default"}.}
 
-\item{n}{Number of colours required.}
+\item{n}{Number of colours.}
 }
 \value{
-A character vector of \code{n} hex colours. Fixed palettes are interpolated
-(via \code{\link[grDevices:colorRampPalette]{grDevices::colorRampPalette()}}) when \code{n} exceeds the number of stops;
-\code{"ggplot default"} always yields \code{n} evenly-spaced hues.
+\code{n} hex colours (interpolated past 8 for Okabe-Ito).
 }
 \description{
-Generate \code{n} colours from a named qualitative palette
+A thin helper retained for internal use and the Reference swatches; general
+palette generation goes through \code{\link[=palette_colors]{palette_colors()}}.
 }

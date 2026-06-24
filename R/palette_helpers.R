@@ -1,26 +1,27 @@
 # Project-wide colour palette engine. Pure, dependency-light helpers that are
-# the single source of truth for resolving a *discrete* colour mapping: explicit
-# per-level pins layered on top of a named base palette. Consumed by the Palette
-# page (mod_palette.R), the QC plots + correlation heatmap (mod_qc.R via
-# qc_annotation_colors()), and later the PCA/DE/heatmap pages. The continuous
-# resolver + config import/export land in P3g-b.
+# the single source of truth for resolving a *discrete* colour mapping: an
+# explicit per-level colour map layered on top of a named base palette. Consumed
+# by the Palette page (mod_palette.R), the QC plots + correlation heatmap
+# (mod_qc.R via qc_annotation_colors()), and later the PCA/DE/heatmap pages.
+#
+# A palette is identified by a (type, name) pair:
+#   - type: "Qualitative" / "Sequential" / "Divergent" / "Custom"
+#   - name: a palette within that type. Package palettes are "<pkg>: <name>"
+#     (e.g. "viridis: magma", "RColorBrewer: Set2"); "Qualitative" also has the
+#     dependency-free "ggplot default" and "Okabe-Ito"; "Custom" has the single
+#     "Custom palette" (a user-defined ramp, default Okabe-Ito).
+# Sequential/divergent palettes are usable on discrete data (n colours sampled
+# from the ramp). viridisLite / RColorBrewer are optional (Suggests): when
+# absent, only the built-in qualitative palettes are offered and everything
+# falls back to Okabe-Ito.
 
 # Okabe-Ito: an 8-colour, colour-blind-safe qualitative palette (no dependency).
 .okabe_ito <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
                 "#0072B2", "#D55E00", "#CC79A7", "#999999")
 
-# Built-in qualitative palettes (fixed hex stops; interpolated when a column has
-# more levels than stops). "ggplot default" is generated on the fly (see below)
-# so it always yields exactly n evenly-spaced hues.
-.palette_registry <- list(
-  "Okabe-Ito"          = .okabe_ito,
-  "Viridis (discrete)" = c("#440154", "#414487", "#2A788E",
-                           "#22A884", "#7AD151", "#FDE725"),
-  "Set2"  = c("#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3",
-              "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3"),
-  "Dark2" = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A",
-              "#66A61E", "#E6AB02", "#A6761D", "#666666")
-)
+# viridisLite options offered under "Sequential".
+.viridis_options <- c("viridis", "magma", "plasma", "inferno",
+                      "cividis", "mako", "rocket", "turbo")
 
 # ggplot2's default discrete colours == scales::hue_pal()(n). Reproduced with
 # grDevices::hcl so we take no scales dependency.
@@ -30,39 +31,96 @@
   grDevices::hcl(h = h, c = 100, l = 65)
 }
 
-#' Names of the built-in qualitative palettes
-#'
-#' @return Character vector of palette names accepted by [palette_qualitative()]
-#'   and [palette_discrete()].
-#' @export
-palette_qualitative_names <- function() c("ggplot default", names(.palette_registry))
+# RColorBrewer palette names of a given category ("qual"/"seq"/"div"), prefixed
+# "RColorBrewer: "; empty when the package is unavailable.
+.brewer_names <- function(category) {
+  if (!requireNamespace("RColorBrewer", quietly = TRUE)) return(character(0))
+  ci <- RColorBrewer::brewer.pal.info
+  paste0("RColorBrewer: ", rownames(ci)[ci$category == category])
+}
 
-#' Generate `n` colours from a named qualitative palette
+#' Palette types and the palette names within each
 #'
-#' @param name One of [palette_qualitative_names()]. Unknown names fall back to
-#'   `"Okabe-Ito"`.
-#' @param n Number of colours required.
-#' @return A character vector of `n` hex colours. Fixed palettes are interpolated
-#'   (via [grDevices::colorRampPalette()]) when `n` exceeds the number of stops;
-#'   `"ggplot default"` always yields `n` evenly-spaced hues.
+#' @return `palette_type_names()`: the available types. `palette_names(type)`:
+#'   the palette names selectable for that type (package palettes formatted
+#'   `"<pkg>: <name>"`). Names depend on which optional packages are installed.
 #' @export
-palette_qualitative <- function(name = "ggplot default", n) {
+palette_type_names <- function() c("Qualitative", "Sequential", "Divergent", "Custom")
+
+#' @rdname palette_type_names
+#' @param type One of [palette_type_names()].
+#' @export
+palette_names <- function(type = "Qualitative") {
+  viridis <- if (requireNamespace("viridisLite", quietly = TRUE))
+    paste0("viridis: ", .viridis_options) else character(0)
+  switch(type,
+    Qualitative = c("ggplot default", "Okabe-Ito", .brewer_names("qual")),
+    Sequential  = c(viridis, .brewer_names("seq")),
+    Divergent   = .brewer_names("div"),
+    Custom      = "Custom palette",
+    character(0))
+}
+
+#' Names of the built-in qualitative palettes (back-compat shim)
+#' @return Character vector of qualitative palette names.
+#' @export
+palette_qualitative_names <- function() palette_names("Qualitative")
+
+#' Generate `n` colours from the Okabe-Ito palette (or `"ggplot default"`)
+#'
+#' A thin helper retained for internal use and the Reference swatches; general
+#' palette generation goes through [palette_colors()].
+#' @param name `"Okabe-Ito"` or `"ggplot default"`.
+#' @param n Number of colours.
+#' @return `n` hex colours (interpolated past 8 for Okabe-Ito).
+#' @export
+palette_qualitative <- function(name = "Okabe-Ito", n) {
   n <- as.integer(n)
   if (is.na(n) || n < 1L) return(character(0))
   if (identical(name, "ggplot default")) return(.gg_hue(n))
-  stops <- .palette_registry[[name]]
-  if (is.null(stops)) stops <- .okabe_ito
-  if (n <= length(stops)) stops[seq_len(n)]
-  else grDevices::colorRampPalette(stops)(n)
+  if (n <= length(.okabe_ito)) .okabe_ito[seq_len(n)]
+  else grDevices::colorRampPalette(.okabe_ito)(n)
 }
 
-# Whether `n` levels exceed a palette's distinct stops (so colours get
-# interpolated rather than taken verbatim). "ggplot default" never overflows.
-.palette_overflows <- function(name, n) {
-  if (identical(name, "ggplot default")) return(FALSE)
-  stops <- .palette_registry[[name]]
-  if (is.null(stops)) stops <- .okabe_ito
-  as.integer(n) > length(stops)
+#' Generate `n` colours from a (type, name) palette
+#'
+#' Sequential/divergent ramps are sampled to `n` discrete colours; qualitative
+#' palettes are taken verbatim and interpolated only when `n` exceeds their
+#' stops. Unknown palettes / missing optional packages fall back to Okabe-Ito.
+#'
+#' @param type One of [palette_type_names()].
+#' @param name A palette name from [palette_names()] (`type`).
+#' @param n Number of colours required.
+#' @param custom For `type = "Custom"`, a character vector of anchor colours to
+#'   ramp through (default Okabe-Ito).
+#' @return A character vector of `n` hex colours.
+#' @export
+palette_colors <- function(type = "Qualitative", name = "Okabe-Ito", n,
+                           custom = NULL) {
+  n <- as.integer(n)
+  if (is.na(n) || n < 1L) return(character(0))
+  ramp <- function(stops) {
+    stops <- stops[!is.na(stops)]
+    if (!length(stops)) stops <- .okabe_ito
+    if (n <= length(stops)) stops[seq_len(n)] else grDevices::colorRampPalette(stops)(n)
+  }
+  if (identical(type, "Custom")) return(ramp(if (length(custom)) custom else .okabe_ito))
+  if (identical(name, "ggplot default")) return(.gg_hue(n))
+  if (identical(name, "Okabe-Ito")) return(ramp(.okabe_ito))
+  parts <- strsplit(name, ": ", fixed = TRUE)[[1]]
+  pkg <- parts[1L]; pal <- if (length(parts) > 1L) parts[2L] else parts[1L]
+  if (identical(pkg, "viridis") && requireNamespace("viridisLite", quietly = TRUE)) {
+    return(viridisLite::viridis(n, option = pal))
+  }
+  if (identical(pkg, "RColorBrewer") && requireNamespace("RColorBrewer", quietly = TRUE)) {
+    ci <- RColorBrewer::brewer.pal.info
+    if (pal %in% rownames(ci)) {
+      mx <- ci[pal, "maxcolors"]
+      base <- RColorBrewer::brewer.pal(max(3L, min(mx, n)), pal)
+      return(if (n <= length(base)) base[seq_len(n)] else grDevices::colorRampPalette(base)(n))
+    }
+  }
+  ramp(.okabe_ito)                                   # fallback
 }
 
 #' Normalize a colour string to hex
@@ -86,28 +144,31 @@ norm_color <- function(x) {
 
 #' Resolve a discrete level -> colour mapping
 #'
-#' The single resolver behind every discrete colour scale in the app: explicit
-#' per-level pins (`mapping`) override an auto-filled base `palette`, so the QC
-#' ggplots and the ComplexHeatmap annotations agree. Deterministic and stable
-#' across re-renders (level order preserved).
+#' The single resolver behind every discrete colour scale in the app: an explicit
+#' per-level colour map (`colors`) layered over an auto-filled base palette, so
+#' the QC ggplots and the ComplexHeatmap annotations agree. Deterministic and
+#' stable across re-renders (level order preserved). Levels without an explicit
+#' colour are filled from the `(type, name)` palette — so a new dataset's levels
+#' still get sensible colours.
 #'
 #' @param levels Character/factor levels to colour.
-#' @param mapping Named character vector of pins (`level = colour`); colours may
-#'   be hex / R names / CSS names (normalized via [norm_color()]). Invalid or
-#'   non-matching pins are ignored. `NULL` for none.
-#' @param palette Base palette name (see [palette_qualitative_names()]) used to
-#'   fill levels without a pin.
+#' @param colors Named character vector (`level = colour`) of explicit colours;
+#'   may be hex / R names / CSS names (normalized via [norm_color()]). Invalid or
+#'   non-matching entries are ignored. `NULL` for none.
+#' @param type,name The base palette (see [palette_names()]) for unmapped levels.
+#' @param custom Custom-ramp anchors when `type = "Custom"`.
 #' @return A named character vector (`level = #RRGGBB`) over all `levels`, in
 #'   their original order.
 #' @export
-palette_discrete <- function(levels, mapping = NULL, palette = "ggplot default") {
+palette_discrete <- function(levels, colors = NULL, type = "Qualitative",
+                             name = "Okabe-Ito", custom = NULL) {
   levels <- if (is.factor(levels)) levels(levels) else as.character(levels)
   levels <- levels[!is.na(levels)]
   if (!length(levels)) return(stats::setNames(character(0), character(0)))
-  out <- stats::setNames(palette_qualitative(palette, length(levels)), levels)
-  if (!is.null(mapping) && length(mapping)) {
-    m <- norm_color(mapping)
-    names(m) <- names(mapping)
+  out <- stats::setNames(palette_colors(type, name, length(levels), custom), levels)
+  if (!is.null(colors) && length(colors)) {
+    m <- norm_color(colors)
+    names(m) <- names(colors)
     hit <- intersect(levels, names(m)[!is.na(m)])
     out[hit] <- m[hit]
   }
