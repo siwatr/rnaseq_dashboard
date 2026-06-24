@@ -49,9 +49,12 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
 - **P3f ✅** **ggplot ↔ plotly engine toggle** — global status-bar "Interactive plots" switch
   (default off = static ggplot) writing `state$plot_interactive`; QC ggplot plots render via a
   dual-output container (`dual_plot` → static `plotOutput` / interactive `plotlyOutput` via
-  `ggplotly`), hard-capped at `.plotly_max_samples` (50, tunable) with a static-fallback note;
-  sample-name (+ value) hover `text` aes added to the 7 toggled plots. **Excluded:** VST mean–SD
-  (low interactive value) and the ComplexHeatmap correlation heatmap (not ggplot). `plotly` is a
+  `ggplotly`). Gated **per plot on an element budget** (estimated rendered glyphs ≈ rows of the
+  plotted data, the true `ggplotly` cost driver) rather than a sample cap; budget is an `option()`
+  (`ddsdashboard.plotly_max_elements`, default 5000 — tunable without a settings page). Over budget,
+  a plot falls back to static with a **sticky per-plot "Render interactive anyway"** override (reset
+  when data changes or the toggle flips off/on). Sample-name (+ value) hover `text` aes on the 7
+  toggled plots. **Excluded:** VST mean–SD and the ComplexHeatmap correlation heatmap. `plotly` is a
   `Suggests` (on-demand, graceful fallback). [PR #18]
 - **P3g ⬅️ next** project-wide **Palette page** full wiring (mock landed in P3b): feed `thematic`
   qualitative/sequential palettes + `qc_annotation_colors()` for ComplexHeatmap; pin

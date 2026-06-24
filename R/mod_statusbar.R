@@ -13,8 +13,7 @@ mod_statusbar_ui <- function(id) {
             # Default off = static ggplot. Read app-wide via state$plot_interactive.
             bslib::tooltip(
               bslib::input_switch(ns("interactive"), "Interactive plots", value = FALSE),
-              sprintf("Render exploratory plots with plotly (hover, zoom). Off = static ggplot. Auto-disabled above %d samples.",
-                      .plotly_max_samples)))
+              "Render exploratory plots with plotly (hover, zoom). Off = static ggplot. Heavy plots stay static with a per-plot 'render anyway' option."))
 }
 
 # A small icon button, disabled (native HTML, no shinyjs) when `enabled` is FALSE.

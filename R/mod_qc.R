@@ -420,11 +420,16 @@
 .qc_plot <- function(id) shinycssloaders::withSpinner(plotOutput(id), proxy.height = "300px")
 
 # --- ggplot <-> plotly engine toggle (P3f) ----------------------------------
-# Above this sample count the interactive (plotly) engine is force-disabled: a
-# ggplotly() figure serializes every glyph to the browser, so cost scales with
-# rendered elements (RLE/density ~ features x samples). Static ggplot is server-
-# rasterized at constant client cost. Tunable; revisit per-plot caps later.
-.plotly_max_samples <- 50L
+# A ggplotly() figure serializes every glyph to the browser, so cost scales with
+# the number of *rendered elements* (rows of the plotted data), not sample count
+# - e.g. RLE/density are ~ features x samples while a per-sample bar is ~ samples.
+# So the interactive engine is gated per plot on an element budget rather than a
+# sample cap. The budget is an option() so deployments / power users can tune it
+# without a settings page; default chosen so light per-sample plots go interactive
+# while heavy distribution plots fall back to static (with a per-plot override).
+.plotly_max_elements <- function() {
+  getOption("ddsdashboard.plotly_max_elements", 5000L)
+}
 
 # Muffle ggplot2's "Ignoring unknown aesthetics: text" - emitted at construction
 # for the interactive builders' plotly-only hover aes; expected and noise-only.
@@ -735,36 +740,43 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     ns <- session$ns
     dark <- function() isTRUE(dark_mode())
 
-    # Interactive (plotly) engine is on only when: the global toggle is set, the
-    # package is installed, and the dataset is within the sample cap. Otherwise
-    # plots render as static ggplot. Change-detected so containers re-render only
-    # when the resolved engine flips.
-    use_plotly <- reactive({
-      isTRUE(state$plot_interactive) &&
-        requireNamespace("plotly", quietly = TRUE) &&
-        !is.null(state$working) && ncol(state$working) <= .plotly_max_samples
-    })
-    # Was interactive requested but suppressed by the cap (so we fell back)?
-    plotly_capped <- reactive({
-      isTRUE(state$plot_interactive) && !is.null(state$working) &&
-        ncol(state$working) > .plotly_max_samples
+    # Interactive (plotly) engine is *available* when the global toggle is on and
+    # the package is installed; whether a given plot actually renders interactive
+    # is decided per plot against the element budget (see dual_plot).
+    use_plotly_base <- reactive({
+      isTRUE(state$plot_interactive) && requireNamespace("plotly", quietly = TRUE) &&
+        !is.null(state$working)
     })
 
-    # Wire a toggleable plot: one ggplot-returning reactive `gg` feeds a static
-    # plotOutput and (when plotly is installed) a plotlyOutput; a uiOutput
-    # container shows whichever the engine selects, with the spinner inside it.
-    # `gg` should return a ggplot (or validate()); it receives no args.
-    dual_plot <- function(id, gg, height = "300px") {
-      # gg() is built inside the muffler in both paths: when the interactive
-      # engine is active the shared ggplot carries the plotly-only `text` aes,
-      # which ggplot2 warns about at construction (see .muffle_unknown_aes).
-      # renderPlot natively turns a validate()/req() condition into its grey
-      # message; renderPlotly does NOT, so on the plotly path we catch that
-      # condition and render the message as a figure instead of a widget error.
-      output[[paste0(id, "_static")]] <- renderPlot(.muffle_unknown_aes(gg()))
+    # Wire a toggleable plot. `gg(interactive)` returns the ggplot (or validate()):
+    # the static output always builds it with interactive = FALSE (no plotly-only
+    # `text` aes, so no warning); the plotly output with interactive = TRUE.
+    # `n_elements()` is a cheap reactive estimate of rendered glyphs (rows of the
+    # plotted data). A plot renders interactive when the engine is on AND it is
+    # within the element budget OR the user clicked its per-plot "render anyway"
+    # (a sticky override, reset when the data changes or the global toggle flips -
+    # so flipping the toggle off/on is the way back to the default gate). The
+    # static fallback shows a one-line note + the override button above the plot.
+    dual_plot <- function(id, gg, n_elements, height = "300px") {
+      forced <- reactiveVal(FALSE)
+      observeEvent(input[[paste0(id, "_force")]], forced(TRUE))
+      observeEvent(state$data_version, forced(FALSE))     # new data -> re-gate
+      observeEvent(state$plot_interactive, forced(FALSE)) # toggle flip -> re-gate
+
+      over_budget <- reactive(isTRUE(use_plotly_base()) && n_elements() > .plotly_max_elements())
+      interactive_here <- reactive(isTRUE(use_plotly_base()) &&
+                                   (n_elements() <= .plotly_max_elements() || isTRUE(forced())))
+
+      # `gg` is intentionally a plain function, not memoized: the expensive work
+      # already sits behind `deferred()`/`state_derive`, and only one of the two
+      # outputs is ever in the DOM, so there is no shared double-compute to cache.
+      output[[paste0(id, "_static")]] <- renderPlot(gg(FALSE))
       if (requireNamespace("plotly", quietly = TRUE)) {
+        # renderPlot natively turns a validate()/req() condition into its grey
+        # message; renderPlotly does NOT, so catch it and render the message as a
+        # figure. The plotly-only `text` aes warning is muffled at construction.
         output[[paste0(id, "_plotly")]] <- plotly::renderPlotly(.muffle_unknown_aes({
-          p <- tryCatch(gg(), shiny.silent.error = function(e) {
+          p <- tryCatch(gg(TRUE), shiny.silent.error = function(e) {
             msg <- conditionMessage(e)
             .qc_msg_plot(if (nzchar(msg)) msg else "Click Render (or enable auto-render).")
           })
@@ -772,16 +784,19 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         }))
       }
       output[[paste0(id, "_container")]] <- renderUI({
-        inner <- if (isTRUE(use_plotly())) {
+        inner <- if (isTRUE(interactive_here())) {
           plotly::plotlyOutput(ns(paste0(id, "_plotly")), height = height)
         } else {
           plotOutput(ns(paste0(id, "_static")), height = height)
         }
         tagList(
-          if (isTRUE(plotly_capped()))
-            tags$div(class = "alert alert-secondary py-1 px-2 small mb-2",
-                     sprintf("Interactive plots are off above %d samples - showing static ggplot.",
-                             .plotly_max_samples)),
+          if (isTRUE(over_budget()) && !isTRUE(forced()) && !is.null(state$working))
+            tags$div(class = "alert alert-secondary py-2 px-2 small mb-2",
+              tags$div(sprintf(
+                "This plot would draw ~%s plotting elements (%d samples) - interactive rendering may be slow, so it is shown as a static image.",
+                format(n_elements(), big.mark = ","), ncol(state$working))),
+              actionButton(ns(paste0(id, "_force")), "Render interactive anyway",
+                           icon = icon("bolt"), class = "btn-sm btn-outline-primary mt-1")),
           shinycssloaders::withSpinner(inner, proxy.height = height))
       })
     }
@@ -894,7 +909,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                           showing_samples(), state$data_version)))
     output$gen_stale <- stale_note(gen_shown)
 
-    plot_gg <- reactive({
+    plot_gg <- function(interactive) {
       validate(need(!is.null(gen_shown$value()),
                     "Click Render (or enable auto-render) to draw the plot."))
       s <- gen_shown$value()
@@ -904,9 +919,11 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       tbl$group <- ae$values
       .qc_metric_plot(tbl, s$x_axis, s$metric, ae$lab, sort = s$sort,
                       dark_theme = dark(), palette = ae$palette, palette_labels = ae$labels,
-                      interactive = use_plotly())
-    })
-    dual_plot("plot", plot_gg)
+                      interactive = interactive)
+    }
+    dual_plot("plot", plot_gg, n_elements = reactive({
+      v <- gen_shown$value(); if (is.null(v)) 0L else sum(v$tbl$sample %in% v$show)
+    }))
 
     output$tbl <- DT::renderDT({
       validate(need(!is.null(state$working), "No dataset loaded."))
@@ -943,15 +960,17 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     rle_shown <- deferred("rle_auto", "rle_render", rle_spec,
       sig = reactive(list(input$rle_group, showing_samples(), state$data_version)))
     output$rle_stale <- stale_note(rle_shown)
-    rle_gg <- reactive({
+    rle_gg <- function(interactive) {
       validate(need(!is.null(rle_shown$value()), "Click Render (or enable auto-render)."))
       s <- rle_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
-      .qc_rle_plot(d, dark(), length(levels(d$sample)), interactive = use_plotly())
-    })
-    dual_plot("diag_rle", rle_gg)
+      .qc_rle_plot(d, dark(), length(levels(d$sample)), interactive = interactive)
+    }
+    dual_plot("diag_rle", rle_gg, n_elements = reactive({
+      v <- rle_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
+    }))
 
     dens_spec <- reactive({
       req(state$working, input$dens_group)
@@ -964,15 +983,17 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     dens_shown <- deferred("dens_auto", "dens_render", dens_spec,
       sig = reactive(list(input$dens_group, showing_samples(), state$data_version)))
     output$dens_stale <- stale_note(dens_shown)
-    dens_gg <- reactive({
+    dens_gg <- function(interactive) {
       validate(need(!is.null(dens_shown$value()), "Click Render (or enable auto-render)."))
       s <- dens_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
-      .qc_density_plot(d, dark(), length(levels(d$sample)), interactive = use_plotly())
-    })
-    dual_plot("diag_density", dens_gg)
+      .qc_density_plot(d, dark(), length(levels(d$sample)), interactive = interactive)
+    }
+    dual_plot("diag_density", dens_gg, n_elements = reactive({
+      v <- dens_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
+    }))
 
     # --- Dataset diagnostics: Mean-SD ---------------------------------------
     output$diag_auto_ui <- auto_box("diag_auto")
@@ -1056,13 +1077,15 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     wg_shown <- deferred("wg_auto", "wg_render", wg_spec,
       sig = reactive(list(input$wg_group, showing_samples(), state$data_version)))
     output$wg_stale <- stale_note(wg_shown)
-    wg_gg <- reactive({
+    wg_gg <- function(interactive) {
       validate(need(!is.null(wg_shown$value()), "Click Render (or enable auto-render)."))
       s <- wg_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
-      .qc_within_group_plot(d, dark_theme = dark(), interactive = use_plotly())
-    })
-    dual_plot("wg_plot", wg_gg)
+      .qc_within_group_plot(d, dark_theme = dark(), interactive = interactive)
+    }
+    dual_plot("wg_plot", wg_gg, n_elements = reactive({
+      v <- wg_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
+    }))
 
     # --- Spike-in (ERCC) dose-response --------------------------------------
     spike_ids <- reactive(rownames(state$working)[.detect_spike_features(state$working)])
@@ -1130,7 +1153,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       tags$div(class = "alert alert-warning py-2 small mb-2", lapply(notes, tags$div))
     })
 
-    spike_dr_gg <- reactive({
+    spike_dr_gg <- function(interactive) {
       validate(need(length(spike_ids()) > 0, "No spike-in features in this dataset."))
       validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
       s <- spike_shown$value()
@@ -1139,20 +1162,24 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       long <- s$dr$long[s$dr$long$sample %in% s$show, , drop = FALSE]
       validate(need(nrow(long) > 0, "No samples in the current 'Showing' selection."))
       long$group <- spike_group_col(long$sample)
-      .qc_spike_dr_plot(long, dark_theme = dark(), interactive = use_plotly())
-    })
-    dual_plot("spike_dr_plot", spike_dr_gg)
+      .qc_spike_dr_plot(long, dark_theme = dark(), interactive = interactive)
+    }
+    dual_plot("spike_dr_plot", spike_dr_gg, n_elements = reactive({
+      v <- spike_shown$value(); if (is.null(v)) 0L else sum(v$dr$long$sample %in% v$show)
+    }))
 
-    spike_summary_gg <- reactive({
+    spike_summary_gg <- function(interactive) {
       validate(need(!is.null(spike_shown$value()), "Click Render (or enable auto-render)."))
       s <- spike_shown$value()
       ps <- s$dr$per_sample[s$dr$per_sample$sample %in% s$show, , drop = FALSE]
       validate(need(nrow(ps) > 0, "No samples in the current 'Showing' selection."))
       ps$group <- spike_group_col(ps$sample)
       .qc_spike_summary_plot(ps, input$spike_metric %||% "r_squared", dark_theme = dark(),
-                             interactive = use_plotly())
-    })
-    dual_plot("spike_summary_plot", spike_summary_gg)
+                             interactive = interactive)
+    }
+    dual_plot("spike_summary_plot", spike_summary_gg, n_elements = reactive({
+      v <- spike_shown$value(); if (is.null(v)) 0L else sum(v$dr$per_sample$sample %in% v$show)
+    }))
 
     output$spike_cv <- renderUI({
       v <- spike_shown$value(); req(v)
@@ -1445,13 +1472,18 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
 
     # Before/after filtering density: keep = everything not in the removal pool.
-    feat_density_gg <- reactive({
+    feat_density_gg <- function(interactive) {
       req(state$working)
       keep <- setdiff(rownames(state$working), feat_pool())
       .qc_filter_density_plot(qc_filter_density(state$working, keep), dark_theme = dark(),
-                              interactive = use_plotly())
-    })
-    dual_plot("feat_density", feat_density_gg)
+                              interactive = interactive)
+    }
+    # Element estimate without recomputing the density frame: the before+after
+    # curves span at most 2 x (endogenous features) x samples.
+    dual_plot("feat_density", feat_density_gg, n_elements = reactive({
+      req(state$working)
+      2L * sum(.endogenous_mask(state$working)) * ncol(state$working)
+    }))
 
     # Apply removal: confirm, then a single state_mutate (undoable, logged).
     confirm_modal <- function(ok_id, msg) showModal(modalDialog(

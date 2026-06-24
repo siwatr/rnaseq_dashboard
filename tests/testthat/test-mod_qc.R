@@ -451,7 +451,7 @@ test_that("QC UI exposes the Spike-in QC Matrix pill (table isolated from summar
 # Read a renderUI container's HTML (testServer returns list(html=, deps=)).
 .container_html <- function(o) paste(as.character(if (is.list(o)) o$html else o), collapse = " ")
 
-test_that("plot-engine toggle: use_plotly gates on the flag, the container switches output type", {
+test_that("plot-engine toggle switches the container output type (under the element budget)", {
   skip_if_not_installed("DESeq2")
   skip_if_not_installed("plotly")
   state <- new_app_state()
@@ -459,12 +459,12 @@ test_that("plot-engine toggle: use_plotly gates on the flag, the container switc
     state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2,
                                                       n_spike = 2, seed = 51)), source = "demo")
     session$flushReact()
-    expect_false(use_plotly())                               # default = static
+    expect_false(use_plotly_base())                          # default = static
     expect_match(.container_html(output$plot_container), "plot_static")
     state$plot_interactive <- TRUE                           # global toggle on
     session$flushReact()
-    expect_true(use_plotly())                                # small dataset, under cap
-    expect_false(plotly_capped())
+    expect_true(use_plotly_base())
+    # General QC plot has ~samples elements (well under the 5000 budget) -> plotly.
     expect_match(.container_html(output$plot_container), "plot_plotly")
   })
 })
@@ -478,7 +478,7 @@ test_that("interactive path renders a placeholder figure (not a widget error) wh
                                                       n_spike = 2, seed = 53)), source = "demo")
     state$plot_interactive <- TRUE
     session$flushReact()
-    expect_true(use_plotly())
+    expect_true(use_plotly_base())
     # Empty 'Showing' selection -> plot_gg() validate(need(nrow > 0)) fires; the
     # plotly path must catch it and render a message figure, not error.
     session$setInputs(gen_show_by = "condition", gen_show_values = "____none____")
@@ -487,20 +487,46 @@ test_that("interactive path renders a placeholder figure (not a widget error) wh
   })
 })
 
-test_that("plot-engine toggle is force-disabled above the sample cap (static fallback + note)", {
+test_that("over the element budget a plot stays static with a sticky 'render anyway' override", {
   skip_if_not_installed("DESeq2")
   skip_if_not_installed("plotly")
+  withr::local_options(ddsdashboard.plotly_max_elements = 1L)   # any plot is over budget
   state <- new_app_state()
   shiny::testServer(mod_qc_server, args = list(state = state), {
-    # > .plotly_max_samples (50) samples -> interactive suppressed even when on.
-    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 26,
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 2,
                                                       n_spike = 1, seed = 52)), source = "demo")
     state$plot_interactive <- TRUE
+    # Render the General QC plot so its element count is real (> the budget of 1).
+    session$setInputs(x_axis = "sample", metric = "library_size",
+                      group = "condition", sort = "none", auto = TRUE)
     session$flushReact()
-    expect_gt(ncol(state$working), ddsdashboard:::.plotly_max_samples)
-    expect_false(use_plotly())                               # capped -> static
-    expect_true(plotly_capped())
+    # Over budget -> static fallback + the per-plot render-anyway note/button.
     expect_match(.container_html(output$plot_container), "plot_static")
-    expect_match(.container_html(output$plot_container), "samples")   # the fallback note
+    expect_match(.container_html(output$plot_container), "render interactive anyway",
+                 ignore.case = TRUE)
+    # Click the per-plot override -> interactive; the note is gone.
+    session$setInputs(plot_force = 1)
+    session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_plotly")
+    # A parameter change keeps it forced (no re-nag).
+    session$setInputs(metric = "detected")
+    session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_plotly")
+    # A data edit (data_version bump) resets the override -> back to static.
+    state_mutate(state, function(d) d, action = list(action = "noop"))
+    session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_static")
+    # Re-force, then flipping the global toggle off/on also resets it.
+    session$setInputs(plot_force = 2); session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_plotly")
+    state$plot_interactive <- FALSE; session$flushReact()
+    state$plot_interactive <- TRUE;  session$flushReact()
+    expect_match(.container_html(output$plot_container), "plot_static")
   })
+})
+
+test_that("the element budget is option-overridable (getOption default 5000)", {
+  expect_equal(ddsdashboard:::.plotly_max_elements(), 5000L)
+  withr::local_options(ddsdashboard.plotly_max_elements = 123L)
+  expect_equal(ddsdashboard:::.plotly_max_elements(), 123L)
 })
