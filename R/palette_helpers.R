@@ -39,39 +39,59 @@
   paste0("RColorBrewer: ", rownames(ci)[ci$category == category])
 }
 
-#' Palette types and the palette names within each
+#' Palette groups and the palette names within each
 #'
-#' @return `palette_type_names()`: the available types. `palette_names(type)`:
-#'   the palette names selectable for that type (package palettes formatted
+#' Groups (in display order): `Custom`, `Qualitative` (the dependency-free
+#' `ggplot default` / `Okabe-Ito`), `Brewer: Qualitative` / `Brewer: Sequential`
+#' / `Brewer: Divergent` (RColorBrewer by category), and `viridis` (all
+#' viridisLite options — predominantly sequential, plus cividis).
+#'
+#' @return `palette_type_names()`: the groups. `palette_names(type)`: the
+#'   resolvable palette *names* in that group (package palettes formatted
 #'   `"<pkg>: <name>"`). Names depend on which optional packages are installed.
 #' @export
-palette_type_names <- function() c("Qualitative", "Sequential", "Divergent", "Custom")
+palette_type_names <- function() {
+  c("Custom", "Qualitative", "Brewer: Qualitative", "Brewer: Sequential",
+    "Brewer: Divergent", "viridis")
+}
 
 #' @rdname palette_type_names
 #' @param type One of [palette_type_names()].
 #' @export
 palette_names <- function(type = "Qualitative") {
-  viridis <- if (requireNamespace("viridisLite", quietly = TRUE))
-    paste0("viridis: ", .viridis_options) else character(0)
   switch(type,
-    Qualitative = c("ggplot default", "Okabe-Ito", .brewer_names("qual")),
-    Sequential  = c(viridis, .brewer_names("seq")),
-    Divergent   = .brewer_names("div"),
-    Custom      = "Custom palette",
+    Custom               = "Custom palette",
+    Qualitative          = c("ggplot default", "Okabe-Ito"),
+    "Brewer: Qualitative" = .brewer_names("qual"),
+    "Brewer: Sequential"  = .brewer_names("seq"),
+    "Brewer: Divergent"   = .brewer_names("div"),
+    viridis              = if (requireNamespace("viridisLite", quietly = TRUE))
+                             paste0("viridis: ", .viridis_options) else character(0),
     character(0))
 }
 
+# A group is shown with discrete swatches (vs a smooth gradient) in the Preview.
+.pal_type_discrete <- function(type) {
+  type %in% c("Custom", "Qualitative", "Brewer: Qualitative")
+}
+
+# Drop the "<pkg>: " prefix for display (the optgroup already names the source).
+.pal_label <- function(name) sub("^(RColorBrewer|viridis): ", "", name)
+
 #' Grouped palette choices for a `selectInput`
 #'
-#' A named list (type -> palette names) suitable as `selectInput(choices = ...)`,
-#' rendering each type as an `<optgroup>`. The selected value is the palette
-#' *name* (unique across types), which is all [palette_colors()] /
-#' [palette_discrete()] need.
-#' @return A named list of character vectors.
+#' A named list (group -> named character vector) suitable as
+#' `selectInput(choices = ...)`, rendering each group as an `<optgroup>`. Within
+#' a group the *names* are clean labels (no `"<pkg>: "` prefix, since the group
+#' already names the source) and the *values* are the resolvable palette names
+#' that [palette_colors()] / [palette_discrete()] consume.
+#' @return A named list of named character vectors.
 #' @export
 palette_choices <- function() {
-  types <- palette_type_names()
-  stats::setNames(lapply(types, palette_names), types)
+  stats::setNames(lapply(palette_type_names(), function(t) {
+    v <- palette_names(t)
+    stats::setNames(v, .pal_label(v))
+  }), palette_type_names())
 }
 
 #' Names of the built-in qualitative palettes (back-compat shim)

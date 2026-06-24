@@ -11,23 +11,31 @@ test_that("norm_color accepts hex, R names, and CSS names; rejects garbage", {
   expect_true(is.na(out[2]))
 })
 
-test_that("palette types + names + grouped choices enumerate the catalogue", {
+test_that("palette groups + names + grouped choices enumerate the catalogue", {
   expect_setequal(palette_type_names(),
-                  c("Qualitative", "Sequential", "Divergent", "Custom"))
-  q <- palette_names("Qualitative")
-  expect_identical(q[1], "ggplot default")
-  expect_true("Okabe-Ito" %in% q)
+                  c("Custom", "Qualitative", "Brewer: Qualitative",
+                    "Brewer: Sequential", "Brewer: Divergent", "viridis"))
+  expect_identical(palette_type_names()[1], "Custom")        # Custom first
+  expect_identical(utils::tail(palette_type_names(), 1), "viridis")  # viridis last
+  # Qualitative is the dependency-free pair only (Brewer is its own group now).
+  expect_setequal(palette_names("Qualitative"), c("ggplot default", "Okabe-Ito"))
   expect_identical(palette_names("Custom"), "Custom palette")
   if (requireNamespace("viridisLite", quietly = TRUE))
-    expect_true("viridis: magma" %in% palette_names("Sequential"))
+    expect_true("viridis: magma" %in% palette_names("viridis"))
   if (requireNamespace("RColorBrewer", quietly = TRUE)) {
-    expect_true(any(grepl("^RColorBrewer: ", palette_names("Qualitative"))))
-    expect_true(any(grepl("^RColorBrewer: ", palette_names("Divergent"))))
+    expect_true(all(grepl("^RColorBrewer: ", palette_names("Brewer: Qualitative"))))
+    expect_true(length(palette_names("Brewer: Divergent")) > 0)
   }
-  # palette_choices() groups names by type for a selectInput optgroup.
+  # palette_choices(): grouped, with clean labels (no "<pkg>: " prefix) but
+  # resolvable values.
   ch <- palette_choices()
   expect_named(ch, palette_type_names())
   expect_true("Okabe-Ito" %in% ch[["Qualitative"]])
+  if (requireNamespace("viridisLite", quietly = TRUE)) {
+    vir <- ch[["viridis"]]
+    expect_true("viridis: magma" %in% unname(vir))           # value resolvable
+    expect_true("magma" %in% names(vir))                     # label clean
+  }
 })
 
 test_that("palette_colors resolves a palette name to n colours, inferring type", {

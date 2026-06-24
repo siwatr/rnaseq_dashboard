@@ -28,70 +28,69 @@
 # Show a level-count warning above this many pickers.
 .pal_many_levels <- 12L
 
-# Reference swatch: a small gradient bar for a palette (discrete bands for
-# qualitative, a smooth ramp for sequential/divergent). Static / pure.
-.pal_ref_swatch <- function(name, type) {
-  cols <- palette_colors(name, if (identical(type, "Qualitative")) 8L else 9L)
+# Preview swatch for a palette. `discrete` -> equal-width solid blocks (no
+# interpolation); otherwise a smooth gradient ramp. `name` is the resolvable
+# palette name; the visible label is its clean form. Static / pure.
+.pal_ref_swatch <- function(name, discrete) {
+  cols <- palette_colors(name, if (discrete) 8L else 9L)
   if (!length(cols)) return(NULL)
-  tags$div(class = "mb-2",
-    tags$div(class = "small mb-1", name),
+  bar <- if (discrete) {
+    tags$div(class = "d-flex",
+      style = "height:22px;border-radius:4px;overflow:hidden;border:1px solid var(--bs-border-color);",
+      lapply(cols, function(cl) tags$div(style = sprintf("flex:1;background:%s;", cl))))
+  } else {
     tags$div(style = sprintf(
       "height:22px;border-radius:4px;border:1px solid var(--bs-border-color);background:linear-gradient(to right, %s);",
-      paste(cols, collapse = ", "))))
+      paste(cols, collapse = ", ")))
+  }
+  tags$div(class = "mb-2", tags$div(class = "small mb-1", .pal_label(name)), bar)
 }
 
-# The Reference tab: every catalogue palette grouped by type. Pure/static.
-.pal_reference_ui <- function() {
+# The Preview tab: every catalogue palette grouped, qualitative groups as
+# discrete blocks. Pure/static; the accordion id (ns("ref_acc")) drives Collapse.
+.pal_reference_ui <- function(ns) {
   panel <- function(type) {
-    nm <- palette_names(type)
+    nm <- palette_names(type); disc <- .pal_type_discrete(type)
     bslib::accordion_panel(type,
-      if (length(nm)) lapply(nm, .pal_ref_swatch, type = type)
+      if (length(nm)) lapply(nm, .pal_ref_swatch, discrete = disc)
       else tags$p(class = "text-muted small", "Install the source package to preview these."))
   }
   tagList(
-    tags$p(class = "text-muted small",
-           "Reference swatches for the built-in palettes (qualitative shown as 8 bands; sequential/divergent as a ramp)."),
-    bslib::accordion(panel("Qualitative"), panel("Sequential"), panel("Divergent"),
-                     open = "Qualitative", multiple = TRUE)
+    tags$div(class = "d-flex justify-content-between align-items-center mb-2",
+      tags$p(class = "text-muted small mb-0",
+             "Swatches for the built-in palettes (qualitative shown as discrete blocks; sequential/divergent as a ramp)."),
+      actionButton(ns("collapse_ref"), "Collapse all", icon = icon("compress"),
+                   class = "btn-sm btn-outline-secondary")),
+    do.call(bslib::accordion,
+            c(list(id = ns("ref_acc"), multiple = TRUE, open = palette_type_names()[2]),
+              lapply(palette_type_names(), panel)))
   )
 }
 
+# Per-tab controls live inline (no shared page sidebar), so the Preview tab
+# doesn't carry the colData "add mapping" control and each tab gets only what it
+# needs (its own Collapse-all).
 mod_palette_ui <- function(id) {
   ns <- NS(id)
-  bslib::layout_sidebar(
-    sidebar = bslib::sidebar(
-      title = tags$h4("Palette", class = "fs-6 mb-0"), width = 320,
-      helpText(paste("Set colour conventions per metadata attribute. Configured",
+  later <- function() tags$p(class = "text-muted p-2", "Coming in a later slice (P3g-b).")
+  bslib::navset_card_pill(
+    bslib::nav_panel(
+      tags$h4("Sample (colData)", class = "fs-6 mb-0"),
+      helpText(paste("Set colour conventions per sample-metadata column. Configured",
                      "colours feed both the ggplot plots and the ComplexHeatmap",
                      "annotations, so colours stay consistent across the app.")),
-      uiOutput(ns("add_ui")),
-      actionButton(ns("collapse_all"), "Collapse all", icon = icon("compress"),
-                   class = "btn-sm btn-outline-secondary"),
-      helpText(class = "text-muted small mt-2",
-               "Feature (rowData), assay, and other palettes - plus continuous",
-               "scales and config import/export - arrive in a later slice.")
+      tags$div(class = "d-flex align-items-end gap-2 mb-3 flex-wrap",
+        tags$div(uiOutput(ns("add_ui"))),
+        actionButton(ns("collapse_all"), "Collapse all", icon = icon("compress"),
+                     class = "btn-sm btn-outline-secondary")),
+      uiOutput(ns("panels"))
     ),
-    bslib::navset_card_pill(
-      bslib::nav_panel(
-        tags$h4("Sample (colData)", class = "fs-6 mb-0"),
-        uiOutput(ns("panels"))
-      ),
-      bslib::nav_panel(
-        tags$h4("Reference", class = "fs-6 mb-0"),
-        .pal_reference_ui()
-      ),
-      bslib::nav_panel(
-        tags$h4("Feature (rowData)", class = "fs-6 mb-0"),
-        tags$p(class = "text-muted p-2", "Coming in a later slice (P3g-b).")
-      ),
-      bslib::nav_panel(
-        tags$h4("Assays", class = "fs-6 mb-0"),
-        tags$p(class = "text-muted p-2", "Coming in a later slice (P3g-b).")
-      ),
-      bslib::nav_panel(
-        tags$h4("Other", class = "fs-6 mb-0"),
-        tags$p(class = "text-muted p-2", "Coming in a later slice (P3g-b).")
-      )
+    bslib::nav_panel(tags$h4("Feature (rowData)", class = "fs-6 mb-0"), later()),
+    bslib::nav_panel(tags$h4("Assays", class = "fs-6 mb-0"), later()),
+    bslib::nav_panel(tags$h4("Other", class = "fs-6 mb-0"), later()),
+    bslib::nav_panel(
+      tags$h4("Preview", class = "fs-6 mb-0"),
+      .pal_reference_ui(ns)
     )
   )
 }
@@ -268,10 +267,11 @@ mod_palette_server <- function(id, state) {
       bump()
     })
 
-    # Collapse all open accordion panels. The id is the *unnamespaced* "acc":
+    # Collapse all open accordion panels. The id is the *unnamespaced* one:
     # accordion_panel_close -> session$sendInputMessage already applies the
-    # module namespace, so passing ns("acc") would double-namespace and no-op.
+    # module namespace, so passing ns(...) would double-namespace and no-op.
     observeEvent(input$collapse_all, bslib::accordion_panel_close("acc", values = TRUE))
+    observeEvent(input$collapse_ref, bslib::accordion_panel_close("ref_acc", values = TRUE))
 
     # Dataset change: rebuild the panels so a surviving config's pickers reflect
     # the new levels. Observers read levels live (see register_col), so they need

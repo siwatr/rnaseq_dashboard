@@ -1,8 +1,8 @@
-test_that("palette UI mounts the colData panels + add control + Reference tab", {
+test_that("palette UI mounts the colData panels + add control + Preview tab", {
   ui <- as.character(mod_palette_ui("palette"))
   expect_match(ui, "palette-panels")
   expect_match(ui, "palette-add_ui")
-  expect_match(ui, "Reference")
+  expect_match(ui, "Preview")
 })
 
 test_that("adding a mapping seeds a discrete config; editing a level flips to Custom", {

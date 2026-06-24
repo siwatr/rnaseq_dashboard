@@ -7,11 +7,12 @@
 palette_choices()
 }
 \value{
-A named list of character vectors.
+A named list of named character vectors.
 }
 \description{
-A named list (type -> palette names) suitable as \code{selectInput(choices = ...)},
-rendering each type as an \verb{<optgroup>}. The selected value is the palette
-\emph{name} (unique across types), which is all \code{\link[=palette_colors]{palette_colors()}} /
-\code{\link[=palette_discrete]{palette_discrete()}} need.
+A named list (group -> named character vector) suitable as
+\code{selectInput(choices = ...)}, rendering each group as an \verb{<optgroup>}. Within
+a group the \emph{names} are clean labels (no \code{"<pkg>: "} prefix, since the group
+already names the source) and the \emph{values} are the resolvable palette names
+that \code{\link[=palette_colors]{palette_colors()}} / \code{\link[=palette_discrete]{palette_discrete()}} consume.
 }

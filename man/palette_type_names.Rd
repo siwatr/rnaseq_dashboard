@@ -3,7 +3,7 @@
 \name{palette_type_names}
 \alias{palette_type_names}
 \alias{palette_names}
-\title{Palette types and the palette names within each}
+\title{Palette groups and the palette names within each}
 \usage{
 palette_type_names()
 
@@ -13,10 +13,13 @@ palette_names(type = "Qualitative")
 \item{type}{One of \code{\link[=palette_type_names]{palette_type_names()}}.}
 }
 \value{
-\code{palette_type_names()}: the available types. \code{palette_names(type)}:
-the palette names selectable for that type (package palettes formatted
+\code{palette_type_names()}: the groups. \code{palette_names(type)}: the
+resolvable palette \emph{names} in that group (package palettes formatted
 \code{"<pkg>: <name>"}). Names depend on which optional packages are installed.
 }
 \description{
-Palette types and the palette names within each
+Groups (in display order): \code{Custom}, \code{Qualitative} (the dependency-free
+\verb{ggplot default} / \code{Okabe-Ito}), \code{Brewer: Qualitative} / \code{Brewer: Sequential}
+/ \code{Brewer: Divergent} (RColorBrewer by category), and \code{viridis} (all
+viridisLite options — predominantly sequential, plus cividis).
 }
