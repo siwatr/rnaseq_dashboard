@@ -68,7 +68,6 @@ mod_palette_server <- function(id, state) {
     # mid-interaction and no observe loop forms.
     struct <- reactiveVal(0L)
     bump <- function() struct(shiny::isolate(struct()) + 1L)
-    observeEvent(state$data_version, bump())   # dataset change -> columns/levels change
 
     has_picker <- requireNamespace("shinyWidgets", quietly = TRUE)
     pin_id <- function(col, i) paste0("pin_", .pal_safe(col), "_", i)
@@ -103,34 +102,34 @@ mod_palette_server <- function(id, state) {
       )
     })
 
-    # --- Add: seed a default discrete config, then register its observers ----
-    observeEvent(input$add_btn, {
-      col <- input$add_col
-      req(col, is.null(state$palette$colData[[col]]))
-      p <- state$palette
-      p$colData[[col]] <- list(type = "discrete", palette = "Okabe-Ito",
-                               pins = stats::setNames(character(0), character(0)))
-      state$palette <- p
-      register_col(col)
-      bump()
-    })
-
     # Per-column observers (per-level pins + base palette + reset + remove +
-    # preview), registered exactly once per column. A "pin" is recorded only when
-    # a picker differs from the base palette's auto colour for that level, so the
-    # base-palette dropdown keeps meaning. reset/palette-change push values to the
+    # preview), registered once per column. A "pin" is recorded only when a picker
+    # differs from the base palette's auto colour for that level, so the base-
+    # palette dropdown keeps meaning. reset/palette-change push values to the
     # pickers via update*(), which is also what reverts them in the live UI.
-    registered <- new.env(parent = emptyenv())
+    # Observers capture the column's levels and the *count* of per-level pin
+    # observers, so they are destroyed + re-registered whenever the dataset
+    # changes (the persisted config may now map a column with different levels).
+    registered  <- new.env(parent = emptyenv())   # key -> TRUE once registered
+    obs_handles <- new.env(parent = emptyenv())    # key -> list of observer handles
+
+    unregister_col <- function(key) {
+      h <- obs_handles[[key]]
+      if (!is.null(h)) lapply(h, function(o) if (!is.null(o)) o$destroy())
+      obs_handles[[key]] <- NULL
+      registered[[key]] <- NULL
+    }
+    unregister_all <- function() for (key in ls(registered)) unregister_col(key)
+
     register_col <- function(col) {
       key <- .pal_safe(col)
       if (!is.null(registered[[key]])) return(invisible())
       registered[[key]] <- TRUE
       lvls <- .pal_levels(shiny::isolate(coldata_df())[[col]])
-
       cur_palette <- function() state$palette$colData[[col]]$palette %||% "Okabe-Ito"
 
       # One observer per level: classify the picker value as pin vs auto-fill.
-      lapply(seq_along(lvls), function(i) {
+      pin_obs <- lapply(seq_along(lvls), function(i) {
         observeEvent(input[[pin_id(col, i)]], {
           if (is.null(state$palette$colData[[col]])) return()
           raw <- input[[pin_id(col, i)]]
@@ -149,7 +148,7 @@ mod_palette_server <- function(id, state) {
       })
 
       # Base palette: persist + move every non-pinned picker to the new auto colour.
-      observeEvent(input[[paste0("pal_", key)]], {
+      pal_obs <- observeEvent(input[[paste0("pal_", key)]], {
         val <- input[[paste0("pal_", key)]]
         if (is.null(val) || identical(val, cur_palette())) return()
         p <- state$palette; p$colData[[col]]$palette <- val; state$palette <- p
@@ -160,7 +159,7 @@ mod_palette_server <- function(id, state) {
       }, ignoreInit = TRUE)
 
       # Reset: clear pins + push every picker back to the base-palette auto colour.
-      observeEvent(input[[paste0("reset_", key)]], {
+      reset_obs <- observeEvent(input[[paste0("reset_", key)]], {
         p <- state$palette
         p$colData[[col]]$pins <- stats::setNames(character(0), character(0))
         state$palette <- p
@@ -168,10 +167,13 @@ mod_palette_server <- function(id, state) {
         for (i in seq_along(lvls)) update_picker(pin_id(col, i), unname(auto[[lvls[i]]]))
       })
 
-      observeEvent(input[[paste0("remove_", key)]], {
+      remove_obs <- observeEvent(input[[paste0("remove_", key)]], {
         p <- state$palette; p$colData[[col]] <- NULL; state$palette <- p
+        unregister_col(key)                              # drop this column's observers
         bump()
       })
+
+      obs_handles[[key]] <- c(pin_obs, list(pal_obs, reset_obs, remove_obs))
 
       # Live preview swatch row (reads state$palette, so it updates on every pick).
       output[[paste0("preview_", key)]] <- renderPlot({
@@ -190,11 +192,38 @@ mod_palette_server <- function(id, state) {
                          axis.text.x = ggplot2::element_text(angle = 45, hjust = 1),
                          panel.grid = ggplot2::element_blank())
       }, height = 90)
+      invisible()
     }
+
+    # --- Add: seed a default discrete config, then register its observers ----
+    observeEvent(input$add_btn, {
+      col <- input$add_col
+      req(col, is.null(state$palette$colData[[col]]))
+      p <- state$palette
+      p$colData[[col]] <- list(type = "discrete", palette = "Okabe-Ito",
+                               pins = stats::setNames(character(0), character(0)))
+      state$palette <- p
+      register_col(col)
+      bump()
+    })
+
+    # Dataset change: columns/levels differ, so destroy every column's observers
+    # and re-register the configs that survive (matched by name) against the new
+    # levels. Then rebuild the panels. (Config persists across load/reset; the
+    # observers must not keep operating on the previous dataset's levels.)
+    observeEvent(state$data_version, {
+      unregister_all()
+      if (!is.null(state$working)) {
+        cd  <- as.data.frame(SummarizedExperiment::colData(state$working))
+        cfg <- shiny::isolate(state$palette$colData)
+        for (col in intersect(names(cfg), colnames(cd))) register_col(col)
+      }
+      bump()
+    }, ignoreNULL = FALSE)
 
     # --- Panels: one accordion item per configured colData column ------------
     output$panels <- renderUI({
-      struct()                                  # rebuild on add/remove/palette change
+      struct()                                  # rebuild on add / remove / dataset change
       if (is.null(state$working)) {
         return(tags$p(class = "text-muted p-2", "Load a dataset to configure colours."))
       }
