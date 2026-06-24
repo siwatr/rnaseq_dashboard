@@ -67,29 +67,46 @@
   )
 }
 
-# Per-tab controls live inline (no shared page sidebar), so the Preview tab
-# doesn't carry the colData "add mapping" control and each tab gets only what it
-# needs (its own Collapse-all).
+# 3-level layout matching the Input/QC pages: a navset_card_tab of Setting /
+# Preview. Setting holds the customizable pills (Sample / Feature / Assay /
+# Other), each with its own sidebar (per the QC pattern). Preview is sidebar-free.
+.pal_later_pill <- function(aspect, blurb) {
+  bslib::nav_panel(aspect,
+    bslib::layout_sidebar(
+      sidebar = bslib::sidebar(
+        title = tags$h4(paste(aspect, "colours"), class = "fs-6 mb-0"), width = 300,
+        helpText(class = "text-muted", blurb)),
+      tags$p(class = "text-muted p-2", "Coming in a later slice (P3g-b).")))
+}
+
 mod_palette_ui <- function(id) {
   ns <- NS(id)
-  later <- function() tags$p(class = "text-muted p-2", "Coming in a later slice (P3g-b).")
-  bslib::navset_card_pill(
+  bslib::navset_card_tab(
+    title = tags$h3("Palette", class = "fs-6 mb-0 pe-3"),
     bslib::nav_panel(
-      tags$h4("Sample (colData)", class = "fs-6 mb-0"),
-      helpText(paste("Set colour conventions per sample-metadata column. Configured",
-                     "colours feed both the ggplot plots and the ComplexHeatmap",
-                     "annotations, so colours stay consistent across the app.")),
-      tags$div(class = "d-flex align-items-end gap-2 mb-3 flex-wrap",
-        tags$div(uiOutput(ns("add_ui"))),
-        actionButton(ns("collapse_all"), "Collapse all", icon = icon("compress"),
-                     class = "btn-sm btn-outline-secondary")),
-      uiOutput(ns("panels"))
+      tags$h4("Setting", class = "fs-6"),
+      bslib::navset_pill(
+        bslib::nav_panel(
+          "Sample",
+          bslib::layout_sidebar(
+            sidebar = bslib::sidebar(
+              title = tags$h4("Sample colours", class = "fs-6 mb-0"), width = 300,
+              helpText(paste("Set colour conventions per sample-metadata column.",
+                             "Configured colours feed both the ggplot plots and the",
+                             "ComplexHeatmap annotations.")),
+              uiOutput(ns("add_ui")),
+              actionButton(ns("collapse_all"), "Collapse all", icon = icon("compress"),
+                           class = "btn-sm btn-outline-secondary")),
+            uiOutput(ns("panels"))
+          )
+        ),
+        .pal_later_pill("Feature", "rowData (feature-metadata) palette controls arrive in a later slice."),
+        .pal_later_pill("Assay", "Assay expression colour ramps arrive in a later slice."),
+        .pal_later_pill("Other", "App-internal colour maps (e.g. removal status) arrive in a later slice.")
+      )
     ),
-    bslib::nav_panel(tags$h4("Feature (rowData)", class = "fs-6 mb-0"), later()),
-    bslib::nav_panel(tags$h4("Assays", class = "fs-6 mb-0"), later()),
-    bslib::nav_panel(tags$h4("Other", class = "fs-6 mb-0"), later()),
     bslib::nav_panel(
-      tags$h4("Preview", class = "fs-6 mb-0"),
+      tags$h4("Preview", class = "fs-6"),
       .pal_reference_ui(ns)
     )
   )
