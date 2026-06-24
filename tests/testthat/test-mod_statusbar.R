@@ -1,3 +1,16 @@
+test_that("status bar interactive switch writes the global plot-engine flag", {
+  expect_match(paste(as.character(mod_statusbar_ui("statusbar")), collapse = " "),
+               "Interactive plots")
+  state <- new_app_state()
+  shiny::testServer(mod_statusbar_server, args = list(state = state), {
+    expect_false(isTRUE(state$plot_interactive))
+    session$setInputs(interactive = TRUE)
+    expect_true(state$plot_interactive)
+    session$setInputs(interactive = FALSE)
+    expect_false(state$plot_interactive)
+  })
+})
+
 test_that("status bar Undo steps back the last edit; Reset restores original", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()

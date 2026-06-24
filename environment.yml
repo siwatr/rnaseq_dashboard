@@ -20,6 +20,7 @@ dependencies:
   - r-ps                 # session memory footprint (process RSS) in the status bar
   # Plotting / data wrangling / IO
   - r-ggplot2
+  - r-plotly             # optional interactive plot engine (ggplotly); QC toggle
   - r-dplyr              # gene-metadata filtering
   - r-matrixstats        # fast rowVars for variable-gene selection
   - r-readr

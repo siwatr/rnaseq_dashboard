@@ -5,10 +5,16 @@
 
 mod_statusbar_ui <- function(id) {
   ns <- NS(id)
-  tags$span(class = "d-flex gap-1 align-items-center",
+  tags$span(class = "d-flex gap-2 align-items-center",
             uiOutput(ns("status"), inline = TRUE),
             uiOutput(ns("actions"), inline = TRUE),
-            uiOutput(ns("mem"), inline = TRUE))
+            uiOutput(ns("mem"), inline = TRUE),
+            # Global plot-engine toggle (static, so it survives status re-renders).
+            # Default off = static ggplot. Read app-wide via state$plot_interactive.
+            bslib::tooltip(
+              bslib::input_switch(ns("interactive"), "Interactive plots", value = FALSE),
+              sprintf("Render exploratory plots with plotly (hover, zoom). Off = static ggplot. Auto-disabled above %d samples.",
+                      .plotly_max_samples)))
 }
 
 # A small icon button, disabled (native HTML, no shinyjs) when `enabled` is FALSE.
@@ -87,6 +93,9 @@ mod_statusbar_server <- function(id, state) {
         .sb_btn(ns("reset"), "arrows-rotate", "btn-outline-danger",
                 m$n_edits > 0L, "Reset to original (undo all edits)"))
     })
+    # Global plot-engine toggle -> shared state (read by plot modules, e.g. QC).
+    observeEvent(input$interactive, state$plot_interactive <- isTRUE(input$interactive),
+                 ignoreNULL = FALSE)
     observeEvent(input$undo, state_undo(state))
     observeEvent(input$reset, {
       showModal(modalDialog(

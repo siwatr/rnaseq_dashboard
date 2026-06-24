@@ -46,9 +46,14 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   source/assay (observed assay now **TPM > FPKM > CPM**-preferred, the former deferred fix).
   Filtering sidebar reorganized into collapsible "Sample QC filters" / "Spike-in (ERCC) filters"
   accordions with scoped Auto buttons. New knowledge note [ercc-spike-in.md](ercc-spike-in.md). [PR #17]
-- **P3f ⬅️ next** UI-polish bundle — primarily a **ggplot ↔ plotly engine toggle** for the
-  interactive plots; sweep up small UX items.
-- **P3g ⬜** project-wide **Palette page** full wiring (mock landed in P3b): feed `thematic`
+- **P3f ✅** **ggplot ↔ plotly engine toggle** — global status-bar "Interactive plots" switch
+  (default off = static ggplot) writing `state$plot_interactive`; QC ggplot plots render via a
+  dual-output container (`dual_plot` → static `plotOutput` / interactive `plotlyOutput` via
+  `ggplotly`), hard-capped at `.plotly_max_samples` (50, tunable) with a static-fallback note;
+  sample-name (+ value) hover `text` aes added to the 7 toggled plots. **Excluded:** VST mean–SD
+  (low interactive value) and the ComplexHeatmap correlation heatmap (not ggplot). `plotly` is a
+  `Suggests` (on-demand, graceful fallback). [PR #18]
+- **P3g ⬅️ next** project-wide **Palette page** full wiring (mock landed in P3b): feed `thematic`
   qualitative/sequential palettes + `qc_annotation_colors()` for ComplexHeatmap; pin
   metadata levels to fixed colours.
 
@@ -65,6 +70,10 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
 - MA / volcano / direct-comparison plots with axis clamping (triangle markers).
 - Expression heatmap (`ComplexHeatmap`; default per-gene z-score; `anno_mark` for genes of
   interest; column names auto-hidden > 30 samples).
+- **ComplexHeatmap plot-controls PR** — the heatmap controllers (annotation/colour/clustering
+  options) for the DE expression heatmap and the QC sample-correlation heatmap get a dedicated PR
+  here, so we can factor which control sub-modules are **shared** vs **QC-only** (the P3f engine
+  toggle deliberately left both heatmaps static — they are not ggplot).
 - **Create the `de-analysis` skill** (guided design/contrast/shrinkage, dual-LFC schema,
   MA/volcano conventions) as part of this phase, so it matches the real DESeq2 implementation.
 
@@ -82,6 +91,10 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 ---
 
 ## Deferred / wishlist (revisit when relevant)
+- **Full bright/dark theme customization (post-P5)** — an (almost) fully customized bslib light/dark
+  theme (brand colours, typography, component styling) coordinated with `thematic` and a `plotly`
+  layout theme so interactive plots match the app. Plan after the DESeq2 phase (P5). This is also
+  when P3f's plotly figures get themed (currently `ggplotly` does not inherit `thematic` — accepted).
 - **Two-sided spike highlight on the General QC % spike-in plot** — the "Suggested removal" colour-by
   maps `pct_spike` to the over-spiked side only; an under-spiked sample shows as
   "suggested (other)". Symmetrise if users ask.
@@ -102,3 +115,4 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 | #14 | Edit-history controls: global Undo/Reset, scoped metadata reset, QC reset-removal |
 | #15 | P3d: ERCC spike-in dose-response & spike-in QC (+ polish bundle) |
 | #17 | P3e: filtering by spike-in QC metrics (+ ERCC reference note) |
+| #18 | P3f: ggplot↔plotly engine toggle (global switch + sample cap + hover labels) |

@@ -38,6 +38,7 @@ Suggests:
     matrixStats,
     org.Hs.eg.db,
     org.Mm.eg.db,
+    plotly,
     ps,
     rtracklayer,
     S4Vectors,

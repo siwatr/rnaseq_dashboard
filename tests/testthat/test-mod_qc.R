@@ -29,7 +29,9 @@ test_that("QC module re-renders when auto-render is enabled (no button press)", 
     session$setInputs(x_axis = "pct_spike", metric = "detected",
                       group = "condition", sort = "none", auto = TRUE)
     session$flushReact()
-    expect_false(is.null(output$plot))
+    # Default engine = static; the General QC plot now renders via the dual-output
+    # container into output$plot_static (output$plot_plotly is the interactive path).
+    expect_false(is.null(output$plot_static))
   })
 })
 
@@ -45,6 +47,26 @@ test_that(".qc_metric_plot builds for sample and metric x-axes, both themes", {
                                           dark_theme = TRUE)
   expect_s3_class(p_bar, "ggplot")
   expect_s3_class(p_sc, "ggplot")
+})
+
+test_that("QC builders add a hover `text` aesthetic only when interactive", {
+  skip_if_not_installed("DESeq2")
+  has_text <- function(p) any(vapply(p$layers,
+    function(l) "text" %in% names(l$mapping), logical(1)))
+  dds <- make_mock_dds(n_genes = 40, n_per_group = 2, n_spike = 3, seed = 17)
+  tbl <- qc_per_sample_metrics(dds); tbl$group <- factor(rep("all", nrow(tbl)))
+  # text aes is a plotly-only aesthetic ggplot2 warns about at construction;
+  # suppress that expected warning here (the app muffles it via .muffle_unknown_aes).
+  mk <- function(...) suppressWarnings(ddsdashboard:::.qc_metric_plot(...))
+  # General QC (bar + scatter): text aes present iff interactive = TRUE.
+  expect_false(has_text(mk(tbl, "sample", "library_size")))
+  expect_true(has_text(mk(tbl, "sample", "library_size", interactive = TRUE)))
+  expect_true(has_text(mk(tbl, "pct_spike", "library_size", interactive = TRUE)))
+  # Dose-response scatter carries feature/sample hover only when interactive.
+  dr <- spike_dose_response(dds, source = "column")$long
+  dr$group <- factor("all")
+  expect_false(has_text(ddsdashboard:::.qc_spike_dr_plot(dr)))
+  expect_true(has_text(suppressWarnings(ddsdashboard:::.qc_spike_dr_plot(dr, interactive = TRUE))))
 })
 
 test_that(".qc_metric_plot sorts the discrete x-axis by the metric value", {
@@ -424,4 +446,61 @@ test_that("QC UI exposes the Spike-in QC Matrix pill (table isolated from summar
   html <- paste(as.character(mod_qc_ui("qc")), collapse = " ")
   expect_match(html, "Spike-in QC Matrix", fixed = TRUE)
   expect_match(html, "Per-sample summary", fixed = TRUE)
+})
+
+# Read a renderUI container's HTML (testServer returns list(html=, deps=)).
+.container_html <- function(o) paste(as.character(if (is.list(o)) o$html else o), collapse = " ")
+
+test_that("plot-engine toggle: use_plotly gates on the flag, the container switches output type", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("plotly")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2,
+                                                      n_spike = 2, seed = 51)), source = "demo")
+    session$flushReact()
+    expect_false(use_plotly())                               # default = static
+    expect_match(.container_html(output$plot_container), "plot_static")
+    state$plot_interactive <- TRUE                           # global toggle on
+    session$flushReact()
+    expect_true(use_plotly())                                # small dataset, under cap
+    expect_false(plotly_capped())
+    expect_match(.container_html(output$plot_container), "plot_plotly")
+  })
+})
+
+test_that("interactive path renders a placeholder figure (not a widget error) when gg() validates", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("plotly")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 2,
+                                                      n_spike = 2, seed = 53)), source = "demo")
+    state$plot_interactive <- TRUE
+    session$flushReact()
+    expect_true(use_plotly())
+    # Empty 'Showing' selection -> plot_gg() validate(need(nrow > 0)) fires; the
+    # plotly path must catch it and render a message figure, not error.
+    session$setInputs(gen_show_by = "condition", gen_show_values = "____none____")
+    session$flushReact()
+    expect_no_error(output$plot_plotly)
+  })
+})
+
+test_that("plot-engine toggle is force-disabled above the sample cap (static fallback + note)", {
+  skip_if_not_installed("DESeq2")
+  skip_if_not_installed("plotly")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    # > .plotly_max_samples (50) samples -> interactive suppressed even when on.
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 26,
+                                                      n_spike = 1, seed = 52)), source = "demo")
+    state$plot_interactive <- TRUE
+    session$flushReact()
+    expect_gt(ncol(state$working), ddsdashboard:::.plotly_max_samples)
+    expect_false(use_plotly())                               # capped -> static
+    expect_true(plotly_capped())
+    expect_match(.container_html(output$plot_container), "plot_static")
+    expect_match(.container_html(output$plot_container), "samples")   # the fallback note
+  })
 })

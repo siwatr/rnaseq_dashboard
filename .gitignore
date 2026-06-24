@@ -51,3 +51,7 @@ rsconnect/
 # Local scratch / UI playground (not part of the package)
 sandbox/
 .claude/settings.json
+
+# testthat failure artifacts
+tests/testthat/_problems/
+tests/testthat/testthat-problems.rds
