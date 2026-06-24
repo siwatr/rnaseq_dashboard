@@ -128,6 +128,16 @@ server <- function(input, output, session) {
 }
 ```
 
+## Dynamic per-row UI with per-element observers (e.g. `mod_palette`)
+
+When a module renders a variable set of rows/columns each with its own inputs + observers (the Palette page: one panel per metadata column, one colour picker per level), two hard-won rules apply — learned debugging `mod_palette` (P3g-a):
+
+- **Register observers once; read the changing data *live* inside them. Do NOT destroy + re-register on every `data_version` change.** Tearing observers down and rebuilding them inside an `observeEvent(state$data_version, …)` *races with the deferred reactive flush*: the rebuild can land in the same flush as a user input event, so the freshly-created observer (with `ignoreInit`) skips the event while the old one is already destroyed — the write silently vanishes (and it's non-deterministic). Instead capture only the column *name*, fix the per-element observer *count* at registration, and read levels live: `cur_lvls <- function() .pal_levels(isolate(coldata_df())[[col]]); … lvls <- cur_lvls(); lev <- lvls[i]`. This keeps the index→level mapping correct after a dataset reload with no re-registration. (Documented limitation: a reload that *adds* levels beyond the original count leaves the extras palette-filled until the column is re-added.)
+- **Per-row action observers need `ignoreInit = TRUE`.** A Reset/Remove `actionButton` carries a click counter; if you ever re-register the row's observers, the fresh observer fires immediately on the *stale* counter value and re-triggers the action (the "remove → can't re-add" bug). All the row's pin/select/reset/remove observers use `ignoreInit = TRUE`.
+- Drive the panels off a `struct` `reactiveVal` bumped on add/remove/`data_version`, and read the config via `isolate()` inside the `renderUI` so per-element edits don't rebuild the panel mid-interaction; push programmatic value changes back to the widgets with `update*()` (e.g. `updateColorPickr`), not by re-rendering.
+
+**Testing dynamic-UI modules with `shiny::testServer`:** the harness *batches* reactive flushes, so a `renderUI` rebuild can collide with a following `setInputs` in a way that never happens in the running app (where a dataset load and a widget click are separate event-loop cycles). Put `session$flushReact()` between a simulated load and a simulated interaction. And don't assert a fragile UI *round-trip* (input → observer → state → `update*()` → input) that only the real browser completes — assert the **deterministic data guarantee** instead (e.g. that the resolver fills a reloaded dataset's levels with no stale-name corruption). The core same-cycle behaviours (add, edit, select, reset, remove, re-add) *are* deterministic in `testServer` and should be covered directly.
+
 ## Checklist for a new module
 
 - [ ] `mod_<page>_ui` namespaces every input with `ns()`; uses bslib (`layout_sidebar`, `card`, `layout_column_wrap`), not `fluidRow`/`column`.
