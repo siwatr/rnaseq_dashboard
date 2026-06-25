@@ -68,6 +68,7 @@
       if (length(nm)) lapply(nm, .pal_ref_swatch, discrete = disc)
       else tags$p(class = "text-muted small", "Install the source package to preview these."))
   }
+  groups <- setdiff(palette_type_names(), "Custom")   # Custom isn't a real preset
   tagList(
     tags$div(class = "d-flex justify-content-between align-items-center mb-2",
       tags$p(class = "text-muted small mb-0",
@@ -75,8 +76,8 @@
       actionButton(ns("collapse_ref"), "Collapse all", icon = icon("compress"),
                    class = "btn-sm btn-outline-secondary")),
     do.call(bslib::accordion,
-            c(list(id = ns("ref_acc"), multiple = TRUE, open = palette_type_names()[2]),
-              lapply(palette_type_names(), panel)))
+            c(list(id = ns("ref_acc"), multiple = TRUE, open = groups[1]),
+              lapply(groups, panel)))
   )
 }
 
@@ -147,6 +148,12 @@ mod_palette_server <- function(id, state) {
     dom_levels <- function(dom, item) {
       if (dom == "other") return(.pal_removal_levels)
       .pal_levels(dom_frame(dom)[[item]])
+    }
+    # Underlying data class for the accordion badge (helps the future factor PR).
+    dom_class <- function(dom, item) {
+      if (dom == "assays") return("numeric")
+      if (dom == "other")  return(if (item == "correlation") "numeric" else "factor")
+      class(dom_frame(dom)[[item]])[1]
     }
     # Default config for a freshly added item.
     default_cfg <- function(dom, item) {
@@ -250,20 +257,6 @@ mod_palette_server <- function(id, state) {
         updateSelectInput(session, iid("name", dom, item), selected = "Okabe-Ito")
       }, ignoreInit = TRUE)
       obs_handles[[key]] <- c(pin_obs, list(name_obs, reset_obs, remove_obs))
-      output[[iid("preview", dom, item)]] <- renderPlot({
-        cfg <- cur(); req(cfg)
-        lvls <- dom_levels(dom, item)
-        cols <- palette_discrete(lvls, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
-        df <- data.frame(level = factor(names(cols), levels = names(cols)), y = 1L)
-        ggplot2::ggplot(df, ggplot2::aes(x = .data$level, y = .data$y, fill = .data$level)) +
-          ggplot2::geom_col(width = 1) +
-          ggplot2::scale_fill_manual(values = cols, guide = "none") +
-          ggplot2::labs(x = NULL, y = NULL) +
-          ggplot2::theme_minimal(base_size = 11) +
-          ggplot2::theme(axis.text.y = ggplot2::element_blank(),
-                         axis.text.x = ggplot2::element_text(angle = 45, hjust = 1),
-                         panel.grid = ggplot2::element_blank())
-      }, height = 90)
       invisible()
     }
 
@@ -302,6 +295,7 @@ mod_palette_server <- function(id, state) {
                         'No colour mappings yet. Use "Add colour mapping" in the sidebar.'))
         panels <- lapply(items, function(it) .palette_item_panel(ns, d, it, cfg[[it]],
                                                                  shiny::isolate(dom_kind(d, it)),
+                                                                 shiny::isolate(dom_class(d, it)),
                                                                  shiny::isolate(dom_levels(d, it)),
                                                                  has_picker))
         do.call(bslib::accordion,
@@ -316,10 +310,19 @@ mod_palette_server <- function(id, state) {
   })
 }
 
+# Type (Discrete/Continuous) + data-class badges shown in each accordion title.
+.pal_badges <- function(kind, klass) {
+  tagList(
+    tags$span(class = "badge rounded-pill text-bg-secondary ms-2 fw-normal",
+              if (identical(kind, "continuous")) "Continuous" else "Discrete"),
+    if (!is.null(klass) && nzchar(klass))
+      tags$span(class = "badge rounded-pill text-bg-light ms-1 fw-normal", klass))
+}
+
 # Build the accordion panel for one item (discrete or continuous).
-.palette_item_panel <- function(ns, dom, item, cfg, kind, levels, has_picker) {
+.palette_item_panel <- function(ns, dom, item, cfg, kind, klass, levels, has_picker) {
   key <- paste0(dom, "__", .pal_safe(item))
-   id  <- function(prefix) ns(paste0(prefix, "_", key))
+  id  <- function(prefix) ns(paste0(prefix, "_", key))
   remove_btn <- actionButton(id("remove"), "Remove mapping", icon = icon("trash"),
                              class = "btn-sm btn-outline-danger")
 
@@ -332,11 +335,11 @@ mod_palette_server <- function(id, state) {
                   selected = name),
       bslib::layout_columns(col_widths = c(6, 6),
         textInput(id("cmin"), "Min anchor", value = cfg$min %||% "",
-                  placeholder = "data min, or pNN"),
+                  placeholder = "e.g. 0  or  p5"),
         textInput(id("cmax"), "Max anchor", value = cfg$max %||% "",
-                  placeholder = "data max, or pNN")),
+                  placeholder = "e.g. 100  or  p95")),
       helpText(class = "text-muted small",
-               "Anchors: a number, a percentile like p5 / p95, or blank for the data range."),
+               "Leave blank to use the data min/max, or enter a number, or a percentile like p5 / p95."),
       uiOutput(id("cpreview")),
       tags$div(class = "d-flex gap-2 mt-2",
         bslib::tooltip(
@@ -347,19 +350,23 @@ mod_palette_server <- function(id, state) {
   } else {
     name <- cfg$name %||% "Okabe-Ito"
     resolved <- palette_discrete(levels, cfg$colors, name, cfg$custom)
+    # One compact row per level: the colour swatch/picker, then the level label to
+    # its right (larger font). Rows stack vertically (kept for future factor
+    # reordering).
     one_picker <- function(i) {
       lev <- levels[i]; val <- unname(resolved[[lev]]); pid <- ns(pin_id_str(key, i))
-      if (has_picker) {
-        shinyWidgets::colorPickr(pid, label = lev, selected = val, update = "save",
-                                 width = "100%", useAsButton = TRUE,
+      picker <- if (has_picker) {
+        shinyWidgets::colorPickr(pid, label = NULL, selected = val, update = "save",
+                                 useAsButton = TRUE,
                                  interaction = list(input = TRUE, save = TRUE, clear = FALSE))
       } else {
-        tags$div(class = "d-flex align-items-center gap-2 mb-1",
+        tagList(
           tags$span(style = sprintf(
-            "display:inline-block;width:1.1rem;height:1.1rem;border-radius:3px;border:1px solid #888;background:%s;", val)),
-          textInput(pid, label = NULL, value = val, width = "120px"),
-          tags$span(class = "small text-muted", lev))
+            "display:inline-block;width:1.4rem;height:1.4rem;border-radius:3px;border:1px solid #888;background:%s;", val)),
+          textInput(pid, label = NULL, value = val, width = "110px"))
       }
+      tags$div(class = "d-flex align-items-center gap-2 mb-1",
+               picker, tags$span(class = "fw-medium", lev))
     }
     tagList(
       selectInput(id("name"), "Base palette", choices = palette_choices(), selected = name),
@@ -368,9 +375,7 @@ mod_palette_server <- function(id, state) {
                  sprintf("%d levels - colours are interpolated; pinning each is tedious.",
                          length(levels))),
       tags$div(class = "small fw-semibold mb-1", "Levels"),
-      tags$div(class = if (has_picker) "d-flex flex-wrap gap-2 mb-2" else "mb-2",
-               lapply(seq_along(levels), one_picker)),
-      plotOutput(ns(paste0("preview_", key)), height = "90px"),
+      tags$div(class = "mb-2", lapply(seq_along(levels), one_picker)),
       tags$div(class = "d-flex gap-2 mt-2",
         bslib::tooltip(
           actionButton(id("reset"), "Reset to palette", icon = icon("rotate-left"),
@@ -378,7 +383,8 @@ mod_palette_server <- function(id, state) {
           "Reset to the default palette (Okabe-Ito)."),
         remove_btn))
   }
-  bslib::accordion_panel(title = item, value = item, body)
+  bslib::accordion_panel(title = tags$span(item, .pal_badges(kind, klass)),
+                         value = item, body)
 }
 
 # pin id string (without ns); mirrors the server's pin_id().
