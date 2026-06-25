@@ -155,6 +155,12 @@ test_that(".qc_correlation_heatmap handles annotation variants + labels the meth
   # No annotation.
   ht_none <- ddsdashboard:::.qc_correlation_heatmap(cm, NULL, n_samples = ncol(dds))
   expect_s4_class(ht_none, "Heatmap")
+
+  # A project "Other" correlation ramp config drives the body colour scale.
+  ht_cor <- ddsdashboard:::.qc_correlation_heatmap(
+    cm, NULL, n_samples = ncol(dds),
+    cor_config = list(name = "RColorBrewer: RdBu", min = "", max = ""))
+  expect_s4_class(ht_cor, "Heatmap")
 })
 
 test_that("QC module caches VST and sample correlation keyed on data_version", {

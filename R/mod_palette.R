@@ -1,32 +1,47 @@
 # Project-wide colour palette configuration.
 #
-# The single source of truth for discrete colour mappings: the user opts in per
-# metadata column, chooses a base palette (a two-level type -> name selector),
-# and may hand-edit individual level colours. The config lives in `state$palette`
+# The single source of truth for colour mappings, organized by the aspect of the
+# dds object it colours: colData (sample annotations), rowData (feature
+# annotations), assays (expression ramps), and "other" (app-internal maps:
+# removal status, sample-correlation score). The config lives in `state$palette`
 # (a UI preference, untouched by load/reset) and is read by every plot via
-# palette_helpers.R -- the QC ggplots (group scales) and the ComplexHeatmap
-# annotations (qc_annotation_colors()) now agree.
+# palette_helpers.R -- the QC ggplots, the ComplexHeatmap annotations
+# (qc_annotation_colors()), and the correlation-heatmap ramp now agree.
 #
-# Config shape per colData column:
-#   list(type, name, colors)  where `colors` is the FULL level -> hex map.
-# Choosing a (type, name) regenerates `colors` from that palette; hand-editing a
-# level updates one entry and flips type -> "Custom" (so the selector no longer
-# implies the named palette is being modified). Resolution + the palette catalogue
-# live in palette_helpers.R.
-#
-# P3g-a wires the colData group only. rowData / assays / Other groups, continuous
-# palettes, and config import/export land in P3g-b.
+# Config shape: state$palette[[domain]][[item]] is either
+#   discrete:   list(name, colors)          (full level -> hex map)
+#   continuous: list(name, min, max, custom) (palette + anchors; min/max are a
+#               number, a "p<pct>" percentile, or "" = the data range)
+# Resolution + the palette catalogue live in palette_helpers.R. P3g-b wires the
+# colData/rowData/assays/other groups + continuous palettes; JSON config
+# import/export (P3g-c) and factor management (P3g-d) follow.
 
 # Distinct levels of a column, in plot order (factor levels, else sorted unique).
 .pal_levels <- function(x) {
   if (is.factor(x)) levels(x) else sort(unique(as.character(x[!is.na(x)])))
 }
-# A column is configurable here when it is discrete (not numeric) with >= 1 level.
-.pal_is_discrete <- function(x) !is.numeric(x) && length(.pal_levels(x)) >= 1L
-# Sanitize a column name into an input-id-safe token.
-.pal_safe <- function(col) gsub("[^A-Za-z0-9]", "_", col)
+# Sanitize an item name into an input-id-safe token.
+.pal_safe <- function(x) gsub("[^A-Za-z0-9]", "_", x)
 # Show a level-count warning above this many pickers.
 .pal_many_levels <- 12L
+
+# Note listing discrete attributes hidden from the add control (over the cap).
+.pal_hidden_note <- function(items, max_n) {
+  more <- length(items) > 5L
+  shown <- if (more) utils::head(items, 5L) else items
+  sprintf("%d attribute(s) hidden (> %d unique values; raise option ddsdashboard.palette_max_levels to allow). %s%s%s",
+          length(items), max_n,
+          if (more) "Affected fields (first 5): " else "Affected fields: ",
+          paste(shown, collapse = ", "), if (more) ", ..." else "")
+}
+
+# The four Setting pills: domain -> display label.
+.pal_domains <- c(colData = "Sample", rowData = "Feature",
+                  assays = "Assay", other = "Other")
+# "other" maps are fixed, app-internal.
+.pal_other_items <- c("removal_status", "correlation")
+.pal_other_kind  <- c(removal_status = "discrete", correlation = "continuous")
+.pal_removal_levels <- c("pass", "suggested_other", "suggested_this")
 
 # Preview swatch for a palette. `discrete` -> equal-width solid blocks (no
 # interpolation); otherwise a smooth gradient ramp. `name` is the resolvable
@@ -46,6 +61,14 @@
   tags$div(class = "mb-2", tags$div(class = "small mb-1", .pal_label(name)), bar)
 }
 
+# A gradient bar for a continuous palette name (or NULL). Pure.
+.pal_gradient_bar <- function(name, custom = NULL, reverse = FALSE) {
+  cols <- .continuous_stops(name, custom, reverse = reverse)
+  tags$div(style = sprintf(
+    "height:26px;border-radius:4px;border:1px solid var(--bs-border-color);background:linear-gradient(to right, %s);",
+    paste(cols, collapse = ", ")))
+}
+
 # The Preview tab: every catalogue palette grouped, qualitative groups as
 # discrete blocks. Pure/static; the accordion id (ns("ref_acc")) drives Collapse.
 .pal_reference_ui <- function(ns) {
@@ -55,6 +78,7 @@
       if (length(nm)) lapply(nm, .pal_ref_swatch, discrete = disc)
       else tags$p(class = "text-muted small", "Install the source package to preview these."))
   }
+  groups <- setdiff(palette_type_names(), "Custom")   # Custom isn't a real preset
   tagList(
     tags$div(class = "d-flex justify-content-between align-items-center mb-2",
       tags$p(class = "text-muted small mb-0",
@@ -62,48 +86,34 @@
       actionButton(ns("collapse_ref"), "Collapse all", icon = icon("compress"),
                    class = "btn-sm btn-outline-secondary")),
     do.call(bslib::accordion,
-            c(list(id = ns("ref_acc"), multiple = TRUE, open = palette_type_names()[2]),
-              lapply(palette_type_names(), panel)))
+            c(list(id = ns("ref_acc"), multiple = TRUE, open = groups[1]),
+              lapply(groups, panel)))
   )
-}
-
-# 3-level layout matching the Input/QC pages: a navset_card_tab of Setting /
-# Preview. Setting holds the customizable pills (Sample / Feature / Assay /
-# Other), each with its own sidebar (per the QC pattern). Preview is sidebar-free.
-.pal_later_pill <- function(aspect, blurb) {
-  bslib::nav_panel(aspect,
-    bslib::layout_sidebar(
-      sidebar = bslib::sidebar(
-        title = tags$h4(paste(aspect, "colours"), class = "fs-6 mb-0"), width = 300,
-        helpText(class = "text-muted", blurb)),
-      tags$p(class = "text-muted p-2", "Coming in a later slice (P3g-b).")))
 }
 
 mod_palette_ui <- function(id) {
   ns <- NS(id)
+  blurb <- c(colData = "Set colours per sample-metadata column (colData). They feed the QC plots and the ComplexHeatmap annotations.",
+             rowData = "Set colours per feature-metadata column (rowData). Used for heatmap row annotations (P5).",
+             assays  = "Set the expression colour ramp per assay. Used for the expression heatmap / PCA gene colouring (P4/P5).",
+             other   = "Recolour app-internal maps: the QC removal-status colours and the sample-correlation ramp.")
+  pill <- function(dom) {
+    label <- .pal_domains[[dom]]
+    bslib::nav_panel(label,
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          title = tags$h4(paste(label, "colours"), class = "fs-6 mb-0"), width = 310,
+          helpText(blurb[[dom]]),
+          uiOutput(ns(paste0("addui_", dom))),
+          actionButton(ns(paste0("collapse_", dom)), "Collapse all",
+                       icon = icon("compress"), class = "btn-sm btn-outline-secondary")),
+        uiOutput(ns(paste0("panels_", dom)))))
+  }
   bslib::navset_card_tab(
     title = tags$h3("Palette", class = "fs-6 mb-0 pe-3"),
     bslib::nav_panel(
       tags$h4("Setting", class = "fs-6"),
-      bslib::navset_pill(
-        bslib::nav_panel(
-          "Sample",
-          bslib::layout_sidebar(
-            sidebar = bslib::sidebar(
-              title = tags$h4("Sample colours", class = "fs-6 mb-0"), width = 300,
-              helpText(paste("Set colour conventions per sample-metadata column.",
-                             "Configured colours feed both the ggplot plots and the",
-                             "ComplexHeatmap annotations.")),
-              uiOutput(ns("add_ui")),
-              actionButton(ns("collapse_all"), "Collapse all", icon = icon("compress"),
-                           class = "btn-sm btn-outline-secondary")),
-            uiOutput(ns("panels"))
-          )
-        ),
-        .pal_later_pill("Feature", "rowData (feature-metadata) palette controls arrive in a later slice."),
-        .pal_later_pill("Assay", "Assay expression colour ramps arrive in a later slice."),
-        .pal_later_pill("Other", "App-internal colour maps (e.g. removal status) arrive in a later slice.")
-      )
+      do.call(bslib::navset_pill, lapply(names(.pal_domains), pill))
     ),
     bslib::nav_panel(
       tags$h4("Preview", class = "fs-6"),
@@ -117,250 +127,415 @@ mod_palette_ui <- function(id) {
 mod_palette_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
-
-    # Structure trigger: bumped on add / remove / dataset-change so the panels
-    # rebuild on those structural events only. Per-level edits and palette
-    # changes write state and push values back to the controls via update*()
-    # (panels read the config via isolate()), so controls never reset mid-edit.
     struct <- reactiveVal(0L)
     bump <- function() struct(shiny::isolate(struct()) + 1L)
+    observeEvent(state$data_version, bump(), ignoreNULL = FALSE)
 
     has_picker <- requireNamespace("shinyWidgets", quietly = TRUE)
-    pin_id <- function(col, i) paste0("pin_", .pal_safe(col), "_", i)
     update_picker <- function(i_id, value) {
       if (has_picker) shinyWidgets::updateColorPickr(session, i_id, value = value)
       else updateTextInput(session, i_id, value = value)
     }
 
-    # colData columns + their discreteness, for the current dataset.
-    coldata_df <- reactive({
-      req(state$working)
-      as.data.frame(SummarizedExperiment::colData(state$working))
-    })
+    # --- Domain accessors (read state$working live; isolate at call sites) ----
+    dom_frame <- function(dom) {
+      if (dom == "colData") as.data.frame(SummarizedExperiment::colData(state$working))
+      else as.data.frame(SummarizedExperiment::rowData(state$working))
+    }
+    dom_items <- function(dom) {
+      switch(dom,
+        colData = colnames(dom_frame("colData")),
+        rowData = colnames(dom_frame("rowData")),
+        assays  = SummarizedExperiment::assayNames(state$working),
+        other   = .pal_other_items)
+    }
+    dom_needs_data <- function(dom) dom %in% c("colData", "rowData", "assays")
+    dom_kind <- function(dom, item) {
+      if (dom == "assays") return("continuous")
+      if (dom == "other")  return(.pal_other_kind[[item]])
+      if (is.numeric(dom_frame(dom)[[item]])) "continuous" else "discrete"
+    }
+    dom_levels <- function(dom, item) {
+      if (dom == "other") return(.pal_removal_levels)
+      .pal_levels(dom_frame(dom)[[item]])
+    }
+    # Underlying data class for the accordion badge (helps the future factor PR).
+    dom_class <- function(dom, item) {
+      if (dom == "assays") return("numeric")
+      if (dom == "other")  return(if (item == "correlation") "numeric" else "factor")
+      class(dom_frame(dom)[[item]])[1]
+    }
+    # Preset config for a few app-internal items (NULL if none): the removal-status
+    # map keeps its QC green/amber/red, and the correlation ramp defaults to a
+    # reversed RdBu (high correlation = red) anchored to [-1, 1]. Used by both the
+    # add (default) and the reset, so resetting a preset item restores its preset.
+    preset_for <- function(dom, item) {
+      if (dom == "other" && item == "removal_status")
+        return(list(name = "Custom palette", colors = .removal_palette))
+      if (dom == "other" && item == "correlation")
+        return(list(name = "RColorBrewer: RdBu", min = "-1", max = "1",
+                    reverse = TRUE, custom = NULL))
+      NULL
+    }
+    # Default config for a freshly added item (preset if it has one).
+    default_cfg <- function(dom, item) {
+      preset <- preset_for(dom, item)
+      if (!is.null(preset)) return(preset)
+      if (dom_kind(dom, item) == "continuous")
+        list(name = "viridis: viridis", min = "", max = "", reverse = FALSE,
+             custom = c("#FFFFFF", "#000000"))   # custom-ramp starting point
+      else
+        list(name = "Okabe-Ito",
+             colors = palette_discrete(dom_levels(dom, item), NULL, "Okabe-Ito"))
+    }
 
-    # --- Sidebar: add-a-mapping control -------------------------------------
-    output$add_ui <- renderUI({
-      if (is.null(state$working)) {
-        return(helpText(class = "text-muted", "Load a dataset to configure colours."))
-      }
-      cd <- coldata_df()
-      discrete <- names(cd)[vapply(cd, .pal_is_discrete, logical(1))]
-      choices <- setdiff(discrete, names(state$palette$colData))
-      tagList(
-        selectInput(ns("add_col"), "Add colour mapping for",
-                    choices = if (length(choices)) choices else character(0)),
-        actionButton(ns("add_btn"), "Add", icon = icon("plus"),
-                     class = "btn-sm btn-primary",
-                     disabled = if (!length(choices)) NA else NULL),
-        if (!length(choices) && length(discrete))
-          helpText(class = "text-muted small mt-1", "All discrete columns are configured.")
-      )
-    })
+    # --- Per-item id helpers + observer registry ----------------------------
+    key_of  <- function(dom, item) paste0(dom, "__", .pal_safe(item))
+    pin_id  <- function(dom, item, i) paste0("pin_", key_of(dom, item), "_", i)
+    iid     <- function(prefix, dom, item) paste0(prefix, "_", key_of(dom, item))
 
-    # Per-column observers (per-level pickers + palette type/name + reset +
-    # remove + preview), registered once per column. Observers capture the
-    # column's levels, so they are destroyed + re-registered whenever the dataset
-    # changes (a persisted config may now map a column with different levels). All
-    # observers use ignoreInit so a stale input value never re-fires on (re)registration.
-    registered  <- new.env(parent = emptyenv())   # key -> TRUE once registered
-    obs_handles <- new.env(parent = emptyenv())    # key -> list of observer handles
-
-    unregister_col <- function(key) {
+    registered  <- new.env(parent = emptyenv())
+    obs_handles <- new.env(parent = emptyenv())
+    unregister_item <- function(key) {
       h <- obs_handles[[key]]
       if (!is.null(h)) lapply(h, function(o) if (!is.null(o)) o$destroy())
       obs_handles[[key]] <- NULL
       registered[[key]] <- NULL
     }
-
-    # Write a single field of a column's config (wholesale list assign).
-    set_cfg <- function(col, field, value) {
-      p <- state$palette; p$colData[[col]][[field]] <- value; state$palette <- p
+    set_cfg <- function(dom, item, field, value) {
+      p <- state$palette; p[[dom]][[item]][[field]] <- value; state$palette <- p
     }
 
-    register_col <- function(col) {
-      key <- .pal_safe(col)
+    register_item <- function(dom, item) {
+      key <- key_of(dom, item)
       if (!is.null(registered[[key]])) return(invisible())
       registered[[key]] <- TRUE
-      # Levels are read *live* (cur_lvls) inside every observer, so the observers
-      # stay correct if a later dataset reload changes this column's levels -- no
-      # destroy/re-register dance (which races with the deferred data_version
-      # flush). Only the per-level observer *count* is fixed at registration: a
-      # reload that adds levels beyond it leaves the extra levels palette-filled
-      # (re-add the column to hand-edit them).
-      cur_lvls <- function() .pal_levels(shiny::isolate(coldata_df())[[col]])
-      n0 <- length(cur_lvls())
+      cur <- function() state$palette[[dom]][[item]]
 
-      # Apply a named palette: regenerate the full colour map and push every
-      # picker to its new colour. Colours are normalized (palette_discrete), so a
-      # picker echo equals the stored value and won't be mistaken for an edit.
-      apply_named <- function(name) {
-        lvls <- cur_lvls()
-        cols <- palette_discrete(lvls, NULL, name)
-        p <- state$palette
-        p$colData[[col]]$name <- name
-        p$colData[[col]]$colors <- cols
-        state$palette <- p
-        for (i in seq_along(lvls)) update_picker(pin_id(col, i), unname(cols[[lvls[i]]]))
+      remove_obs <- observeEvent(input[[iid("remove", dom, item)]], {
+        p <- state$palette; p[[dom]][[item]] <- NULL; state$palette <- p
+        unregister_item(key); bump()
+      }, ignoreInit = TRUE)
+
+      if (dom_kind(dom, item) == "continuous") {
+        # Continuous: palette name + min/max anchors. Preview is the palette
+        # gradient (range is resolved against real data at the consumer).
+        name_obs <- observeEvent(input[[iid("cname", dom, item)]], {
+          if (is.null(cur())) return()
+          set_cfg(dom, item, "name", input[[iid("cname", dom, item)]] %||% "viridis: viridis")
+        }, ignoreInit = TRUE)
+        min_obs <- observeEvent(input[[iid("cmin", dom, item)]],
+          if (!is.null(cur())) set_cfg(dom, item, "min", input[[iid("cmin", dom, item)]]),
+          ignoreInit = TRUE)
+        max_obs <- observeEvent(input[[iid("cmax", dom, item)]],
+          if (!is.null(cur())) set_cfg(dom, item, "max", input[[iid("cmax", dom, item)]]),
+          ignoreInit = TRUE)
+        rev_obs <- observeEvent(input[[iid("crev", dom, item)]],
+          if (!is.null(cur())) set_cfg(dom, item, "reverse", isTRUE(input[[iid("crev", dom, item)]])),
+          ignoreInit = TRUE)
+        # Custom ramp: N stops (2-5) low -> high. The current anchors, with a
+        # white -> black fallback.
+        cur_custom <- function() {
+          cc <- cur()$custom
+          if (length(cc) >= 2L) cc else c("#FFFFFF", "#000000")
+        }
+        n_stops <- function() {
+          n <- suppressWarnings(as.integer(input[[iid("cnstops", dom, item)]]))
+          if (length(n) != 1L || is.na(n)) length(cur_custom()) else n
+        }
+        # Changing the stop count resamples the current ramp (colorRampPalette
+        # preserves the endpoints + shape) and repaints the N pickers.
+        nstops_obs <- observeEvent(input[[iid("cnstops", dom, item)]], {
+          if (is.null(cur())) return()
+          newN <- suppressWarnings(as.integer(input[[iid("cnstops", dom, item)]]))
+          if (is.na(newN) || newN < 2L || newN > 5L) return()
+          if (length(cur()$custom) == newN) return()              # no-op
+          new <- grDevices::colorRampPalette(cur_custom())(newN)
+          set_cfg(dom, item, "custom", new)
+          for (j in seq_len(newN)) update_picker(iid(paste0("ccol", j), dom, item), new[j])
+        }, ignoreInit = TRUE)
+        # Each visible picker (1..N) contributes one anchor colour.
+        ccol_obs <- lapply(1:5, function(j) {
+          observeEvent(input[[iid(paste0("ccol", j), dom, item)]], {
+            if (is.null(cur())) return()
+            n <- n_stops(); if (j > n) return()
+            vals <- vapply(seq_len(n), function(k) {
+              v <- norm_color(input[[iid(paste0("ccol", k), dom, item)]])
+              if (is.na(v)) "#000000" else v
+            }, character(1))
+            set_cfg(dom, item, "custom", unname(vals))
+          }, ignoreInit = TRUE)
+        })
+        # Reset = restore the preset if this item has one; otherwise keep the
+        # chosen palette and just clear the extras (anchors, reverse, and -- for a
+        # Custom ramp -- the colours back to white -> black). Re-sync EVERY control
+        # to the restored config (this is also what repaints the colour pickers).
+        reset_obs <- observeEvent(input[[iid("creset", dom, item)]], {
+          preset <- preset_for(dom, item)
+          new <- if (!is.null(preset)) preset else {
+            nm <- cur()$name %||% "viridis: viridis"
+            list(name = nm, min = "", max = "", reverse = FALSE,
+                 custom = if (identical(nm, "Custom ramp")) c("#FFFFFF", "#000000")
+                          else cur()$custom)
+          }
+          p <- state$palette; p[[dom]][[item]] <- new; state$palette <- p
+          updateSelectInput(session, iid("cname", dom, item), selected = new$name)
+          updateTextInput(session, iid("cmin", dom, item), value = new$min %||% "")
+          updateTextInput(session, iid("cmax", dom, item), value = new$max %||% "")
+          updateCheckboxInput(session, iid("crev", dom, item), value = isTRUE(new$reverse))
+          cc <- if (length(new$custom) >= 2L) new$custom else c("#FFFFFF", "#000000")
+          updateSelectInput(session, iid("cnstops", dom, item), selected = length(cc))
+          for (j in seq_along(cc)) update_picker(iid(paste0("ccol", j), dom, item), cc[j])
+        }, ignoreInit = TRUE)
+        obs_handles[[key]] <- c(ccol_obs,
+          list(name_obs, min_obs, max_obs, rev_obs, nstops_obs, reset_obs, remove_obs))
+        output[[iid("cpreview", dom, item)]] <- renderUI({
+          cfg <- cur(); req(cfg)
+          .pal_gradient_bar(cfg$name %||% "viridis: viridis", cfg$custom, isTRUE(cfg$reverse))
+        })
+        return(invisible())
       }
 
-      # Palette selector (one optgroup selectize). Selecting a named palette
-      # regenerates the colours; selecting "Custom palette" just marks the column
-      # custom and keeps the current colours (the editable starting point). The
-      # pin-edit flip below also lands here via updateSelectInput.
-      name_obs <- observeEvent(input[[paste0("name_", key)]], {
-        if (is.null(state$palette$colData[[col]])) return()
-        name <- input[[paste0("name_", key)]]
-        if (is.null(name)) return()
-        if (identical(name, "Custom palette")) set_cfg(col, "name", "Custom palette")
+      # Discrete: base palette + per-level hand-edits (flip to Custom).
+      n0 <- length(dom_levels(dom, item))
+      apply_named <- function(name) {
+        lvls <- dom_levels(dom, item)
+        cols <- palette_discrete(lvls, NULL, name)
+        p <- state$palette
+        p[[dom]][[item]]$name <- name; p[[dom]][[item]]$colors <- cols
+        state$palette <- p
+        for (i in seq_along(lvls)) update_picker(pin_id(dom, item, i), unname(cols[[lvls[i]]]))
+      }
+      name_obs <- observeEvent(input[[iid("name", dom, item)]], {
+        if (is.null(cur())) return()
+        name <- input[[iid("name", dom, item)]]; if (is.null(name)) return()
+        if (identical(name, "Custom palette")) set_cfg(dom, item, "name", "Custom palette")
         else apply_named(name)
       }, ignoreInit = TRUE)
-
-      # One observer per level: a hand-edit updates that colour and flips the
-      # palette to "Custom" (the colour map already holds every level).
       pin_obs <- lapply(seq_len(n0), function(i) {
-        observeEvent(input[[pin_id(col, i)]], {
-          if (is.null(state$palette$colData[[col]])) return()
-          lvls <- cur_lvls(); if (i > length(lvls)) return()
-          lev <- lvls[i]
-          hex <- norm_color(input[[pin_id(col, i)]])
+        observeEvent(input[[pin_id(dom, item, i)]], {
+          if (is.null(cur())) return()
+          lvls <- dom_levels(dom, item); if (i > length(lvls)) return()
+          lev <- lvls[i]; hex <- norm_color(input[[pin_id(dom, item, i)]])
           if (is.na(hex)) return()
-          p <- state$palette
-          cols <- p$colData[[col]]$colors
-          if (identical(unname(cols[[lev]]), unname(hex))) return()       # no change
-          cols[[lev]] <- unname(hex)
-          p$colData[[col]]$colors <- cols
-          was_named <- !identical(p$colData[[col]]$name, "Custom palette")
-          if (was_named) p$colData[[col]]$name <- "Custom palette"
+          p <- state$palette; cols <- p[[dom]][[item]]$colors
+          if (identical(unname(cols[[lev]]), unname(hex))) return()
+          cols[[lev]] <- unname(hex); p[[dom]][[item]]$colors <- cols
+          was_named <- !identical(p[[dom]][[item]]$name, "Custom palette")
+          if (was_named) p[[dom]][[item]]$name <- "Custom palette"
           state$palette <- p
-          if (was_named)                                    # reflect in the selector
-            updateSelectInput(session, paste0("name_", key), selected = "Custom palette")
+          if (was_named)
+            updateSelectInput(session, iid("name", dom, item), selected = "Custom palette")
         }, ignoreInit = TRUE)
       })
-
-      # Reset: back to the default palette (Okabe-Ito).
-      reset_obs <- observeEvent(input[[paste0("reset_", key)]], {
-        apply_named("Okabe-Ito")
-        updateSelectInput(session, paste0("name_", key), selected = "Okabe-Ito")
+      # Reset = restore the preset if this item has one (e.g. removal_status's
+      # green/amber/red); otherwise revert to the Okabe-Ito default, clearing any
+      # hand-edits. Re-sync the palette selector + every level picker.
+      reset_obs <- observeEvent(input[[iid("reset", dom, item)]], {
+        preset <- preset_for(dom, item)
+        lvls <- dom_levels(dom, item)
+        new <- if (!is.null(preset)) preset
+               else list(name = "Okabe-Ito", colors = palette_discrete(lvls, NULL, "Okabe-Ito"))
+        p <- state$palette; p[[dom]][[item]] <- new; state$palette <- p
+        updateSelectInput(session, iid("name", dom, item), selected = new$name)
+        resolved <- palette_discrete(lvls, new$colors, new$name %||% "Okabe-Ito", new$custom)
+        for (i in seq_along(lvls)) update_picker(pin_id(dom, item, i), unname(resolved[[lvls[i]]]))
       }, ignoreInit = TRUE)
-
-      remove_obs <- observeEvent(input[[paste0("remove_", key)]], {
-        p <- state$palette; p$colData[[col]] <- NULL; state$palette <- p
-        unregister_col(key)                              # drop this column's observers
-        bump()
-      }, ignoreInit = TRUE)
-
       obs_handles[[key]] <- c(pin_obs, list(name_obs, reset_obs, remove_obs))
-
-      # Live preview swatch row (reads state$palette, so it updates on every edit).
-      output[[paste0("preview_", key)]] <- renderPlot({
-        cd <- coldata_df()
-        if (!col %in% colnames(cd)) return(NULL)
-        cfg <- state$palette$colData[[col]]; req(cfg)
-        lv <- .pal_levels(cd[[col]])
-        cols <- palette_discrete(lv, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
-        df <- data.frame(level = factor(names(cols), levels = names(cols)), y = 1L)
-        ggplot2::ggplot(df, ggplot2::aes(x = .data$level, y = .data$y, fill = .data$level)) +
-          ggplot2::geom_col(width = 1) +
-          ggplot2::scale_fill_manual(values = cols, guide = "none") +
-          ggplot2::labs(x = NULL, y = NULL) +
-          ggplot2::theme_minimal(base_size = 11) +
-          ggplot2::theme(axis.text.y = ggplot2::element_blank(),
-                         axis.text.x = ggplot2::element_text(angle = 45, hjust = 1),
-                         panel.grid = ggplot2::element_blank())
-      }, height = 90)
       invisible()
     }
 
-    # --- Add: seed a default discrete config, then register its observers ----
-    observeEvent(input$add_btn, {
-      col <- input$add_col
-      req(col, is.null(state$palette$colData[[col]]))
-      lvls <- .pal_levels(coldata_df()[[col]])
-      p <- state$palette
-      p$colData[[col]] <- list(name = "Okabe-Ito",
-                               colors = palette_discrete(lvls, NULL, "Okabe-Ito"))
-      state$palette <- p
-      register_col(col)
-      bump()
+    # High-cardinality guard: hide attributes above the hard cap from the add
+    # control; warn (confirm) between the warn threshold and the cap.
+    max_levels  <- function() getOption("ddsdashboard.palette_max_levels", 50L)
+    warn_levels <- function() getOption("ddsdashboard.palette_warn_levels", 10L)
+    just_added <- reactiveVal(NULL)        # so a rebuild opens only the new panel
+    do_add <- function(dom, item) {
+      p <- state$palette; p[[dom]][[item]] <- default_cfg(dom, item); state$palette <- p
+      register_item(dom, item); just_added(list(dom = dom, item = item)); bump()
+    }
+    pending_add <- reactiveVal(NULL)
+    observeEvent(input$confirm_add, {
+      pa <- pending_add(); req(pa)
+      do_add(pa$dom, pa$item); pending_add(NULL); removeModal()
     })
 
-    # Collapse all open accordion panels. The id is the *unnamespaced* one:
-    # accordion_panel_close -> session$sendInputMessage already applies the
-    # module namespace, so passing ns(...) would double-namespace and no-op.
-    observeEvent(input$collapse_all, bslib::accordion_panel_close("acc", values = TRUE))
-    observeEvent(input$collapse_ref, bslib::accordion_panel_close("ref_acc", values = TRUE))
-
-    # Dataset change: rebuild the panels so a surviving config's pickers reflect
-    # the new levels. Observers read levels live (see register_col), so they need
-    # no re-registration; configs for columns absent from the new dataset simply
-    # don't render (the config persists, harmless).
-    observeEvent(state$data_version, bump(), ignoreNULL = FALSE)
-
-    # --- Panels: one accordion item per configured colData column ------------
-    output$panels <- renderUI({
-      struct()                                  # rebuild on add / remove / dataset change
-      if (is.null(state$working)) {
-        return(tags$p(class = "text-muted p-2", "Load a dataset to configure colours."))
-      }
-      cd <- shiny::isolate(coldata_df())
-      cfg <- shiny::isolate(state$palette$colData)
-      cols <- intersect(names(cfg), colnames(cd))
-      if (!length(cols)) {
-        return(tags$p(class = "text-muted p-2",
-                      'No colour mappings yet. Use "Add colour mapping" in the sidebar.'))
-      }
-      panels <- lapply(cols, function(col) .palette_panel(ns, col, cd[[col]], cfg[[col]],
-                                                          has_picker, pin_id))
-      do.call(bslib::accordion,
-              c(list(id = ns("acc"), open = TRUE, multiple = TRUE), panels))
+    # --- Wire each domain's add control, panels, and collapse ----------------
+    for (dom in names(.pal_domains)) local({
+      d <- dom
+      output[[paste0("addui_", d)]] <- renderUI({
+        if (dom_needs_data(d) && is.null(state$working))
+          return(helpText(class = "text-muted", "Load a dataset to configure colours."))
+        unconfigured <- setdiff(dom_items(d), names(state$palette[[d]]))
+        over_cap <- Filter(function(it)
+          dom_kind(d, it) == "discrete" && length(dom_levels(d, it)) > max_levels(),
+          unconfigured)
+        choices <- setdiff(unconfigured, over_cap)
+        tagList(
+          selectInput(ns(paste0("addsel_", d)), "Add colour mapping for",
+                      choices = if (length(choices)) choices else character(0)),
+          actionButton(ns(paste0("addbtn_", d)), "Add", icon = icon("plus"),
+                       class = "btn-sm btn-primary",
+                       disabled = if (!length(choices)) NA else NULL),
+          if (!length(choices) && !length(over_cap) && length(dom_items(d)))
+            helpText(class = "text-muted small mt-1", "All available items are configured."),
+          if (length(over_cap))
+            helpText(class = "text-muted small mt-1", .pal_hidden_note(over_cap, max_levels())))
+      })
+      observeEvent(input[[paste0("addbtn_", d)]], {
+        item <- input[[paste0("addsel_", d)]]
+        req(item, is.null(state$palette[[d]][[item]]))
+        if (dom_kind(d, item) == "discrete") {
+          n <- length(dom_levels(d, item))
+          if (n > warn_levels()) {           # over-cap items are already filtered out
+            pending_add(list(dom = d, item = item))
+            showModal(modalDialog(title = "Many unique values",
+              sprintf("'%s' has %d unique values; adding it creates %d colour pickers and may be slow.",
+                      item, n, n),
+              footer = tagList(modalButton("Cancel"),
+                               actionButton(ns("confirm_add"), "Proceed", class = "btn-warning"))))
+            return()
+          }
+        }
+        do_add(d, item)
+      })
+      observeEvent(input[[paste0("collapse_", d)]],
+                   bslib::accordion_panel_close(paste0("acc_", d), values = TRUE))
+      output[[paste0("panels_", d)]] <- renderUI({
+        struct()
+        if (dom_needs_data(d) && is.null(state$working))
+          return(tags$p(class = "text-muted p-2", "Load a dataset to configure colours."))
+        cfg <- shiny::isolate(state$palette[[d]])
+        items <- intersect(names(cfg), shiny::isolate(dom_items(d)))
+        if (!length(items))
+          return(tags$p(class = "text-muted p-2",
+                        'No colour mappings yet. Use "Add colour mapping" in the sidebar.'))
+        panels <- lapply(items, function(it) .palette_item_panel(ns, d, it, cfg[[it]],
+                                                                 shiny::isolate(dom_kind(d, it)),
+                                                                 shiny::isolate(dom_class(d, it)),
+                                                                 shiny::isolate(dom_levels(d, it)),
+                                                                 has_picker))
+        # Preserve which panels are open across rebuilds (a rebuild otherwise
+        # re-opens all): keep the currently-open set + the just-added item.
+        open_now <- shiny::isolate(input[[paste0("acc_", d)]])
+        ja <- shiny::isolate(just_added())
+        open_set <- unique(c(open_now, if (!is.null(ja) && ja$dom == d) ja$item))
+        do.call(bslib::accordion,
+                c(list(id = ns(paste0("acc_", d)), multiple = TRUE,
+                       open = if (length(open_set)) open_set else FALSE), panels))
+      })
     })
+
+    observeEvent(input$collapse_ref,
+                 bslib::accordion_panel_close("ref_acc", values = TRUE))
 
     invisible(NULL)
   })
 }
 
-# Build the accordion panel for one discrete colData column. Controls are seeded
-# from the resolved colours (the config's `colors`, filled from its palette).
-.palette_panel <- function(ns, col, x, cfg, has_picker, pin_id) {
-  lvls <- .pal_levels(x)
-  name <- cfg$name %||% "Okabe-Ito"
-  resolved <- palette_discrete(lvls, cfg$colors, name, cfg$custom)
-  key <- .pal_safe(col)
-
-  one_picker <- function(i) {
-    lev <- lvls[i]; val <- unname(resolved[[lev]]); pid <- ns(pin_id(col, i))
-    if (has_picker) {
-      shinyWidgets::colorPickr(pid, label = lev, selected = val, update = "save",
-                               width = "100%", useAsButton = TRUE,
-                               interaction = list(input = TRUE, save = TRUE, clear = FALSE))
-    } else {
-      tags$div(class = "d-flex align-items-center gap-2 mb-1",
-        tags$span(style = sprintf(
-          "display:inline-block;width:1.1rem;height:1.1rem;border-radius:3px;border:1px solid #888;background:%s;",
-          val)),
-        textInput(pid, label = NULL, value = val, width = "120px"),
-        tags$span(class = "small text-muted", lev))
-    }
-  }
-
-  body <- tagList(
-    selectInput(ns(paste0("name_", key)), "Base palette",
-                choices = palette_choices(), selected = name),
-    if (length(lvls) > .pal_many_levels)
-      tags$div(class = "alert alert-warning py-1 px-2 small",
-               sprintf("%d levels - colours are interpolated; pinning each is tedious.",
-                       length(lvls))),
-    tags$div(class = "small fw-semibold mb-1", "Levels"),
-    tags$div(class = if (has_picker) "d-flex flex-wrap gap-2 mb-2" else "mb-2",
-             lapply(seq_along(lvls), one_picker)),
-    plotOutput(ns(paste0("preview_", key)), height = "90px"),
-    tags$div(class = "d-flex gap-2 mt-2",
-      bslib::tooltip(
-        actionButton(ns(paste0("reset_", key)), "Reset to palette",
-                     icon = icon("rotate-left"), class = "btn-sm btn-outline-secondary"),
-        "Reset to the default palette (Okabe-Ito)."),
-      actionButton(ns(paste0("remove_", key)), "Remove mapping",
-                   icon = icon("trash"), class = "btn-sm btn-outline-danger"))
-  )
-  bslib::accordion_panel(title = col, value = col, body)
+# Type (Discrete/Continuous) + data-class badges shown in each accordion title.
+.pal_badges <- function(kind, klass) {
+  tagList(
+    tags$span(class = "badge rounded-pill text-bg-secondary ms-2 fw-normal",
+              if (identical(kind, "continuous")) "Continuous" else "Discrete"),
+    if (!is.null(klass) && nzchar(klass))
+      tags$span(class = "badge rounded-pill text-bg-light ms-1 fw-normal", klass))
 }
+
+# Build the accordion panel for one item (discrete or continuous).
+.palette_item_panel <- function(ns, dom, item, cfg, kind, klass, levels, has_picker) {
+  key <- paste0(dom, "__", .pal_safe(item))
+  id  <- function(prefix) ns(paste0(prefix, "_", key))
+  remove_btn <- actionButton(id("remove"), "Remove mapping", icon = icon("trash"),
+                             class = "btn-sm btn-outline-danger")
+
+  body <- if (kind == "continuous") {
+    name <- cfg$name %||% "viridis: viridis"
+    # Custom ramp: an N-stops (2-5) selector + N colour pickers (low -> high).
+    # The visible pickers are gated client-side on the stop count; all 5 are seeded
+    # from the current anchors (never NULL -- a null initial colour makes the picker
+    # throw and breaks every picker on the page).
+    cur_custom <- if (length(cfg$custom) >= 2L) cfg$custom else c("#FFFFFF", "#000000")
+    seed5 <- grDevices::colorRampPalette(cur_custom)(5)
+    ccol_picker <- function(j) {
+      if (has_picker) {
+        shinyWidgets::colorPickr(id(paste0("ccol", j)), label = NULL, selected = seed5[j],
+                                 update = "save", useAsButton = TRUE,
+                                 interaction = list(input = TRUE, save = TRUE, clear = FALSE))
+      } else {
+        textInput(id(paste0("ccol", j)), label = NULL, value = seed5[j], width = "90px")
+      }
+    }
+    custom_ui <- conditionalPanel(
+      condition = sprintf("input['%s'] == 'Custom ramp'", id("cname")),
+      selectInput(id("cnstops"), "Number of colours", choices = 2:5,
+                  selected = length(cur_custom)),
+      tags$div(class = "small fw-semibold mb-1", "Ramp colours (low -> high)"),
+      tags$div(class = "d-flex flex-wrap gap-2 mb-2 pal-level-row",
+        lapply(1:5, function(j)
+          conditionalPanel(
+            condition = sprintf("parseInt(input['%s']) >= %d", id("cnstops"), j),
+            ccol_picker(j)))))
+    tagList(
+      selectInput(id("cname"), "Continuous palette",
+                  choices = palette_continuous_choices()[
+                    c("viridis", "Brewer: Sequential", "Brewer: Divergent", "Custom")],
+                  selected = name),
+      checkboxInput(id("crev"), "Reverse direction", value = isTRUE(cfg$reverse)),
+      bslib::layout_columns(col_widths = c(6, 6),
+        textInput(id("cmin"), "Min anchor", value = cfg$min %||% "",
+                  placeholder = "e.g. 0  or  p5"),
+        textInput(id("cmax"), "Max anchor", value = cfg$max %||% "",
+                  placeholder = "e.g. 100  or  p95")),
+      helpText(class = "text-muted small",
+               "Leave blank to use the data min/max, or enter a number, or a percentile like p5 / p95."),
+      custom_ui,
+      uiOutput(id("cpreview")),
+      tags$div(class = "d-flex gap-2 mt-2",
+        bslib::tooltip(
+          actionButton(id("creset"), "Reset", icon = icon("rotate-left"),
+                       class = "btn-sm btn-outline-secondary"),
+          "Clear the anchors, reverse, and any custom-ramp colours (preset items restore their preset)."),
+        remove_btn))
+  } else {
+    name <- cfg$name %||% "Okabe-Ito"
+    resolved <- palette_discrete(levels, cfg$colors, name, cfg$custom)
+    # One compact row per level: the colour swatch/picker, then the level label to
+    # its right (larger font). Rows stack vertically (kept for future factor
+    # reordering).
+    one_picker <- function(i) {
+      lev <- levels[i]; val <- unname(resolved[[lev]]); pid <- ns(pin_id_str(key, i))
+      picker <- if (has_picker) {
+        shinyWidgets::colorPickr(pid, label = NULL, selected = val, update = "save",
+                                 useAsButton = TRUE,
+                                 interaction = list(input = TRUE, save = TRUE, clear = FALSE))
+      } else {
+        tagList(
+          tags$span(style = sprintf(
+            "display:inline-block;width:1.4rem;height:1.4rem;border-radius:3px;border:1px solid #888;background:%s;", val)),
+          textInput(pid, label = NULL, value = val, width = "110px"))
+      }
+      tags$div(class = "d-flex align-items-center gap-2 mb-1 pal-level-row",
+               picker, tags$span(class = "fw-medium", lev))
+    }
+    tagList(
+      selectInput(id("name"), "Base palette", choices = palette_choices(), selected = name),
+      if (length(levels) > .pal_many_levels)
+        tags$div(class = "alert alert-warning py-1 px-2 small",
+                 sprintf("%d levels - colours are interpolated; pinning each is tedious.",
+                         length(levels))),
+      tags$div(class = "small fw-semibold mb-1", "Levels"),
+      tags$div(class = "mb-2", lapply(seq_along(levels), one_picker)),
+      tags$div(class = "d-flex gap-2 mt-2",
+        bslib::tooltip(
+          actionButton(id("reset"), "Reset to palette", icon = icon("rotate-left"),
+                       class = "btn-sm btn-outline-secondary"),
+          "Reset to the default palette (or this attribute's preset), clearing per-level edits."),
+        remove_btn))
+  }
+  bslib::accordion_panel(title = tags$span(item, .pal_badges(kind, klass)),
+                         value = item, body)
+}
+
+# pin id string (without ns); mirrors the server's pin_id().
+pin_id_str <- function(key, i) paste0("pin_", key, "_", i)

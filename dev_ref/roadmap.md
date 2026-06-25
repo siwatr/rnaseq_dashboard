@@ -64,19 +64,31 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   heatmap agree; per-level pins are honoured. Palette page is empty-by-default, opt-in per column
   (accordion panel, `shinyWidgets::colorPickr` with `col2rgb` R-name/CSS normalization + textInput
   fallback, live preview). `state$palette` is a UI pref (untouched by load/reset, no `data_version`).
-  [PR #TBD]
-  Discrete engine extended with a two-level palette selector (Qualitative/Sequential/Divergent/Custom →
-  name), the full `viridisLite`/`RColorBrewer` catalogue, a Reference tab, Collapse-all, and the
-  remove→re-add fix. Config shape is `list(type, name, colors)`.
-- **P3g-b ⬅️ next** project-wide **Palette page** — continuous palettes + rowData/assays/Other groups +
-  config import/export + factor management. `palette_continuous(values, spec)` → `circlize::colorRamp2`
-  (heatmap) **and** a ggplot `scale_*_gradientn(colours/values/limits)` spec, with `p<pct>` percentile
-  anchors resolved against plotted data. rowData / assays / **Other** tabs (fold in the removal-status
-  discrete map + the correlation-heatmap score ramp). JSON config import/export (`jsonlite`). **Factor
-  management** — coerce a colData/rowData column to factor + reorder its levels (drives both plot order
-  and the palette mapping). The ggplot continuous *consumers* land with P4 (PCA colour-by-gene) and P5
-  (heatmap), reusing this resolver. (The legacy Themer gallery can be retired once its component
-  sub-tab is no longer needed — the Heatmap sub-tab is already superseded by the Reference tab.)
+  Single optgroup palette selector (Custom / Qualitative / Brewer: Qual/Seq/Div / viridis), the full
+  `viridisLite`/`RColorBrewer` catalogue, a Preview tab, Collapse-all. Config shape `list(name, colors)`.
+  [PR #19]
+- **P3g-b ✅** project-wide **Palette page** — **continuous palettes + the Feature/Assay/Other pills**.
+  The page is a `navset_card_tab` (Setting / Preview); Setting holds Sample / Feature / Assay / Other
+  pills, each a `layout_sidebar`. The panel machinery is generalized over four domains
+  (`colData`/`rowData`/`assays`/`other`), each item discrete *or* continuous (by column type; assays
+  continuous; `other` = a discrete removal-status map + a continuous correlation ramp). New continuous
+  engine: `palette_continuous_choices()`, `palette_resolve_range()` (number / `p<pct>` / data-range
+  anchors), `palette_colorramp2()` (→ `circlize::colorRamp2` for heatmaps) and `palette_gradientn()`
+  (→ ggplot `scale_*_gradientn` pieces). Wired consumers: numeric `colData` annotations + the
+  correlation-heatmap ramp (`qc_annotation_colors` / `.qc_correlation_heatmap` `cor_config`) and the
+  QC removal-status map (`removal_palette()`); rowData/assay configs are stored for the P4/P5
+  consumers. Continuous config shape `list(name, min, max, reverse, custom)`. Custom continuous ramp
+  is an **N-stops (2-5) selector** whose pickers resample via `colorRampPalette` when the count changes
+  (default white -> black); reverse-direction checkbox; high-cardinality guard (warn/cap options);
+  Type/Class accordion badges; presets (`removal_status`, `correlation`). [PR #TBD]
+- **P3g-c ⬅️ next** Palette **config import/export** (JSON via `jsonlite`): round-trip the whole
+  `state$palette` so a lab can reuse a palette across datasets. Also an **"Edit palette" button** on
+  non-custom continuous palettes: extract the palette to 5 anchor colours, switch to "Custom ramp", and
+  seed those anchors (palettes with > 5 stops lose some fidelity — acceptable); reset reverts to the
+  white -> black default.
+- **P3g-d** Palette **factor management** — coerce a `colData`/`rowData` column to factor + reorder its
+  levels (drives both plot order and the palette mapping). (The legacy Themer gallery can be retired —
+  its Heatmap sub-tab is already superseded by the Preview tab.)
 
 ## Phase 4 — Dimensionality reduction ⬜
 - PCA-focused (t-SNE/UMAP gated by sample count). Top-variable genes (default 500, assay
