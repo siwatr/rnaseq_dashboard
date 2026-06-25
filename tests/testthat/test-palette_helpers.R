@@ -126,3 +126,13 @@ test_that("palette_colorramp2 + palette_gradientn resolve named + custom ramps",
   expect_equal(g$values, seq(0, 1, length.out = length(g$colours)))
   expect_true(all(grepl("^#[0-9A-F]{6}$", g$colours)))
 })
+
+test_that("continuous reverse flips the ramp; custom ramp uses supplied colours", {
+  g  <- palette_gradientn("viridis: viridis", 0:10)
+  gr <- palette_gradientn("viridis: viridis", 0:10, reverse = TRUE)
+  expect_equal(gr$colours, rev(g$colours))
+  c1 <- palette_gradientn("Custom ramp", 0:10, custom = c("#000000", "#ffffff"))
+  c2 <- palette_gradientn("Custom ramp", 0:10, custom = c("#000000", "#ffffff"), reverse = TRUE)
+  expect_equal(c2$colours, rev(c1$colours))
+  expect_equal(c1$colours[1], "#000000")           # ramps low -> high through custom
+})

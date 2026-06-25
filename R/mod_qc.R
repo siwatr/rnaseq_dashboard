@@ -356,7 +356,8 @@
   rng <- range(cor_mat, na.rm = TRUE)
   col_fun <- if (!is.null(cor_config) && !is.null(cor_config$name)) {
     palette_colorramp2(cor_config$name, values = as.numeric(cor_mat),
-                       min = cor_config$min, max = cor_config$max, custom = cor_config$custom)
+                       min = cor_config$min, max = cor_config$max,
+                       custom = cor_config$custom, reverse = isTRUE(cor_config$reverse))
   } else if (requireNamespace("circlize", quietly = TRUE)) {
     circlize::colorRamp2(c(rng[1], mean(rng), rng[2]),
                          c("#fff7fb", "#74a9cf", "#023858"))

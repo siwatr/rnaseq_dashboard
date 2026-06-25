@@ -4,7 +4,15 @@
 \alias{palette_gradientn}
 \title{Continuous colour mapping for a ggplot gradient scale}
 \usage{
-palette_gradientn(name, values, min = NULL, max = NULL, custom = NULL, n = 9L)
+palette_gradientn(
+  name,
+  values,
+  min = NULL,
+  max = NULL,
+  custom = NULL,
+  n = 9L,
+  reverse = FALSE
+)
 }
 \arguments{
 \item{name}{Palette name (see \code{\link[=palette_continuous_choices]{palette_continuous_choices()}}).}
@@ -16,6 +24,8 @@ palette_gradientn(name, values, min = NULL, max = NULL, custom = NULL, n = 9L)
 \item{custom}{Anchor colours when \code{name = "Custom ramp"}.}
 
 \item{n}{Number of ramp stops.}
+
+\item{reverse}{Reverse the palette direction.}
 }
 \value{
 A list with \code{colours}, \code{values}, \code{limits}.

@@ -307,8 +307,8 @@ qc_annotation_colors <- function(df, config = NULL) {
       if (!requireNamespace("circlize", quietly = TRUE)) return(NULL)
       cfg <- config[[name]]
       if (!is.null(cfg) && !is.null(cfg$name)) {   # configured continuous palette
-        return(palette_colorramp2(cfg$name, values = x, min = cfg$min,
-                                  max = cfg$max, custom = cfg$custom))
+        return(palette_colorramp2(cfg$name, values = x, min = cfg$min, max = cfg$max,
+                                  custom = cfg$custom, reverse = isTRUE(cfg$reverse)))
       }
       rng <- range(x, na.rm = TRUE)               # default viridis-like ramp
       if (!is.finite(diff(rng)) || diff(rng) == 0) rng <- c(rng[1] - 0.5, rng[1] + 0.5)

@@ -265,15 +265,18 @@ palette_resolve_range <- function(values, min = NULL, max = NULL) {
   c(lo, hi)
 }
 
-# Stop colours for a continuous palette (named palette, or a custom ramp).
-.continuous_stops <- function(name, custom = NULL, n = 9L) {
-  if (identical(name, "Custom ramp")) {
-    cols <- norm_color(if (length(custom)) custom else c("#440154", "#21908C", "#FDE725"))
-    cols <- cols[!is.na(cols)]
-    if (length(cols) < 2L) cols <- c("#440154", "#FDE725")
-    return(grDevices::colorRampPalette(cols)(n))
+# Stop colours for a continuous palette (named palette, or a custom ramp);
+# optionally reversed.
+.continuous_stops <- function(name, custom = NULL, n = 9L, reverse = FALSE) {
+  cols <- if (identical(name, "Custom ramp")) {
+    cc <- norm_color(if (length(custom)) custom else c("#440154", "#21908C", "#FDE725"))
+    cc <- cc[!is.na(cc)]
+    if (length(cc) < 2L) cc <- c("#440154", "#FDE725")
+    grDevices::colorRampPalette(cc)(n)
+  } else {
+    norm_color(palette_colors(name, n))
   }
-  norm_color(palette_colors(name, n))
+  if (isTRUE(reverse)) rev(cols) else cols
 }
 
 #' Continuous colour mapping for ComplexHeatmap
@@ -285,13 +288,14 @@ palette_resolve_range <- function(values, min = NULL, max = NULL) {
 #' @param min,max Anchors (number / `"p<pct>"` / `NULL`).
 #' @param custom Anchor colours when `name = "Custom ramp"`.
 #' @param n Number of ramp stops.
+#' @param reverse Reverse the palette direction.
 #' @return A `colorRamp2` function, or `NULL` if circlize is unavailable.
 #' @export
 palette_colorramp2 <- function(name, values, min = NULL, max = NULL,
-                               custom = NULL, n = 9L) {
+                               custom = NULL, n = 9L, reverse = FALSE) {
   if (!requireNamespace("circlize", quietly = TRUE)) return(NULL)
   rng <- palette_resolve_range(values, min, max)
-  cols <- .continuous_stops(name, custom, n)
+  cols <- .continuous_stops(name, custom, n, reverse)
   circlize::colorRamp2(seq(rng[1L], rng[2L], length.out = length(cols)), cols)
 }
 
@@ -303,8 +307,8 @@ palette_colorramp2 <- function(name, values, min = NULL, max = NULL,
 #' @return A list with `colours`, `values`, `limits`.
 #' @export
 palette_gradientn <- function(name, values, min = NULL, max = NULL,
-                              custom = NULL, n = 9L) {
+                              custom = NULL, n = 9L, reverse = FALSE) {
   rng <- palette_resolve_range(values, min, max)
-  cols <- .continuous_stops(name, custom, n)
+  cols <- .continuous_stops(name, custom, n, reverse)
   list(colours = cols, values = seq(0, 1, length.out = length(cols)), limits = rng)
 }

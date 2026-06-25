@@ -113,3 +113,19 @@ test_that("adding a discrete attribute above the warn threshold asks for confirm
     expect_false(is.null(state$palette$colData$condition))
   })
 })
+
+test_that("continuous: reverse + custom-ramp pickers update the config", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(addsel_assays = "counts", addbtn_assays = 1)
+    session$setInputs(crev_assays__counts = TRUE)
+    expect_true(isTRUE(state$palette$assays$counts$reverse))
+    session$setInputs(cname_assays__counts = "Custom ramp",
+                      ccol1_assays__counts = "#000000", ccol2_assays__counts = "#ffffff")
+    cu <- state$palette$assays$counts$custom
+    expect_true(all(c("#000000", "#FFFFFF") %in% cu))
+  })
+})

@@ -62,8 +62,8 @@
 }
 
 # A gradient bar for a continuous palette name (or NULL). Pure.
-.pal_gradient_bar <- function(name, custom = NULL) {
-  cols <- .continuous_stops(name, custom)
+.pal_gradient_bar <- function(name, custom = NULL, reverse = FALSE) {
+  cols <- .continuous_stops(name, custom, reverse = reverse)
   tags$div(style = sprintf(
     "height:26px;border-radius:4px;border:1px solid var(--bs-border-color);background:linear-gradient(to right, %s);",
     paste(cols, collapse = ", ")))
@@ -222,17 +222,35 @@ mod_palette_server <- function(id, state) {
         max_obs <- observeEvent(input[[iid("cmax", dom, item)]],
           if (!is.null(cur())) set_cfg(dom, item, "max", input[[iid("cmax", dom, item)]]),
           ignoreInit = TRUE)
+        rev_obs <- observeEvent(input[[iid("crev", dom, item)]],
+          if (!is.null(cur())) set_cfg(dom, item, "reverse", isTRUE(input[[iid("crev", dom, item)]])),
+          ignoreInit = TRUE)
+        # Custom-ramp colours: 5 pickers; store the filled (non-empty) ones.
+        ccol_obs <- lapply(1:5, function(j) {
+          observeEvent(input[[iid(paste0("ccol", j), dom, item)]], {
+            if (is.null(cur())) return()
+            vals <- vapply(1:5, function(k) {
+              v <- input[[iid(paste0("ccol", k), dom, item)]]
+              if (is.null(v) || !nzchar(v)) NA_character_ else norm_color(v)
+            }, character(1))
+            set_cfg(dom, item, "custom", unname(vals[!is.na(vals)]))
+          }, ignoreInit = TRUE)
+        })
         reset_obs <- observeEvent(input[[iid("creset", dom, item)]], {
           p <- state$palette
-          p[[dom]][[item]] <- list(name = "viridis: viridis", min = "", max = "", custom = NULL)
+          p[[dom]][[item]] <- list(name = "viridis: viridis", min = "", max = "",
+                                   reverse = FALSE, custom = NULL)
           state$palette <- p
           updateSelectInput(session, iid("cname", dom, item), selected = "viridis: viridis")
           updateTextInput(session, iid("cmin", dom, item), value = "")
           updateTextInput(session, iid("cmax", dom, item), value = "")
+          updateCheckboxInput(session, iid("crev", dom, item), value = FALSE)
         }, ignoreInit = TRUE)
-        obs_handles[[key]] <- list(name_obs, min_obs, max_obs, reset_obs, remove_obs)
+        obs_handles[[key]] <- c(ccol_obs,
+          list(name_obs, min_obs, max_obs, rev_obs, reset_obs, remove_obs))
         output[[iid("cpreview", dom, item)]] <- renderUI({
-          cfg <- cur(); req(cfg); .pal_gradient_bar(cfg$name %||% "viridis: viridis", cfg$custom)
+          cfg <- cur(); req(cfg)
+          .pal_gradient_bar(cfg$name %||% "viridis: viridis", cfg$custom, isTRUE(cfg$reverse))
         })
         return(invisible())
       }
@@ -376,10 +394,28 @@ mod_palette_server <- function(id, state) {
 
   body <- if (kind == "continuous") {
     name <- cfg$name %||% "viridis: viridis"
+    # Up to 5 custom-ramp pickers, shown only when "Custom ramp" is selected
+    # (client-side conditionalPanel keyed on the namespaced cname input).
+    triple <- c("#440154", "#21908C", "#FDE725")
+    ccol_picker <- function(j) {
+      cv <- if (length(cfg$custom) >= j) cfg$custom[j]
+            else if (j <= 3L) triple[j] else NULL
+      if (has_picker) {
+        shinyWidgets::colorPickr(id(paste0("ccol", j)), label = NULL, selected = cv,
+                                 update = "save", useAsButton = TRUE,
+                                 interaction = list(input = TRUE, save = TRUE, clear = TRUE))
+      } else {
+        textInput(id(paste0("ccol", j)), label = NULL, value = cv %||% "", width = "90px")
+      }
+    }
+    custom_ui <- conditionalPanel(
+      condition = sprintf("input['%s'] == 'Custom ramp'", id("cname")),
+      tags$div(class = "small fw-semibold mb-1", "Custom ramp colours (fill 2-5, low -> high)"),
+      tags$div(class = "d-flex flex-wrap gap-2 mb-2", lapply(1:5, ccol_picker)))
     tagList(
       selectInput(id("cname"), "Continuous palette",
                   choices = palette_continuous_choices()[
-                    c("viridis", "Brewer: Sequential", "Brewer: Divergent")],
+                    c("viridis", "Brewer: Sequential", "Brewer: Divergent", "Custom")],
                   selected = name),
       bslib::layout_columns(col_widths = c(6, 6),
         textInput(id("cmin"), "Min anchor", value = cfg$min %||% "",
@@ -388,6 +424,8 @@ mod_palette_server <- function(id, state) {
                   placeholder = "e.g. 100  or  p95")),
       helpText(class = "text-muted small",
                "Leave blank to use the data min/max, or enter a number, or a percentile like p5 / p95."),
+      checkboxInput(id("crev"), "Reverse direction", value = isTRUE(cfg$reverse)),
+      custom_ui,
       uiOutput(id("cpreview")),
       tags$div(class = "d-flex gap-2 mt-2",
         bslib::tooltip(
