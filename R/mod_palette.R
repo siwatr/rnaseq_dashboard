@@ -165,15 +165,22 @@ mod_palette_server <- function(id, state) {
       if (dom == "other")  return(if (item == "correlation") "numeric" else "factor")
       class(dom_frame(dom)[[item]])[1]
     }
-    # Default config for a freshly added item. A few items carry presets: the
-    # removal-status map keeps its QC green/amber/red, and the correlation ramp
-    # defaults to a reversed RdBu (high correlation = red) anchored to [-1, 1].
-    default_cfg <- function(dom, item) {
+    # Preset config for a few app-internal items (NULL if none): the removal-status
+    # map keeps its QC green/amber/red, and the correlation ramp defaults to a
+    # reversed RdBu (high correlation = red) anchored to [-1, 1]. Used by both the
+    # add (default) and the reset, so resetting a preset item restores its preset.
+    preset_for <- function(dom, item) {
       if (dom == "other" && item == "removal_status")
         return(list(name = "Custom palette", colors = .removal_palette))
       if (dom == "other" && item == "correlation")
         return(list(name = "RColorBrewer: RdBu", min = "-1", max = "1",
                     reverse = TRUE, custom = NULL))
+      NULL
+    }
+    # Default config for a freshly added item (preset if it has one).
+    default_cfg <- function(dom, item) {
+      preset <- preset_for(dom, item)
+      if (!is.null(preset)) return(preset)
       if (dom_kind(dom, item) == "continuous")
         list(name = "viridis: viridis", min = "", max = "", reverse = FALSE,
              custom = c("#FFFFFF", "#000000"))   # custom-ramp starting point
@@ -259,16 +266,26 @@ mod_palette_server <- function(id, state) {
             set_cfg(dom, item, "custom", unname(vals))
           }, ignoreInit = TRUE)
         })
+        # Reset = restore the preset if this item has one; otherwise keep the
+        # chosen palette and just clear the extras (anchors, reverse, and -- for a
+        # Custom ramp -- the colours back to white -> black). Re-sync EVERY control
+        # to the restored config (this is also what repaints the colour pickers).
         reset_obs <- observeEvent(input[[iid("creset", dom, item)]], {
-          p <- state$palette
-          p[[dom]][[item]] <- list(name = "viridis: viridis", min = "", max = "",
-                                   reverse = FALSE, custom = c("#FFFFFF", "#000000"))
-          state$palette <- p
-          updateSelectInput(session, iid("cname", dom, item), selected = "viridis: viridis")
-          updateTextInput(session, iid("cmin", dom, item), value = "")
-          updateTextInput(session, iid("cmax", dom, item), value = "")
-          updateCheckboxInput(session, iid("crev", dom, item), value = FALSE)
-          updateSelectInput(session, iid("cnstops", dom, item), selected = "2")
+          preset <- preset_for(dom, item)
+          new <- if (!is.null(preset)) preset else {
+            nm <- cur()$name %||% "viridis: viridis"
+            list(name = nm, min = "", max = "", reverse = FALSE,
+                 custom = if (identical(nm, "Custom ramp")) c("#FFFFFF", "#000000")
+                          else cur()$custom)
+          }
+          p <- state$palette; p[[dom]][[item]] <- new; state$palette <- p
+          updateSelectInput(session, iid("cname", dom, item), selected = new$name)
+          updateTextInput(session, iid("cmin", dom, item), value = new$min %||% "")
+          updateTextInput(session, iid("cmax", dom, item), value = new$max %||% "")
+          updateCheckboxInput(session, iid("crev", dom, item), value = isTRUE(new$reverse))
+          cc <- if (length(new$custom) >= 2L) new$custom else c("#FFFFFF", "#000000")
+          updateSelectInput(session, iid("cnstops", dom, item), selected = length(cc))
+          for (j in seq_along(cc)) update_picker(iid(paste0("ccol", j), dom, item), cc[j])
         }, ignoreInit = TRUE)
         obs_handles[[key]] <- c(ccol_obs,
           list(name_obs, min_obs, max_obs, rev_obs, nstops_obs, reset_obs, remove_obs))
@@ -311,9 +328,18 @@ mod_palette_server <- function(id, state) {
             updateSelectInput(session, iid("name", dom, item), selected = "Custom palette")
         }, ignoreInit = TRUE)
       })
+      # Reset = restore the preset if this item has one (e.g. removal_status's
+      # green/amber/red); otherwise revert to the Okabe-Ito default, clearing any
+      # hand-edits. Re-sync the palette selector + every level picker.
       reset_obs <- observeEvent(input[[iid("reset", dom, item)]], {
-        apply_named("Okabe-Ito")
-        updateSelectInput(session, iid("name", dom, item), selected = "Okabe-Ito")
+        preset <- preset_for(dom, item)
+        lvls <- dom_levels(dom, item)
+        new <- if (!is.null(preset)) preset
+               else list(name = "Okabe-Ito", colors = palette_discrete(lvls, NULL, "Okabe-Ito"))
+        p <- state$palette; p[[dom]][[item]] <- new; state$palette <- p
+        updateSelectInput(session, iid("name", dom, item), selected = new$name)
+        resolved <- palette_discrete(lvls, new$colors, new$name %||% "Okabe-Ito", new$custom)
+        for (i in seq_along(lvls)) update_picker(pin_id(dom, item, i), unname(resolved[[lvls[i]]]))
       }, ignoreInit = TRUE)
       obs_handles[[key]] <- c(pin_obs, list(name_obs, reset_obs, remove_obs))
       invisible()

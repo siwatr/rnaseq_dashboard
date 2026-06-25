@@ -154,3 +154,62 @@ test_that("custom ramp: changing the stop count resamples via colorRampPalette",
     expect_equal(toupper(cu[4]), "#000000")
   })
 })
+
+test_that("continuous reset keeps the palette and clears anchors / reverse / custom", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(addsel_assays = "counts", addbtn_assays = 1)
+    session$setInputs(cname_assays__counts = "viridis: magma", cmin_assays__counts = "p5",
+                      cmax_assays__counts = "p95", crev_assays__counts = TRUE)
+    session$setInputs(creset_assays__counts = 1)
+    cfg <- state$palette$assays$counts
+    expect_equal(cfg$name, "viridis: magma")     # palette kept (not reverted to viridis)
+    expect_equal(cfg$min, ""); expect_equal(cfg$max, "")
+    expect_false(isTRUE(cfg$reverse))
+  })
+})
+
+test_that("continuous Custom-ramp reset returns colours to white -> black", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(addsel_assays = "counts", addbtn_assays = 1)
+    session$setInputs(cname_assays__counts = "Custom ramp", cnstops_assays__counts = "3")
+    expect_equal(length(state$palette$assays$counts$custom), 3L)
+    session$setInputs(creset_assays__counts = 1)
+    cfg <- state$palette$assays$counts
+    expect_equal(cfg$name, "Custom ramp")        # palette kept
+    expect_equal(toupper(cfg$custom), c("#FFFFFF", "#000000"))   # colours reset
+  })
+})
+
+test_that("resetting a preset item restores its preset", {
+  # correlation -> reversed RdBu / -1..1
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    session$setInputs(addsel_other = "correlation", addbtn_other = 1)
+    session$setInputs(cname_other__correlation = "viridis: viridis",
+                      crev_other__correlation = FALSE, cmin_other__correlation = "0")
+    session$setInputs(creset_other__correlation = 1)
+    co <- state$palette$other$correlation
+    expect_equal(co$name, "RColorBrewer: RdBu")
+    expect_true(isTRUE(co$reverse)); expect_equal(co$min, "-1"); expect_equal(co$max, "1")
+  })
+})
+
+test_that("resetting removal_status restores the green/amber/red preset", {
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    session$setInputs(addsel_other = "removal_status", addbtn_other = 1)
+    session$setInputs(pin_other__removal_status_1 = "#123456")   # edit pass -> Custom
+    session$setInputs(reset_other__removal_status = 1)
+    rs <- state$palette$other$removal_status
+    expect_equal(rs$name, "Custom palette")
+    expect_equal(unname(rs$colors[["pass"]]), "#2CA02C")         # restored
+  })
+})
