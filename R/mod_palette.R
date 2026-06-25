@@ -495,7 +495,7 @@ mod_palette_server <- function(id, state) {
         bslib::tooltip(
           actionButton(id("creset"), "Reset", icon = icon("rotate-left"),
                        class = "btn-sm btn-outline-secondary"),
-          "Reset to viridis with data-range anchors."),
+          "Clear the anchors, reverse, and any custom-ramp colours (preset items restore their preset)."),
         remove_btn))
   } else {
     name <- cfg$name %||% "Okabe-Ito"
@@ -530,7 +530,7 @@ mod_palette_server <- function(id, state) {
         bslib::tooltip(
           actionButton(id("reset"), "Reset to palette", icon = icon("rotate-left"),
                        class = "btn-sm btn-outline-secondary"),
-          "Reset to the default palette (Okabe-Ito)."),
+          "Reset to the default palette (or this attribute's preset), clearing per-level edits."),
         remove_btn))
   }
   bslib::accordion_panel(title = tags$span(item, .pal_badges(kind, klass)),
