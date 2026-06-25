@@ -165,10 +165,17 @@ mod_palette_server <- function(id, state) {
       if (dom == "other")  return(if (item == "correlation") "numeric" else "factor")
       class(dom_frame(dom)[[item]])[1]
     }
-    # Default config for a freshly added item.
+    # Default config for a freshly added item. A few items carry presets: the
+    # removal-status map keeps its QC green/amber/red, and the correlation ramp
+    # defaults to a reversed RdBu (high correlation = red) anchored to [-1, 1].
     default_cfg <- function(dom, item) {
+      if (dom == "other" && item == "removal_status")
+        return(list(name = "Custom palette", colors = .removal_palette))
+      if (dom == "other" && item == "correlation")
+        return(list(name = "RColorBrewer: RdBu", min = "-1", max = "1",
+                    reverse = TRUE, custom = NULL))
       if (dom_kind(dom, item) == "continuous")
-        list(name = "viridis: viridis", min = "", max = "", custom = NULL)
+        list(name = "viridis: viridis", min = "", max = "", reverse = FALSE, custom = NULL)
       else
         list(name = "Okabe-Ito",
              colors = palette_discrete(dom_levels(dom, item), NULL, "Okabe-Ito"))

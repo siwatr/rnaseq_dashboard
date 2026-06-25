@@ -75,11 +75,15 @@ test_that("Other pill: removal_status (discrete) and correlation (continuous) co
   shiny::testServer(mod_palette_server, args = list(state = state), {
     # No dataset loaded -- the Other maps are app-internal, still addable.
     session$setInputs(addsel_other = "removal_status", addbtn_other = 1)
-    expect_equal(state$palette$other$removal_status$name, "Okabe-Ito")
-    expect_true(all(c("pass", "suggested_other", "suggested_this") %in%
-                      names(state$palette$other$removal_status$colors)))
+    rs <- state$palette$other$removal_status
+    expect_equal(rs$name, "Custom palette")                 # preset, not Okabe-Ito
+    expect_true(all(c("pass", "suggested_other", "suggested_this") %in% names(rs$colors)))
+    expect_equal(unname(rs$colors[["pass"]]), "#2CA02C")    # QC green preset
     session$setInputs(addsel_other = "correlation", addbtn_other = 2)
-    expect_equal(state$palette$other$correlation$name, "viridis: viridis")
+    co <- state$palette$other$correlation
+    expect_equal(co$name, "RColorBrewer: RdBu")             # reversed RdBu preset
+    expect_true(isTRUE(co$reverse))
+    expect_equal(co$min, "-1"); expect_equal(co$max, "1")
   })
 })
 
