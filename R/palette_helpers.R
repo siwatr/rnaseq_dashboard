@@ -269,9 +269,9 @@ palette_resolve_range <- function(values, min = NULL, max = NULL) {
 # optionally reversed.
 .continuous_stops <- function(name, custom = NULL, n = 9L, reverse = FALSE) {
   cols <- if (identical(name, "Custom ramp")) {
-    cc <- norm_color(if (length(custom)) custom else c("#440154", "#21908C", "#FDE725"))
+    cc <- norm_color(if (length(custom)) custom else c("#FFFFFF", "#000000"))
     cc <- cc[!is.na(cc)]
-    if (length(cc) < 2L) cc <- c("#440154", "#FDE725")
+    if (length(cc) < 2L) cc <- c("#FFFFFF", "#000000")
     grDevices::colorRampPalette(cc)(n)
   } else {
     norm_color(palette_colors(name, n))

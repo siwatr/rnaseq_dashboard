@@ -130,10 +130,27 @@ test_that("continuous: reverse + custom-ramp pickers update the config", {
   })
 })
 
-test_that("custom-ramp pickers are seeded with valid colours (guards the null-picker crash)", {
+test_that("custom-ramp UI has an N-stops selector + valid-seeded pickers (no null crash)", {
   cfg <- list(name = "Custom ramp", min = "", max = "", reverse = FALSE, custom = NULL)
   html <- as.character(ddsdashboard:::.palette_item_panel(
     NS("p"), "assays", "counts", cfg, "continuous", "numeric", character(0), has_picker = TRUE))
-  for (j in 1:5) expect_match(html, paste0("ccol", j, "_assays__counts"))  # 5 pickers
-  expect_match(html, "#440154", fixed = TRUE)   # seeded with a valid viridis default, not NULL
+  expect_match(html, "cnstops_assays__counts")             # number-of-colours selector
+  for (j in 1:5) expect_match(html, paste0("ccol", j, "_assays__counts"))
+  expect_match(html, "#FFFFFF", fixed = TRUE)              # white->black default seed, not NULL
+})
+
+test_that("custom ramp: changing the stop count resamples via colorRampPalette", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(addsel_assays = "counts", addbtn_assays = 1)
+    expect_equal(length(state$palette$assays$counts$custom), 2L)   # white -> black default
+    session$setInputs(cname_assays__counts = "Custom ramp", cnstops_assays__counts = "4")
+    cu <- state$palette$assays$counts$custom
+    expect_equal(length(cu), 4L)
+    expect_equal(toupper(cu[1]), "#FFFFFF")        # endpoints preserved
+    expect_equal(toupper(cu[4]), "#000000")
+  })
 })

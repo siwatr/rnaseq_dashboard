@@ -77,10 +77,15 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   (→ ggplot `scale_*_gradientn` pieces). Wired consumers: numeric `colData` annotations + the
   correlation-heatmap ramp (`qc_annotation_colors` / `.qc_correlation_heatmap` `cor_config`) and the
   QC removal-status map (`removal_palette()`); rowData/assay configs are stored for the P4/P5
-  consumers. Custom continuous-ramp **UI** deferred (engine supports it). Continuous config shape
-  `list(name, min, max, custom)`. [PR #TBD]
+  consumers. Continuous config shape `list(name, min, max, reverse, custom)`. Custom continuous ramp
+  is an **N-stops (2-5) selector** whose pickers resample via `colorRampPalette` when the count changes
+  (default white -> black); reverse-direction checkbox; high-cardinality guard (warn/cap options);
+  Type/Class accordion badges; presets (`removal_status`, `correlation`). [PR #TBD]
 - **P3g-c ⬅️ next** Palette **config import/export** (JSON via `jsonlite`): round-trip the whole
-  `state$palette` so a lab can reuse a palette across datasets. Add a Custom continuous-ramp picker UI.
+  `state$palette` so a lab can reuse a palette across datasets. Also an **"Edit palette" button** on
+  non-custom continuous palettes: extract the palette to 5 anchor colours, switch to "Custom ramp", and
+  seed those anchors (palettes with > 5 stops lose some fidelity — acceptable); reset reverts to the
+  white -> black default.
 - **P3g-d** Palette **factor management** — coerce a `colData`/`rowData` column to factor + reorder its
   levels (drives both plot order and the palette mapping). (The legacy Themer gallery can be retired —
   its Heatmap sub-tab is already superseded by the Preview tab.)

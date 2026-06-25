@@ -175,7 +175,8 @@ mod_palette_server <- function(id, state) {
         return(list(name = "RColorBrewer: RdBu", min = "-1", max = "1",
                     reverse = TRUE, custom = NULL))
       if (dom_kind(dom, item) == "continuous")
-        list(name = "viridis: viridis", min = "", max = "", reverse = FALSE, custom = NULL)
+        list(name = "viridis: viridis", min = "", max = "", reverse = FALSE,
+             custom = c("#FFFFFF", "#000000"))   # custom-ramp starting point
       else
         list(name = "Okabe-Ito",
              colors = palette_discrete(dom_levels(dom, item), NULL, "Okabe-Ito"))
@@ -225,29 +226,52 @@ mod_palette_server <- function(id, state) {
         rev_obs <- observeEvent(input[[iid("crev", dom, item)]],
           if (!is.null(cur())) set_cfg(dom, item, "reverse", isTRUE(input[[iid("crev", dom, item)]])),
           ignoreInit = TRUE)
-        # Custom-ramp colours: 5 pickers; store the filled (non-empty) ones.
+        # Custom ramp: N stops (2-5) low -> high. The current anchors, with a
+        # white -> black fallback.
+        cur_custom <- function() {
+          cc <- cur()$custom
+          if (length(cc) >= 2L) cc else c("#FFFFFF", "#000000")
+        }
+        n_stops <- function() {
+          n <- suppressWarnings(as.integer(input[[iid("cnstops", dom, item)]]))
+          if (length(n) != 1L || is.na(n)) length(cur_custom()) else n
+        }
+        # Changing the stop count resamples the current ramp (colorRampPalette
+        # preserves the endpoints + shape) and repaints the N pickers.
+        nstops_obs <- observeEvent(input[[iid("cnstops", dom, item)]], {
+          if (is.null(cur())) return()
+          newN <- suppressWarnings(as.integer(input[[iid("cnstops", dom, item)]]))
+          if (is.na(newN) || newN < 2L || newN > 5L) return()
+          if (length(cur()$custom) == newN) return()              # no-op
+          new <- grDevices::colorRampPalette(cur_custom())(newN)
+          set_cfg(dom, item, "custom", new)
+          for (j in seq_len(newN)) update_picker(iid(paste0("ccol", j), dom, item), new[j])
+        }, ignoreInit = TRUE)
+        # Each visible picker (1..N) contributes one anchor colour.
         ccol_obs <- lapply(1:5, function(j) {
           observeEvent(input[[iid(paste0("ccol", j), dom, item)]], {
             if (is.null(cur())) return()
-            vals <- vapply(1:5, function(k) {
-              v <- input[[iid(paste0("ccol", k), dom, item)]]
-              if (is.null(v) || !nzchar(v)) NA_character_ else norm_color(v)
+            n <- n_stops(); if (j > n) return()
+            vals <- vapply(seq_len(n), function(k) {
+              v <- norm_color(input[[iid(paste0("ccol", k), dom, item)]])
+              if (is.na(v)) "#000000" else v
             }, character(1))
-            set_cfg(dom, item, "custom", unname(vals[!is.na(vals)]))
+            set_cfg(dom, item, "custom", unname(vals))
           }, ignoreInit = TRUE)
         })
         reset_obs <- observeEvent(input[[iid("creset", dom, item)]], {
           p <- state$palette
           p[[dom]][[item]] <- list(name = "viridis: viridis", min = "", max = "",
-                                   reverse = FALSE, custom = NULL)
+                                   reverse = FALSE, custom = c("#FFFFFF", "#000000"))
           state$palette <- p
           updateSelectInput(session, iid("cname", dom, item), selected = "viridis: viridis")
           updateTextInput(session, iid("cmin", dom, item), value = "")
           updateTextInput(session, iid("cmax", dom, item), value = "")
           updateCheckboxInput(session, iid("crev", dom, item), value = FALSE)
+          updateSelectInput(session, iid("cnstops", dom, item), selected = "2")
         }, ignoreInit = TRUE)
         obs_handles[[key]] <- c(ccol_obs,
-          list(name_obs, min_obs, max_obs, rev_obs, reset_obs, remove_obs))
+          list(name_obs, min_obs, max_obs, rev_obs, nstops_obs, reset_obs, remove_obs))
         output[[iid("cpreview", dom, item)]] <- renderUI({
           cfg <- cur(); req(cfg)
           .pal_gradient_bar(cfg$name %||% "viridis: viridis", cfg$custom, isTRUE(cfg$reverse))
@@ -401,26 +425,31 @@ mod_palette_server <- function(id, state) {
 
   body <- if (kind == "continuous") {
     name <- cfg$name %||% "viridis: viridis"
-    # Up to 5 custom-ramp pickers, shown only when "Custom ramp" is selected
-    # (client-side conditionalPanel keyed on the namespaced cname input). Slots
-    # default to a valid viridis spread (never NULL -- a null initial colour makes
-    # the colour picker throw and breaks every picker on the page); clear a slot to
-    # drop it from the ramp.
-    defaults5 <- norm_color(palette_colors("viridis: viridis", 5))
+    # Custom ramp: an N-stops (2-5) selector + N colour pickers (low -> high).
+    # The visible pickers are gated client-side on the stop count; all 5 are seeded
+    # from the current anchors (never NULL -- a null initial colour makes the picker
+    # throw and breaks every picker on the page).
+    cur_custom <- if (length(cfg$custom) >= 2L) cfg$custom else c("#FFFFFF", "#000000")
+    seed5 <- grDevices::colorRampPalette(cur_custom)(5)
     ccol_picker <- function(j) {
-      cv <- if (length(cfg$custom) >= j) cfg$custom[j] else defaults5[j]
       if (has_picker) {
-        shinyWidgets::colorPickr(id(paste0("ccol", j)), label = NULL, selected = cv,
+        shinyWidgets::colorPickr(id(paste0("ccol", j)), label = NULL, selected = seed5[j],
                                  update = "save", useAsButton = TRUE,
-                                 interaction = list(input = TRUE, save = TRUE, clear = TRUE))
+                                 interaction = list(input = TRUE, save = TRUE, clear = FALSE))
       } else {
-        textInput(id(paste0("ccol", j)), label = NULL, value = cv, width = "90px")
+        textInput(id(paste0("ccol", j)), label = NULL, value = seed5[j], width = "90px")
       }
     }
     custom_ui <- conditionalPanel(
       condition = sprintf("input['%s'] == 'Custom ramp'", id("cname")),
-      tags$div(class = "small fw-semibold mb-1", "Custom ramp colours (fill 2-5, low -> high)"),
-      tags$div(class = "d-flex flex-wrap gap-2 mb-2 pal-level-row", lapply(1:5, ccol_picker)))
+      selectInput(id("cnstops"), "Number of colours", choices = 2:5,
+                  selected = length(cur_custom)),
+      tags$div(class = "small fw-semibold mb-1", "Ramp colours (low -> high)"),
+      tags$div(class = "d-flex flex-wrap gap-2 mb-2 pal-level-row",
+        lapply(1:5, function(j)
+          conditionalPanel(
+            condition = sprintf("parseInt(input['%s']) >= %d", id("cnstops"), j),
+            ccol_picker(j)))))
     tagList(
       selectInput(id("cname"), "Continuous palette",
                   choices = palette_continuous_choices()[
