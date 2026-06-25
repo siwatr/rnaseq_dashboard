@@ -82,3 +82,30 @@ test_that("Other pill: removal_status (discrete) and correlation (continuous) co
     expect_equal(state$palette$other$correlation$name, "viridis: viridis")
   })
 })
+
+test_that("discrete attributes above the hard cap are hidden from the add control", {
+  skip_if_not_installed("DESeq2")
+  withr::local_options(ddsdashboard.palette_max_levels = 1L)   # condition has 2 levels
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    html <- as.character(output$addui_colData$html)
+    expect_match(html, "hidden")
+    expect_match(html, "Affected fields")
+  })
+})
+
+test_that("adding a discrete attribute above the warn threshold asks for confirmation", {
+  skip_if_not_installed("DESeq2")
+  withr::local_options(ddsdashboard.palette_warn_levels = 1L)  # condition(2) > 1 -> warn
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 1)
+    expect_null(state$palette$colData$condition)        # staged in a modal, not added
+    session$setInputs(confirm_add = 1)                  # Proceed
+    expect_false(is.null(state$palette$colData$condition))
+  })
+})

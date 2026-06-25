@@ -25,6 +25,16 @@
 # Show a level-count warning above this many pickers.
 .pal_many_levels <- 12L
 
+# Note listing discrete attributes hidden from the add control (over the cap).
+.pal_hidden_note <- function(items, max_n) {
+  more <- length(items) > 5L
+  shown <- if (more) utils::head(items, 5L) else items
+  sprintf("%d attribute(s) hidden (> %d unique values; raise option ddsdashboard.palette_max_levels to allow). %s%s%s",
+          length(items), max_n,
+          if (more) "Affected fields (first 5): " else "Affected fields: ",
+          paste(shown, collapse = ", "), if (more) ", ..." else "")
+}
+
 # The four Setting pills: domain -> display label.
 .pal_domains <- c(colData = "Sample", rowData = "Feature",
                   assays = "Assay", other = "Other")
@@ -260,27 +270,58 @@ mod_palette_server <- function(id, state) {
       invisible()
     }
 
+    # High-cardinality guard: hide attributes above the hard cap from the add
+    # control; warn (confirm) between the warn threshold and the cap.
+    max_levels  <- function() getOption("ddsdashboard.palette_max_levels", 50L)
+    warn_levels <- function() getOption("ddsdashboard.palette_warn_levels", 10L)
+    do_add <- function(dom, item) {
+      p <- state$palette; p[[dom]][[item]] <- default_cfg(dom, item); state$palette <- p
+      register_item(dom, item); bump()
+    }
+    pending_add <- reactiveVal(NULL)
+    observeEvent(input$confirm_add, {
+      pa <- pending_add(); req(pa)
+      do_add(pa$dom, pa$item); pending_add(NULL); removeModal()
+    })
+
     # --- Wire each domain's add control, panels, and collapse ----------------
     for (dom in names(.pal_domains)) local({
       d <- dom
       output[[paste0("addui_", d)]] <- renderUI({
         if (dom_needs_data(d) && is.null(state$working))
           return(helpText(class = "text-muted", "Load a dataset to configure colours."))
-        choices <- setdiff(dom_items(d), names(state$palette[[d]]))
+        unconfigured <- setdiff(dom_items(d), names(state$palette[[d]]))
+        over_cap <- Filter(function(it)
+          dom_kind(d, it) == "discrete" && length(dom_levels(d, it)) > max_levels(),
+          unconfigured)
+        choices <- setdiff(unconfigured, over_cap)
         tagList(
           selectInput(ns(paste0("addsel_", d)), "Add colour mapping for",
                       choices = if (length(choices)) choices else character(0)),
           actionButton(ns(paste0("addbtn_", d)), "Add", icon = icon("plus"),
                        class = "btn-sm btn-primary",
                        disabled = if (!length(choices)) NA else NULL),
-          if (!length(choices) && length(dom_items(d)))
-            helpText(class = "text-muted small mt-1", "All available items are configured."))
+          if (!length(choices) && !length(over_cap) && length(dom_items(d)))
+            helpText(class = "text-muted small mt-1", "All available items are configured."),
+          if (length(over_cap))
+            helpText(class = "text-muted small mt-1", .pal_hidden_note(over_cap, max_levels())))
       })
       observeEvent(input[[paste0("addbtn_", d)]], {
         item <- input[[paste0("addsel_", d)]]
         req(item, is.null(state$palette[[d]][[item]]))
-        p <- state$palette; p[[d]][[item]] <- default_cfg(d, item); state$palette <- p
-        register_item(d, item); bump()
+        if (dom_kind(d, item) == "discrete") {
+          n <- length(dom_levels(d, item))
+          if (n > warn_levels()) {           # over-cap items are already filtered out
+            pending_add(list(dom = d, item = item))
+            showModal(modalDialog(title = "Many unique values",
+              sprintf("'%s' has %d unique values; adding it creates %d colour pickers and may be slow.",
+                      item, n, n),
+              footer = tagList(modalButton("Cancel"),
+                               actionButton(ns("confirm_add"), "Proceed", class = "btn-warning"))))
+            return()
+          }
+        }
+        do_add(d, item)
       })
       observeEvent(input[[paste0("collapse_", d)]],
                    bslib::accordion_panel_close(paste0("acc_", d), values = TRUE))
