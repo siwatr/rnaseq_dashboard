@@ -299,9 +299,10 @@ mod_palette_server <- function(id, state) {
     # control; warn (confirm) between the warn threshold and the cap.
     max_levels  <- function() getOption("ddsdashboard.palette_max_levels", 50L)
     warn_levels <- function() getOption("ddsdashboard.palette_warn_levels", 10L)
+    just_added <- reactiveVal(NULL)        # so a rebuild opens only the new panel
     do_add <- function(dom, item) {
       p <- state$palette; p[[dom]][[item]] <- default_cfg(dom, item); state$palette <- p
-      register_item(dom, item); bump()
+      register_item(dom, item); just_added(list(dom = dom, item = item)); bump()
     }
     pending_add <- reactiveVal(NULL)
     observeEvent(input$confirm_add, {
@@ -364,8 +365,14 @@ mod_palette_server <- function(id, state) {
                                                                  shiny::isolate(dom_class(d, it)),
                                                                  shiny::isolate(dom_levels(d, it)),
                                                                  has_picker))
+        # Preserve which panels are open across rebuilds (a rebuild otherwise
+        # re-opens all): keep the currently-open set + the just-added item.
+        open_now <- shiny::isolate(input[[paste0("acc_", d)]])
+        ja <- shiny::isolate(just_added())
+        open_set <- unique(c(open_now, if (!is.null(ja) && ja$dom == d) ja$item))
         do.call(bslib::accordion,
-                c(list(id = ns(paste0("acc_", d)), open = TRUE, multiple = TRUE), panels))
+                c(list(id = ns(paste0("acc_", d)), multiple = TRUE,
+                       open = if (length(open_set)) open_set else FALSE), panels))
       })
     })
 
@@ -395,28 +402,31 @@ mod_palette_server <- function(id, state) {
   body <- if (kind == "continuous") {
     name <- cfg$name %||% "viridis: viridis"
     # Up to 5 custom-ramp pickers, shown only when "Custom ramp" is selected
-    # (client-side conditionalPanel keyed on the namespaced cname input).
-    triple <- c("#440154", "#21908C", "#FDE725")
+    # (client-side conditionalPanel keyed on the namespaced cname input). Slots
+    # default to a valid viridis spread (never NULL -- a null initial colour makes
+    # the colour picker throw and breaks every picker on the page); clear a slot to
+    # drop it from the ramp.
+    defaults5 <- norm_color(palette_colors("viridis: viridis", 5))
     ccol_picker <- function(j) {
-      cv <- if (length(cfg$custom) >= j) cfg$custom[j]
-            else if (j <= 3L) triple[j] else NULL
+      cv <- if (length(cfg$custom) >= j) cfg$custom[j] else defaults5[j]
       if (has_picker) {
         shinyWidgets::colorPickr(id(paste0("ccol", j)), label = NULL, selected = cv,
                                  update = "save", useAsButton = TRUE,
                                  interaction = list(input = TRUE, save = TRUE, clear = TRUE))
       } else {
-        textInput(id(paste0("ccol", j)), label = NULL, value = cv %||% "", width = "90px")
+        textInput(id(paste0("ccol", j)), label = NULL, value = cv, width = "90px")
       }
     }
     custom_ui <- conditionalPanel(
       condition = sprintf("input['%s'] == 'Custom ramp'", id("cname")),
       tags$div(class = "small fw-semibold mb-1", "Custom ramp colours (fill 2-5, low -> high)"),
-      tags$div(class = "d-flex flex-wrap gap-2 mb-2", lapply(1:5, ccol_picker)))
+      tags$div(class = "d-flex flex-wrap gap-2 mb-2 pal-level-row", lapply(1:5, ccol_picker)))
     tagList(
       selectInput(id("cname"), "Continuous palette",
                   choices = palette_continuous_choices()[
                     c("viridis", "Brewer: Sequential", "Brewer: Divergent", "Custom")],
                   selected = name),
+      checkboxInput(id("crev"), "Reverse direction", value = isTRUE(cfg$reverse)),
       bslib::layout_columns(col_widths = c(6, 6),
         textInput(id("cmin"), "Min anchor", value = cfg$min %||% "",
                   placeholder = "e.g. 0  or  p5"),
@@ -424,7 +434,6 @@ mod_palette_server <- function(id, state) {
                   placeholder = "e.g. 100  or  p95")),
       helpText(class = "text-muted small",
                "Leave blank to use the data min/max, or enter a number, or a percentile like p5 / p95."),
-      checkboxInput(id("crev"), "Reverse direction", value = isTRUE(cfg$reverse)),
       custom_ui,
       uiOutput(id("cpreview")),
       tags$div(class = "d-flex gap-2 mt-2",
@@ -451,7 +460,7 @@ mod_palette_server <- function(id, state) {
             "display:inline-block;width:1.4rem;height:1.4rem;border-radius:3px;border:1px solid #888;background:%s;", val)),
           textInput(pid, label = NULL, value = val, width = "110px"))
       }
-      tags$div(class = "d-flex align-items-center gap-2 mb-1",
+      tags$div(class = "d-flex align-items-center gap-2 mb-1 pal-level-row",
                picker, tags$span(class = "fw-medium", lev))
     }
     tagList(

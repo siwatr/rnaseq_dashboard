@@ -43,6 +43,16 @@ table.dataTable tbody tr.selected > * {
   margin-bottom: 0;
 }
 
+// --- (1c) Palette level rows: size the colour picker to content ----------
+// Same 300px default bites the per-level colour pickers on the Palette page:
+// the picker's input container reserves 300px, pushing the level label far to
+// the right. Shrink the picker container so the label sits next to the swatch.
+.pal-level-row .shiny-input-container,
+.pal-level-row .form-group {
+  width: auto;
+  margin-bottom: 0;
+}
+
 // --- (2) Dark-mode DataTables fixes --------------------------------------
 [data-bs-theme="dark"] {
   // Table body: follow the Bootstrap dark surface + text tokens.

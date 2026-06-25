@@ -129,3 +129,11 @@ test_that("continuous: reverse + custom-ramp pickers update the config", {
     expect_true(all(c("#000000", "#FFFFFF") %in% cu))
   })
 })
+
+test_that("custom-ramp pickers are seeded with valid colours (guards the null-picker crash)", {
+  cfg <- list(name = "Custom ramp", min = "", max = "", reverse = FALSE, custom = NULL)
+  html <- as.character(ddsdashboard:::.palette_item_panel(
+    NS("p"), "assays", "counts", cfg, "continuous", "numeric", character(0), has_picker = TRUE))
+  for (j in 1:5) expect_match(html, paste0("ccol", j, "_assays__counts"))  # 5 pickers
+  expect_match(html, "#440154", fixed = TRUE)   # seeded with a valid viridis default, not NULL
+})
