@@ -171,14 +171,24 @@ mod_palette_server <- function(id, state) {
     }
 
     # --- Domain accessors (read state$working live; isolate at call sites) ----
-    dom_frame <- function(dom) {
-      if (dom == "colData") as.data.frame(SummarizedExperiment::colData(state$working))
-      else as.data.frame(SummarizedExperiment::rowData(state$working))
+    # The colData/rowData DataFrame itself (NOT coerced to a base data.frame --
+    # as.data.frame() materializes the whole thing, which is costly for wide
+    # rowData; a single `[[` column read is cheap).
+    dom_df <- function(dom) {
+      if (dom == "colData") SummarizedExperiment::colData(state$working)
+      else SummarizedExperiment::rowData(state$working)
+    }
+    # One column, decoded to a plain vector (preserves the old as.data.frame
+    # behaviour for Rle-style S4 columns; factors stay factors).
+    dom_col <- function(dom, item) {
+      col <- dom_df(dom)[[item]]
+      if (methods::is(col, "Rle")) col <- as.vector(col)
+      col
     }
     dom_items <- function(dom) {
       switch(dom,
-        colData = colnames(dom_frame("colData")),
-        rowData = colnames(dom_frame("rowData")),
+        colData = colnames(dom_df("colData")),
+        rowData = colnames(dom_df("rowData")),
         assays  = SummarizedExperiment::assayNames(state$working),
         other   = .pal_other_items)
     }
@@ -186,7 +196,7 @@ mod_palette_server <- function(id, state) {
     dom_kind <- function(dom, item) {
       if (dom == "assays") return("continuous")
       if (dom == "other")  return(.pal_other_kind[[item]])
-      if (is.numeric(dom_frame(dom)[[item]])) "continuous" else "discrete"
+      if (is.numeric(dom_col(dom, item))) "continuous" else "discrete"
     }
     dom_levels <- function(dom, item) {
       # Only removal_status is a discrete "other" map; correlation is continuous
@@ -196,13 +206,32 @@ mod_palette_server <- function(id, state) {
         if (item == "removal_status") return(.pal_removal_levels)
         return(character(0))
       }
-      .pal_levels(dom_frame(dom)[[item]])
+      .pal_levels(dom_col(dom, item))
     }
     # Underlying data class for the accordion badge (helps the future factor PR).
     dom_class <- function(dom, item) {
       if (dom == "assays") return("numeric")
       if (dom == "other")  return(if (item == "correlation") "numeric" else "factor")
-      class(dom_frame(dom)[[item]])[1]
+      class(dom_col(dom, item))[1]
+    }
+    # Per-column (kind, level-count) summary for the add control's
+    # high-cardinality scan, memoized per data_version so we don't re-scan every
+    # colData/rowData column on each render. Pure cache lookup (isolated), keyed
+    # on the version; recomputed only when the data changes.
+    .meta_cache <- new.env(parent = emptyenv())
+    dom_meta <- function(dom) {
+      dv  <- shiny::isolate(state$data_version)
+      hit <- .meta_cache[[dom]]
+      if (!is.null(hit) && identical(hit$v, dv)) return(hit$meta)
+      df <- shiny::isolate(dom_df(dom))
+      meta <- stats::setNames(lapply(colnames(df), function(cn) {
+        col <- df[[cn]]; if (methods::is(col, "Rle")) col <- as.vector(col)
+        kind <- if (is.numeric(col)) "continuous" else "discrete"
+        list(kind = kind,
+             nlev = if (identical(kind, "discrete")) length(.pal_levels(col)) else NA_integer_)
+      }), colnames(df))
+      .meta_cache[[dom]] <- list(v = dv, meta = meta)
+      meta
     }
     # Preset config for a few app-internal items (NULL if none): the removal-status
     # map keeps its QC green/amber/red, and the correlation ramp defaults to a
@@ -438,13 +467,20 @@ mod_palette_server <- function(id, state) {
     # --- Wire each domain's add control, panels, and collapse ----------------
     for (dom in names(.pal_domains)) local({
       d <- dom
+      # Trigger on struct() only (item-set / dataset / import), NOT on palette
+      # values -- so a colour edit doesn't re-run the high-cardinality scan over
+      # every colData/rowData column. The cap check reads the memoized dom_meta.
       output[[paste0("addui_", d)]] <- renderUI({
+        struct()
+        shiny::isolate({
         if (dom_needs_data(d) && is.null(state$working))
           return(helpText(class = "text-muted", "Load a dataset to configure colours."))
         unconfigured <- setdiff(dom_items(d), names(state$palette[[d]]))
-        over_cap <- Filter(function(it)
-          dom_kind(d, it) == "discrete" && length(dom_levels(d, it)) > max_levels(),
-          unconfigured)
+        meta <- if (dom_needs_data(d)) dom_meta(d) else NULL
+        over_cap <- Filter(function(it) {
+          m <- meta[[it]]
+          !is.null(m) && identical(m$kind, "discrete") && isTRUE(m$nlev > max_levels())
+        }, unconfigured)
         choices <- setdiff(unconfigured, over_cap)
         tagList(
           selectInput(ns(paste0("addsel_", d)), "Add colour mapping for",
@@ -456,6 +492,7 @@ mod_palette_server <- function(id, state) {
             helpText(class = "text-muted small mt-1", "All available items are configured."),
           if (length(over_cap))
             helpText(class = "text-muted small mt-1", .pal_hidden_note(over_cap, max_levels())))
+        })
       })
       observeEvent(input[[paste0("addbtn_", d)]], {
         item <- input[[paste0("addsel_", d)]]

@@ -322,3 +322,23 @@ test_that("Edit palette copies a named continuous ramp into a 5-stop Custom ramp
     expect_equal(unname(p$custom), unname(exp))      # gradient unchanged on screen
   })
 })
+
+test_that("add control is struct-gated: stays correct across colour edits (perf fix)", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 40, n_per_group = 3, n_spike = 2, seed = 1)
+  cd <- SummarizedExperiment::colData(dds)
+  for (k in 1:5) cd[[paste0("meta_", k)]] <- factor(sample(letters[1:3], ncol(dds), TRUE))
+  SummarizedExperiment::colData(dds) <- cd
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, dds, source = "demo")
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 1); session$flushReact()
+    # Configured item dropped from the add choices...
+    expect_false(grepl('">condition<', as.character(output$addui_colData$html), fixed = TRUE))
+    # ...and a colour edit (which no longer re-renders addui) doesn't change that.
+    session$setInputs(pin_colData__condition_1 = "#101010"); session$flushReact()
+    html <- as.character(output$addui_colData$html)
+    expect_false(grepl('">condition<', html, fixed = TRUE))
+    expect_true(grepl("meta_1", html, fixed = TRUE))   # other columns still addable
+  })
+})
