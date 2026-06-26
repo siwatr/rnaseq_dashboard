@@ -118,7 +118,40 @@ mod_palette_ui <- function(id) {
     bslib::nav_panel(
       tags$h4("Preview", class = "fs-6"),
       .pal_reference_ui(ns)
+    ),
+    bslib::nav_panel(
+      tags$h4("Config", class = "fs-6"),
+      .pal_config_ui(ns)
     )
+  )
+}
+
+# The Config tab: export a (selectable) subset of the palette config to JSON and
+# import one back. Sidebar holds the export selector + download + import; the
+# main area is a live, read-only JSON preview of exactly what would download.
+.pal_config_ui <- function(ns) {
+  bslib::layout_sidebar(
+    sidebar = bslib::sidebar(
+      title = tags$h4("Import / Export", class = "fs-6 mb-0"), width = 340,
+      tags$div(class = "fw-semibold small", "Export"),
+      helpText(class = "small mb-1",
+               "Choose which colour mappings to include, then download. Reusing a curated palette across datasets saves re-picking colours."),
+      tags$div(class = "d-flex gap-2 mb-2",
+        actionButton(ns("exp_all"), "Select all", class = "btn-sm btn-outline-secondary"),
+        actionButton(ns("exp_none"), "Deselect all", class = "btn-sm btn-outline-secondary")),
+      uiOutput(ns("export_selector")),
+      downloadButton(ns("export"), "Download JSON", class = "btn-sm btn-primary"),
+      tags$hr(),
+      tags$div(class = "fw-semibold small", "Import"),
+      helpText(class = "small mb-1",
+               "Load a palette JSON; you'll choose to replace or merge with the current config."),
+      fileInput(ns("import_file"), NULL, accept = ".json",
+                buttonLabel = "Browse...", placeholder = "No file selected")),
+    bslib::card(
+      bslib::card_header(tags$h4("Config preview (JSON)", class = "fs-6 mb-0")),
+      tags$p(class = "text-muted small mb-2",
+             "Exactly what the download will contain (reflects the selection at left)."),
+      verbatimTextOutput(ns("config_json")))
   )
 }
 
@@ -452,6 +485,158 @@ mod_palette_server <- function(id, state) {
 
     observeEvent(input$collapse_ref,
                  bslib::accordion_panel_close("ref_acc", values = TRUE))
+
+    # --- Config tab: selective export ---------------------------------------
+    # Exports the *whole* config (incl. items for columns not in the current
+    # dataset, so it travels). One checkbox group per domain that has >=1
+    # configured item, all checked by default; rebuilt (re-defaulting all) when
+    # the config changes.
+    output$export_selector <- renderUI({
+      cfg <- state$palette
+      groups <- Filter(function(d) length(cfg[[d]]) > 0L, names(.pal_domains))
+      if (!length(groups))
+        return(helpText(class = "text-muted small", "No colour mappings to export yet."))
+      lapply(groups, function(d) {
+        items <- names(cfg[[d]])
+        checkboxGroupInput(ns(paste0("exp_", d)), label = .pal_domains[[d]],
+                           choices = items, selected = items)
+      })
+    })
+    observeEvent(input$exp_all, {
+      cfg <- state$palette
+      for (d in names(.pal_domains)) {
+        items <- names(cfg[[d]])
+        if (length(items))
+          updateCheckboxGroupInput(session, paste0("exp_", d),
+                                   selected = items)
+      }
+    })
+    observeEvent(input$exp_none, {
+      for (d in names(.pal_domains))
+        updateCheckboxGroupInput(session, paste0("exp_", d), selected = character(0))
+    })
+    # The selection, filtered to checked items, empty domains dropped. Feeds both
+    # the preview and the download, so the preview is exactly what downloads.
+    export_palette <- reactive({
+      cfg <- state$palette
+      out <- list()
+      for (d in names(.pal_domains)) {
+        items <- names(cfg[[d]])
+        if (!length(items)) next
+        sel <- intersect(items, input[[paste0("exp_", d)]])
+        if (length(sel)) out[[d]] <- cfg[[d]][sel]
+      }
+      out
+    })
+    output$config_json <- renderText(palette_to_json(export_palette()))
+    output$export <- downloadHandler(
+      filename = function() paste0("ddsdashboard-palette-", Sys.Date(), ".json"),
+      content  = function(file) writeLines(palette_to_json(export_palette()), file))
+
+    # --- Config tab: import (parse -> classify -> one modal) ----------------
+    pending_import <- reactiveVal(NULL)
+    ckey <- function(d, it) paste(d, it, sep = "")  # dom-qualified conflict id
+    json_kind <- function(cfg)
+      if (any(c("min", "max", "reverse", "custom") %in% names(cfg))) "continuous" else "discrete"
+
+    observeEvent(input$import_file, {
+      fp <- input$import_file$datapath; req(fp)
+      parsed <- tryCatch(palette_from_json(fp), error = function(e) e)
+      if (inherits(parsed, "error")) {
+        showNotification(paste("Could not read palette JSON:", conditionMessage(parsed)),
+                         type = "error", duration = 8)
+        return()
+      }
+      if (!is.list(parsed) || !length(parsed)) {
+        showNotification("That file has no usable colour mappings.", type = "warning")
+        return()
+      }
+      skipped <- character(0); conflicts <- character(0); kept <- list()
+      for (d in names(parsed)) {
+        in_data <- if (dom_needs_data(d) && is.null(state$working)) character(0)
+                   else intersect(names(parsed[[d]]), dom_items(d))
+        for (it in names(parsed[[d]])) {
+          cfg <- parsed[[d]][[it]]; jk <- json_kind(cfg)
+          if (it %in% in_data) {
+            if (!identical(jk, dom_kind(d, it))) {
+              skipped <- c(skipped, paste0(it, " (kind mismatch)")); next
+            }
+            if (jk == "discrete" && length(dom_levels(d, it)) > max_levels()) {
+              skipped <- c(skipped, paste0(it, " (too many levels)")); next
+            }
+          }
+          if (jk == "discrete" && !identical(cfg$name, "Custom palette") &&
+              length(cfg$colors)) {
+            derived <- palette_discrete(names(cfg$colors), NULL, cfg$name %||% "Okabe-Ito")
+            if (!isTRUE(all.equal(unname(norm_color(cfg$colors)),
+                                  unname(derived[names(cfg$colors)]))))
+              conflicts <- c(conflicts, ckey(d, it))
+          }
+          kept[[d]][[it]] <- cfg
+        }
+      }
+      if (!length(kept)) {
+        showNotification(sprintf("Nothing to import (skipped: %s).",
+                                 paste(skipped, collapse = ", ")),
+                         type = "warning", duration = 8)
+        return()
+      }
+      pending_import(list(palette = kept, conflicts = conflicts))
+      n_items <- sum(vapply(kept, length, integer(1)))
+      body <- list(tags$p(sprintf("Loaded %d mapping(s) across %d domain(s).",
+                                  n_items, length(kept))))
+      if (length(skipped))
+        body <- c(body, list(helpText(class = "small text-warning",
+          sprintf("Skipped %d not applicable to this dataset: %s%s", length(skipped),
+                  paste(utils::head(skipped, 5), collapse = ", "),
+                  if (length(skipped) > 5) ", ..." else ""))))
+      if (length(conflicts)) {
+        cn <- vapply(strsplit(conflicts, "", fixed = TRUE), `[`, character(1), 2L)
+        body <- c(body, list(radioButtons(ns("import_conflict"),
+          sprintf("%d mapping(s) have colours that differ from their named palette (e.g. %s):",
+                  length(conflicts), paste(utils::head(cn, 5), collapse = ", ")),
+          c("Keep the colours (use as a custom palette)" = "colors",
+            "Force the named palette (discard the colours)" = "palette"),
+          selected = "colors")))
+      }
+      showModal(modalDialog(title = "Import palette", do.call(tagList, body),
+        footer = tagList(modalButton("Cancel"),
+          actionButton(ns("import_merge"), "Merge", icon = icon("layer-group"),
+                       class = "btn-primary"),
+          actionButton(ns("import_replace"), "Replace", icon = icon("arrows-rotate"),
+                       class = "btn-warning"))))
+    })
+
+    # Apply the conflict choice, then commit (Replace overwrites; Merge overlays).
+    apply_conflict <- function(pal, conf, mode) {
+      if (!length(conf) || is.null(mode)) return(pal)
+      for (d in names(pal)) for (it in names(pal[[d]])) {
+        if (!(ckey(d, it) %in% conf)) next
+        if (identical(mode, "palette")) pal[[d]][[it]]$colors <- NULL
+        else                            pal[[d]][[it]]$name   <- "Custom palette"
+      }
+      pal
+    }
+    apply_imported <- function(new_pal) {
+      state$palette <- new_pal
+      bump()                 # register-on-visible observe wires the new items
+      removeModal()
+    }
+    observeEvent(input$import_replace, {
+      pi <- pending_import(); req(pi)
+      apply_imported(apply_conflict(pi$palette, pi$conflicts, input$import_conflict))
+      pending_import(NULL)
+      showNotification("Palette replaced from import.", type = "message")
+    })
+    observeEvent(input$import_merge, {
+      pi <- pending_import(); req(pi)
+      pal <- apply_conflict(pi$palette, pi$conflicts, input$import_conflict)
+      merged <- state$palette
+      for (d in names(pal)) for (it in names(pal[[d]])) merged[[d]][[it]] <- pal[[d]][[it]]
+      apply_imported(merged)
+      pending_import(NULL)
+      showNotification("Palette merged from import.", type = "message")
+    })
 
     invisible(NULL)
   })
