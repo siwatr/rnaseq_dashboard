@@ -323,12 +323,17 @@ palette_gradientn <- function(name, values, min = NULL, max = NULL,
 # Known palette domains, in display/serialization order.
 .pal_known_domains <- c("colData", "rowData", "assays", "other")
 
+# A config item's kind, inferred from the keys present. The single definition of
+# the discrete/continuous boundary (shared by the JSON validator + the module).
+.palette_item_kind <- function(cfg)
+  if (any(c("min", "max", "reverse", "custom") %in% names(cfg))) "continuous" else "discrete"
+
 # Coerce one parsed item to the canonical config shape (discrete or continuous);
 # returns NULL for a structurally empty / unusable item.
 .palette_clean_item <- function(it) {
   if (!is.list(it) && !is.character(it)) return(NULL)
   it <- as.list(it)
-  has_cont <- any(c("min", "max", "reverse", "custom") %in% names(it))
+  has_cont <- identical(.palette_item_kind(it), "continuous")
   name <- if (length(it$name)) as.character(it$name)[1] else NULL
   if (has_cont) {
     custom <- norm_color(it$custom)

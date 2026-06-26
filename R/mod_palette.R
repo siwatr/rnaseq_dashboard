@@ -509,8 +509,12 @@ mod_palette_server <- function(id, state) {
     # dataset, so it travels). One checkbox group per domain that has >=1
     # configured item, all checked by default; rebuilt (re-defaulting all) when
     # the config changes.
+    # Depend on struct() (the item-set / dataset / import signal), NOT on the
+    # palette values -- so editing a colour doesn't rebuild the selector and wipe
+    # the user's export selection. A real item add/remove/import re-defaults all.
     output$export_selector <- renderUI({
-      cfg <- state$palette
+      struct()
+      cfg <- shiny::isolate(state$palette)
       groups <- Filter(function(d) length(cfg[[d]]) > 0L, names(.pal_domains))
       if (!length(groups))
         return(helpText(class = "text-muted small", "No colour mappings to export yet."))
@@ -552,10 +556,11 @@ mod_palette_server <- function(id, state) {
       content  = function(file) writeLines(palette_to_json(export_palette()), file))
 
     # --- Config tab: import (parse -> classify -> one modal) ----------------
+    # `conflicts` is a list of list(d, it) pairs (not a flat string key) so it
+    # round-trips the real item name for display and matches unambiguously.
     pending_import <- reactiveVal(NULL)
-    ckey <- function(d, it) paste(d, it, sep = "")  # dom-qualified conflict id
-    json_kind <- function(cfg)
-      if (any(c("min", "max", "reverse", "custom") %in% names(cfg))) "continuous" else "discrete"
+    is_conflict <- function(conf, d, it)
+      any(vapply(conf, function(x) x$d == d && x$it == it, logical(1)))
 
     observeEvent(input$import_file, {
       fp <- input$import_file$datapath; req(fp)
@@ -569,12 +574,12 @@ mod_palette_server <- function(id, state) {
         showNotification("That file has no usable colour mappings.", type = "warning")
         return()
       }
-      skipped <- character(0); conflicts <- character(0); kept <- list()
+      skipped <- character(0); conflicts <- list(); kept <- list()
       for (d in names(parsed)) {
         in_data <- if (dom_needs_data(d) && is.null(state$working)) character(0)
                    else intersect(names(parsed[[d]]), dom_items(d))
         for (it in names(parsed[[d]])) {
-          cfg <- parsed[[d]][[it]]; jk <- json_kind(cfg)
+          cfg <- parsed[[d]][[it]]; jk <- .palette_item_kind(cfg)
           if (it %in% in_data) {
             if (!identical(jk, dom_kind(d, it))) {
               skipped <- c(skipped, paste0(it, " (kind mismatch)")); next
@@ -588,7 +593,7 @@ mod_palette_server <- function(id, state) {
             derived <- palette_discrete(names(cfg$colors), NULL, cfg$name %||% "Okabe-Ito")
             if (!isTRUE(all.equal(unname(norm_color(cfg$colors)),
                                   unname(derived[names(cfg$colors)]))))
-              conflicts <- c(conflicts, ckey(d, it))
+              conflicts <- c(conflicts, list(list(d = d, it = it)))
           }
           kept[[d]][[it]] <- cfg
         }
@@ -609,7 +614,7 @@ mod_palette_server <- function(id, state) {
                   paste(utils::head(skipped, 5), collapse = ", "),
                   if (length(skipped) > 5) ", ..." else ""))))
       if (length(conflicts)) {
-        cn <- vapply(strsplit(conflicts, "", fixed = TRUE), `[`, character(1), 2L)
+        cn <- vapply(conflicts, function(x) x$it, character(1))
         body <- c(body, list(radioButtons(ns("import_conflict"),
           sprintf("%d mapping(s) have colours that differ from their named palette (e.g. %s):",
                   length(conflicts), paste(utils::head(cn, 5), collapse = ", ")),
@@ -629,7 +634,7 @@ mod_palette_server <- function(id, state) {
     apply_conflict <- function(pal, conf, mode) {
       if (!length(conf) || is.null(mode)) return(pal)
       for (d in names(pal)) for (it in names(pal[[d]])) {
-        if (!(ckey(d, it) %in% conf)) next
+        if (!is_conflict(conf, d, it)) next
         if (identical(mode, "palette")) pal[[d]][[it]]$colors <- NULL
         else                            pal[[d]][[it]]$name   <- "Custom palette"
       }

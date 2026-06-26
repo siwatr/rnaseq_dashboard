@@ -232,6 +232,12 @@ test_that("Config export: all selected = full config; deselect drops items/domai
     session$setInputs(exp_assays = character(0)); session$flushReact()
     expect_match(output$config_json, "condition", fixed = TRUE)
     expect_false(grepl("logcounts", output$config_json, fixed = TRUE))
+    # Editing a colour must NOT rebuild the selector / reset the selection (the
+    # selector depends on struct(), not the palette values), yet the preview
+    # still reflects the new colour live.
+    session$setInputs(pin_colData__condition_1 = "#abcdef"); session$flushReact()
+    expect_false(grepl("logcounts", output$config_json, fixed = TRUE))   # still deselected
+    expect_match(toupper(output$config_json), "ABCDEF", fixed = TRUE)     # colour edit shown
   })
 })
 
