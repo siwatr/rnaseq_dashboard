@@ -326,8 +326,26 @@ mod_palette_server <- function(id, state) {
           updateSelectInput(session, iid("cnstops", dom, item), selected = length(cc))
           for (j in seq_along(cc)) update_picker(iid(paste0("ccol", j), dom, item), cc[j])
         }, ignoreInit = TRUE)
+        # Edit palette: copy a named (non-custom) ramp into an editable 5-stop
+        # Custom ramp. Extract with the current reverse baked into the order, then
+        # reset reverse to FALSE so the on-screen gradient is unchanged.
+        edit_obs <- observeEvent(input[[iid("cedit", dom, item)]], {
+          if (is.null(cur())) return()
+          nm <- cur()$name %||% "viridis: viridis"
+          if (identical(nm, "Custom ramp")) return()
+          stops <- .continuous_stops(nm, NULL, n = 5L, reverse = isTRUE(cur()$reverse))
+          p <- state$palette
+          p[[dom]][[item]]$name    <- "Custom ramp"
+          p[[dom]][[item]]$custom  <- unname(stops)
+          p[[dom]][[item]]$reverse <- FALSE
+          state$palette <- p
+          updateSelectInput(session, iid("cname", dom, item),   selected = "Custom ramp")
+          updateSelectInput(session, iid("cnstops", dom, item), selected = 5L)
+          updateCheckboxInput(session, iid("crev", dom, item),  value = FALSE)
+          for (j in seq_len(5L)) update_picker(iid(paste0("ccol", j), dom, item), stops[j])
+        }, ignoreInit = TRUE)
         obs_handles[[key]] <- c(ccol_obs,
-          list(name_obs, min_obs, max_obs, rev_obs, nstops_obs, reset_obs, remove_obs))
+          list(name_obs, min_obs, max_obs, rev_obs, nstops_obs, reset_obs, edit_obs, remove_obs))
         output[[iid("cpreview", dom, item)]] <- renderUI({
           cfg <- cur(); req(cfg)
           .pal_gradient_bar(cfg$name %||% "viridis: viridis", cfg$custom, isTRUE(cfg$reverse))
@@ -690,6 +708,14 @@ mod_palette_server <- function(id, state) {
                   choices = palette_continuous_choices()[
                     c("viridis", "Brewer: Sequential", "Brewer: Divergent", "Custom")],
                   selected = name),
+      # On a named (non-custom) palette, offer to copy it into an editable
+      # 5-stop Custom ramp. Hidden client-side once Custom ramp is selected.
+      conditionalPanel(
+        condition = sprintf("input['%s'] != 'Custom ramp'", id("cname")),
+        bslib::tooltip(
+          actionButton(id("cedit"), "Edit palette", icon = icon("sliders"),
+                       class = "btn-sm btn-outline-secondary mb-2"),
+          "Copy this palette's colours into an editable 5-stop Custom ramp.")),
       checkboxInput(id("crev"), "Reverse direction", value = isTRUE(cfg$reverse)),
       bslib::layout_columns(col_widths = c(6, 6),
         textInput(id("cmin"), "Min anchor", value = cfg$min %||% "",
