@@ -112,16 +112,16 @@ mod_palette_ui <- function(id) {
   bslib::navset_card_tab(
     title = tags$h3("Palette", class = "fs-6 mb-0 pe-3"),
     bslib::nav_panel(
-      tags$h4("Setting", class = "fs-6"),
+      tags$h4("Customize", class = "fs-6"),
       do.call(bslib::navset_pill, lapply(names(.pal_domains), pill))
-    ),
-    bslib::nav_panel(
-      tags$h4("Preview", class = "fs-6"),
-      .pal_reference_ui(ns)
     ),
     bslib::nav_panel(
       tags$h4("Config", class = "fs-6"),
       .pal_config_ui(ns)
+    ),
+    bslib::nav_panel(
+      tags$h4("Preview", class = "fs-6"),
+      .pal_reference_ui(ns)
     )
   )
 }
@@ -162,7 +162,24 @@ mod_palette_server <- function(id, state) {
     ns <- session$ns
     struct <- reactiveVal(0L)
     bump <- function() struct(shiny::isolate(struct()) + 1L)
-    observeEvent(state$data_version, bump(), ignoreNULL = FALSE)
+    # On any data change, drop palette mappings no longer applicable to the dataset
+    # (a column gone after a dataset switch, or a kind change), so stale mappings
+    # don't linger in the background or get exported. Routine sample/feature edits
+    # don't change the column set, so nothing is dropped there. Notify only when it
+    # actually removes something. (reconcile_palette is defined below; resolved at
+    # call time.)
+    observeEvent(state$data_version, {
+      rec <- reconcile_palette(state$palette, trim_levels = FALSE)
+      if (length(rec$dropped)) {
+        state$palette <- rec$palette
+        showNotification(
+          sprintf("Removed %d palette mapping(s) not applicable to the current dataset: %s%s",
+                  length(rec$dropped), paste(utils::head(rec$dropped, 5), collapse = ", "),
+                  if (length(rec$dropped) > 5) ", ..." else ""),
+          type = "warning", duration = 6)
+      }
+      bump()
+    }, ignoreNULL = FALSE)
 
     has_picker <- requireNamespace("shinyWidgets", quietly = TRUE)
     update_picker <- function(i_id, value) {
@@ -232,6 +249,45 @@ mod_palette_server <- function(id, state) {
       }), colnames(df))
       .meta_cache[[dom]] <- list(v = dv, meta = meta)
       meta
+    }
+    # Reconcile a palette config against the CURRENT dataset: drop mappings for a
+    # column/assay that isn't present (or whose kind no longer matches, or is over
+    # the level cap); when `trim_levels`, also prune discrete colour entries for
+    # levels absent from the current column (dropping a Custom-palette mapping left
+    # with no usable colours). Keeps `other` (app-internal) untouched. Returns
+    # list(palette = reconciled, dropped = c("<item> (<reason>)", ...)). Used at
+    # import (trim) and on a dataset switch (no trim -- don't silently lose pins on
+    # a routine sample/feature edit, where columns don't change anyway).
+    reconcile_palette <- function(pal, trim_levels = FALSE) {
+      out <- list(); dropped <- character(0)
+      for (d in names(pal)) {
+        if (!length(pal[[d]])) next
+        if (d == "other") { out[[d]] <- pal[[d]]; next }
+        items_in <- if (dom_needs_data(d) && is.null(state$working)) character(0)
+                    else dom_items(d)
+        for (it in names(pal[[d]])) {
+          cfg <- pal[[d]][[it]]
+          if (!(it %in% items_in)) {
+            dropped <- c(dropped, paste0(it, " (not in dataset)")); next
+          }
+          jk <- .palette_item_kind(cfg)
+          if (!identical(jk, dom_kind(d, it))) {
+            dropped <- c(dropped, paste0(it, " (type mismatch)")); next
+          }
+          if (identical(jk, "discrete") && length(dom_levels(d, it)) > max_levels()) {
+            dropped <- c(dropped, paste0(it, " (too many levels)")); next
+          }
+          if (trim_levels && identical(jk, "discrete") && length(cfg$colors)) {
+            keep <- intersect(names(cfg$colors), dom_levels(d, it))
+            cfg$colors <- if (length(keep)) cfg$colors[keep] else NULL
+            if (is.null(cfg$colors) && identical(cfg$name, "Custom palette")) {
+              dropped <- c(dropped, paste0(it, " (no matching levels)")); next
+            }
+          }
+          out[[d]][[it]] <- cfg
+        }
+      }
+      list(palette = out, dropped = dropped)
     }
     # Preset config for a few app-internal items (NULL if none): the removal-status
     # map keeps its QC green/amber/red, and the correlation ramp defaults to a
@@ -405,7 +461,12 @@ mod_palette_server <- function(id, state) {
           lev <- lvls[i]; hex <- norm_color(input[[pin_id(dom, item, i)]])
           if (is.na(hex)) return()
           p <- state$palette; cols <- p[[dom]][[item]]$colors
-          if (identical(unname(cols[[lev]]), unname(hex))) return()
+          # `cols` is a named atomic vector; `cols[[lev]]` ERRORS ("subscript out
+          # of bounds") when `lev` isn't one of its names -- which happens when the
+          # stored colours were imported / left over from a dataset with different
+          # levels. Look it up safely (missing -> NA) so the observer can't crash.
+          prev <- if (!is.null(cols) && lev %in% names(cols)) cols[[lev]] else NA_character_
+          if (identical(unname(prev), unname(hex))) return()
           cols[[lev]] <- unname(hex); p[[dom]][[item]]$colors <- cols
           was_named <- !identical(p[[dom]][[item]]$name, "Custom palette")
           if (was_named) p[[dom]][[item]]$name <- "Custom palette"
@@ -611,60 +672,71 @@ mod_palette_server <- function(id, state) {
         showNotification("That file has no usable colour mappings.", type = "warning")
         return()
       }
-      skipped <- character(0); conflicts <- list(); kept <- list()
-      for (d in names(parsed)) {
-        in_data <- if (dom_needs_data(d) && is.null(state$working)) character(0)
-                   else intersect(names(parsed[[d]]), dom_items(d))
-        for (it in names(parsed[[d]])) {
-          cfg <- parsed[[d]][[it]]; jk <- .palette_item_kind(cfg)
-          if (it %in% in_data) {
-            if (!identical(jk, dom_kind(d, it))) {
-              skipped <- c(skipped, paste0(it, " (kind mismatch)")); next
-            }
-            if (jk == "discrete" && length(dom_levels(d, it)) > max_levels()) {
-              skipped <- c(skipped, paste0(it, " (too many levels)")); next
-            }
-          }
-          if (jk == "discrete" && !identical(cfg$name, "Custom palette") &&
-              length(cfg$colors)) {
-            derived <- palette_discrete(names(cfg$colors), NULL, cfg$name %||% "Okabe-Ito")
-            if (!isTRUE(all.equal(unname(norm_color(cfg$colors)),
-                                  unname(derived[names(cfg$colors)]))))
-              conflicts <- c(conflicts, list(list(d = d, it = it)))
-          }
-          kept[[d]][[it]] <- cfg
-        }
-      }
+      # Keep only mappings valid for the current dataset; trim phantom levels.
+      rec <- reconcile_palette(parsed, trim_levels = TRUE)
+      kept <- rec$palette; dropped <- rec$dropped
       if (!length(kept)) {
-        showNotification(sprintf("Nothing to import (skipped: %s).",
-                                 paste(skipped, collapse = ", ")),
-                         type = "warning", duration = 8)
+        showNotification(
+          "None of the mappings in this file apply to the current dataset -- nothing imported.",
+          type = "warning", duration = 8)
         return()
       }
+      # Conflicts: a known named palette whose (reconciled) colours were hand-edited.
+      conflicts <- list()
+      for (d in names(kept)) for (it in names(kept[[d]])) {
+        cfg <- kept[[d]][[it]]
+        if (.palette_item_kind(cfg) == "discrete" &&
+            !identical(cfg$name, "Custom palette") && length(cfg$colors)) {
+          derived <- palette_discrete(names(cfg$colors), NULL, cfg$name %||% "Okabe-Ito")
+          if (!isTRUE(all.equal(unname(norm_color(cfg$colors)),
+                                unname(derived[names(cfg$colors)]))))
+            conflicts <- c(conflicts, list(list(d = d, it = it)))
+        }
+      }
+      # How many imported mappings share a name with ones already in the session.
+      overlap <- sum(unlist(lapply(names(kept), function(d)
+        vapply(names(kept[[d]]), function(it) it %in% names(state$palette[[d]]), logical(1)))))
       pending_import(list(palette = kept, conflicts = conflicts))
+
       n_items <- sum(vapply(kept, length, integer(1)))
-      body <- list(tags$p(sprintf("Loaded %d mapping(s) across %d domain(s).",
-                                  n_items, length(kept))))
-      if (length(skipped))
-        body <- c(body, list(helpText(class = "small text-warning",
-          sprintf("Skipped %d not applicable to this dataset: %s%s", length(skipped),
-                  paste(utils::head(skipped, 5), collapse = ", "),
-                  if (length(skipped) > 5) ", ..." else ""))))
+      body <- list(tags$p(tags$strong(sprintf(
+        "Load %d colour mapping%s into the current session?",
+        n_items, if (n_items == 1L) "" else "s"))))
+      notes <- list()
+      if (length(dropped))
+        notes <- c(notes, list(tags$li(sprintf(
+          "%d mapping%s in the file %s not valid for this dataset and will be dropped: %s%s",
+          length(dropped), if (length(dropped) == 1L) "" else "s",
+          if (length(dropped) == 1L) "is" else "are",
+          paste(utils::head(dropped, 5), collapse = ", "),
+          if (length(dropped) > 5) ", ..." else ""))))
+      if (overlap > 0L)
+        notes <- c(notes, list(tags$li(sprintf(
+          "%d mapping%s share a name with mappings already in this session -- Merge overwrites those; Replace discards all current mappings first.",
+          overlap, if (overlap == 1L) "" else "s"))))
+      if (length(notes))
+        body <- c(body, list(tags$p(class = "small text-muted mb-1", "Note:"),
+                             tags$ul(class = "small text-muted", notes)))
       if (length(conflicts)) {
         cn <- vapply(conflicts, function(x) x$it, character(1))
         body <- c(body, list(radioButtons(ns("import_conflict"),
-          sprintf("%d mapping(s) have colours that differ from their named palette (e.g. %s):",
-                  length(conflicts), paste(utils::head(cn, 5), collapse = ", ")),
+          sprintf("%d mapping%s have colours that differ from their named palette (e.g. %s):",
+                  length(conflicts), if (length(conflicts) == 1L) "" else "s",
+                  paste(utils::head(cn, 5), collapse = ", ")),
           c("Keep the colours (use as a custom palette)" = "colors",
             "Force the named palette (discard the colours)" = "palette"),
           selected = "colors")))
       }
       showModal(modalDialog(title = "Import palette", do.call(tagList, body),
         footer = tagList(modalButton("Cancel"),
-          actionButton(ns("import_merge"), "Merge", icon = icon("layer-group"),
-                       class = "btn-primary"),
-          actionButton(ns("import_replace"), "Replace", icon = icon("arrows-rotate"),
-                       class = "btn-warning"))))
+          bslib::tooltip(
+            actionButton(ns("import_merge"), "Merge", icon = icon("layer-group"),
+                         class = "btn-primary"),
+            "Add the incoming mappings to your current palette; existing mappings not in the file are kept."),
+          bslib::tooltip(
+            actionButton(ns("import_replace"), "Replace", icon = icon("arrows-rotate"),
+                         class = "btn-warning"),
+            "Discard the current palette entirely and use only the imported mappings."))))
     })
 
     # Apply the conflict choice, then commit (Replace overwrites; Merge overlays).
