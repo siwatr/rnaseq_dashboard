@@ -81,12 +81,19 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   is an **N-stops (2-5) selector** whose pickers resample via `colorRampPalette` when the count changes
   (default white -> black); reverse-direction checkbox; high-cardinality guard (warn/cap options);
   Type/Class accordion badges; presets (`removal_status`, `correlation`). [PR #TBD]
-- **P3g-c ⬅️ next** Palette **config import/export** (JSON via `jsonlite`): round-trip the whole
-  `state$palette` so a lab can reuse a palette across datasets. Also an **"Edit palette" button** on
-  non-custom continuous palettes: extract the palette to 5 anchor colours, switch to "Custom ramp", and
-  seed those anchors (palettes with > 5 stops lose some fidelity — acceptable); reset reverts to the
-  white -> black default.
-- **P3g-d** Palette **factor management** — coerce a `colData`/`rowData` column to factor + reorder its
+- **P3g-c ✅** Palette **config import/export** (JSON via `jsonlite`) + **Config tab**. New
+  `palette_to_json()`/`palette_from_json()` pure helpers round-trip `state$palette` as a versioned,
+  faithful mirror (kind inferred from keys; discrete `colors` serialized as a `{level: hex}` object,
+  `custom` as an array). The Config tab (3rd, beside Setting/Preview) is a `layout_sidebar`: **selective
+  export** (one `checkboxGroupInput` per non-empty domain, all-checked default, Select/Deselect all; an
+  `export_palette()` reactive feeds both a live JSON preview and the download, so the preview is exactly
+  what downloads — `ddsdashboard-palette-<date>.json`); **import** via one Replace/Merge/Cancel modal that
+  classifies each dataset-present item (kind mismatch + over-cap → skip+report; a known palette whose
+  colours diverge → a conflict radio Keep-colours/Force-palette) and re-wires items via the new
+  **register-on-visible** observe. Plus an **"Edit palette" button** on non-custom continuous palettes:
+  extracts the ramp to 5 editable Custom-ramp anchors (current `reverse` baked into the order, then
+  zeroed — gradient unchanged). Robustness: `dom_levels()` is `other`-item-aware. [PR #TBD]
+- **P3g-d ⬅️ next** Palette **factor management** — coerce a `colData`/`rowData` column to factor + reorder its
   levels (drives both plot order and the palette mapping). (The legacy Themer gallery can be retired —
   its Heatmap sub-tab is already superseded by the Preview tab.)
 
