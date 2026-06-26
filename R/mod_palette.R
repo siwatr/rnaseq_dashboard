@@ -156,7 +156,13 @@ mod_palette_server <- function(id, state) {
       if (is.numeric(dom_frame(dom)[[item]])) "continuous" else "discrete"
     }
     dom_levels <- function(dom, item) {
-      if (dom == "other") return(.pal_removal_levels)
+      # Only removal_status is a discrete "other" map; correlation is continuous
+      # (and any future "other" item brings its own levels) -- don't blanket-
+      # assume every "other" item has the removal levels.
+      if (dom == "other") {
+        if (item == "removal_status") return(.pal_removal_levels)
+        return(character(0))
+      }
       .pal_levels(dom_frame(dom)[[item]])
     }
     # Underlying data class for the accordion badge (helps the future factor PR).
@@ -358,6 +364,24 @@ mod_palette_server <- function(id, state) {
     observeEvent(input$confirm_add, {
       pa <- pending_add(); req(pa)
       do_add(pa$dom, pa$item); pending_add(NULL); removeModal()
+    })
+
+    # Register-on-visible: ensure every config item currently present in the data
+    # has its observers wired (idempotent via the `registered` env). Generalizes
+    # registration beyond add/import -- a colour stored for a column the user adds
+    # later (or imports a config for) gets wired the moment it appears in
+    # dom_items(). Fires on struct() (data_version + every bump). Only *adds*
+    # (never destroys on a data change -- that would race the deferred input
+    # flush); teardown stays on explicit Remove.
+    observe({
+      struct()
+      shiny::isolate({
+        for (d in names(.pal_domains)) {
+          if (dom_needs_data(d) && is.null(state$working)) next
+          for (it in intersect(names(state$palette[[d]]), dom_items(d)))
+            register_item(d, it)
+        }
+      })
     })
 
     # --- Wire each domain's add control, panels, and collapse ----------------
