@@ -276,7 +276,7 @@ test_that("Config import: replace honours the keep-colours conflict choice", {
   shiny::testServer(mod_palette_server, args = list(state = state), {
     state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
                source = "demo")
-    session$setInputs(import_file = list(datapath = tmp, name = "p.json"))
+    session$setInputs(import_file = list(datapath = tmp, name = "p.json"), import_load = 1)
     session$flushReact()
     session$setInputs(import_conflict = "colors", import_replace = 1)
     session$flushReact()
@@ -298,7 +298,7 @@ test_that("Config import: kind mismatch is skipped", {
   shiny::testServer(mod_palette_server, args = list(state = state), {
     state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
                source = "demo")
-    session$setInputs(import_file = list(datapath = tmp, name = "p.json"))
+    session$setInputs(import_file = list(datapath = tmp, name = "p.json"), import_load = 1)
     session$flushReact()
     session$setInputs(import_replace = 1); session$flushReact()
     expect_null(state$palette$colData$condition)
@@ -379,7 +379,8 @@ test_that("import reconciles to the dataset: absent columns dropped, phantom lev
   shiny::testServer(mod_palette_server, args = list(state = state), {
     state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
                source = "demo")
-    session$setInputs(import_file = list(datapath = tmp, name = "p.json")); session$flushReact()
+    session$setInputs(import_file = list(datapath = tmp, name = "p.json"), import_load = 1)
+    session$flushReact()
     session$setInputs(import_replace = 1); session$flushReact()
     expect_null(state$palette$colData$cell_type)                          # absent column dropped
     cols <- state$palette$colData$condition$colors
@@ -423,5 +424,26 @@ test_that("Clear palette config wipes all mappings (after confirm) and re-add st
     session$setInputs(pin_colData__condition_1 = "#abcdef"); session$flushReact()
     lv1 <- levels(SummarizedExperiment::colData(state$working)$condition)[1]
     expect_equal(unname(state$palette$colData$condition$colors[[lv1]]), "#ABCDEF")
+  })
+})
+
+test_that("import is gated on the Load button (no auto-import on file select)", {
+  skip_if_not_installed("DESeq2")
+  tmp <- tempfile(fileext = ".json")
+  writeLines(palette_to_json(list(colData = list(
+    condition = list(name = "Custom palette",
+                     colors = c(control = "#FF0000", treated = "#00FF00"))))), tmp)
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    # Selecting a file alone must NOT import (no modal staged).
+    session$setInputs(import_file = list(datapath = tmp, name = "p.json")); session$flushReact()
+    session$setInputs(import_replace = 1); session$flushReact()
+    expect_null(state$palette$colData$condition)
+    # Clicking Load triggers the flow; then Replace applies.
+    session$setInputs(import_load = 1); session$flushReact()
+    session$setInputs(import_replace = 1); session$flushReact()
+    expect_false(is.null(state$palette$colData$condition))
   })
 })

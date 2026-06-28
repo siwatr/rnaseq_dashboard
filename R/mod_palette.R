@@ -144,9 +144,11 @@ mod_palette_ui <- function(id) {
       tags$hr(),
       tags$div(class = "fw-semibold small", "Import"),
       helpText(class = "small mb-1",
-               "Load a palette JSON; you'll choose to replace or merge with the current config."),
+               "Choose a palette JSON, then Load; you'll choose to replace or merge with the current config."),
       fileInput(ns("import_file"), NULL, accept = ".json",
                 buttonLabel = "Browse...", placeholder = "No file selected"),
+      actionButton(ns("import_load"), "Load palette", icon = icon("upload"),
+                   class = "btn-sm btn-primary"),
       tags$hr(),
       tags$div(class = "fw-semibold small", "Reset"),
       helpText(class = "small mb-1",
@@ -666,8 +668,12 @@ mod_palette_server <- function(id, state) {
     is_conflict <- function(conf, d, it)
       any(vapply(conf, function(x) x$d == d && x$it == it, logical(1)))
 
-    observeEvent(input$import_file, {
-      fp <- input$import_file$datapath; req(fp)
+    observeEvent(input$import_load, {
+      fp <- input$import_file$datapath
+      if (is.null(fp)) {
+        showNotification("Choose a palette JSON file first.", type = "message")
+        return()
+      }
       parsed <- tryCatch(palette_from_json(fp), error = function(e) e)
       if (inherits(parsed, "error")) {
         showNotification(paste("Could not read palette JSON:", conditionMessage(parsed)),
