@@ -403,3 +403,25 @@ test_that("dataset switch prunes palette mappings for columns no longer present"
     expect_null(state$palette$colData$gone)                  # absent column pruned
   })
 })
+
+test_that("Clear palette config wipes all mappings (after confirm) and re-add still works", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 1)
+    session$setInputs(addsel_assays = "logcounts", addbtn_assays = 1); session$flushReact()
+    expect_length(state$palette, 2L)
+    # Clear opens a confirm modal; nothing happens until confirmed.
+    session$setInputs(clear_all = 1); session$flushReact()
+    expect_length(state$palette, 2L)
+    session$setInputs(clear_all_confirm = 1); session$flushReact()
+    expect_length(state$palette, 0L)
+    # Re-adding after a clear re-registers observers (teardown was clean).
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 2); session$flushReact()
+    session$setInputs(pin_colData__condition_1 = "#abcdef"); session$flushReact()
+    lv1 <- levels(SummarizedExperiment::colData(state$working)$condition)[1]
+    expect_equal(unname(state$palette$colData$condition$colors[[lv1]]), "#ABCDEF")
+  })
+})

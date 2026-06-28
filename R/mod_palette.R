@@ -146,7 +146,13 @@ mod_palette_ui <- function(id) {
       helpText(class = "small mb-1",
                "Load a palette JSON; you'll choose to replace or merge with the current config."),
       fileInput(ns("import_file"), NULL, accept = ".json",
-                buttonLabel = "Browse...", placeholder = "No file selected")),
+                buttonLabel = "Browse...", placeholder = "No file selected"),
+      tags$hr(),
+      tags$div(class = "fw-semibold small", "Reset"),
+      helpText(class = "small mb-1",
+               "Remove every colour mapping and start from a clean slate."),
+      actionButton(ns("clear_all"), "Clear palette config", icon = icon("trash"),
+                   class = "btn-sm btn-danger")),
     bslib::card(
       bslib::card_header(tags$h4("Config preview (JSON)", class = "fs-6 mb-0")),
       tags$p(class = "text-muted small mb-2",
@@ -768,6 +774,26 @@ mod_palette_server <- function(id, state) {
       apply_imported(merged)
       pending_import(NULL)
       showNotification("Palette merged from import.", type = "message")
+    })
+
+    # Clear every mapping (confirmed) -- a clean slate. Destructive and not undoable
+    # (the palette is a UI preference, not on the undo stack), so confirm first.
+    observeEvent(input$clear_all, {
+      n <- sum(vapply(state$palette, length, integer(1)))
+      if (!n) {
+        showNotification("No colour mappings to clear.", type = "message")
+        return()
+      }
+      showModal(modalDialog(title = "Clear palette config",
+        sprintf("Remove all %d colour mapping(s)? This can't be undone.", n),
+        footer = tagList(modalButton("Cancel"),
+          actionButton(ns("clear_all_confirm"), "Clear all", class = "btn-danger"))))
+    })
+    observeEvent(input$clear_all_confirm, {
+      for (k in ls(registered)) unregister_item(k)   # tear down per-item observers
+      state$palette <- list()
+      bump(); removeModal()
+      showNotification("Palette config cleared.", type = "message")
     })
 
     invisible(NULL)
