@@ -312,3 +312,113 @@ palette_gradientn <- function(name, values, min = NULL, max = NULL,
   cols <- .continuous_stops(name, custom, n, reverse)
   list(colours = cols, values = seq(0, 1, length.out = length(cols)), limits = rng)
 }
+
+# ---- Config JSON import / export --------------------------------------------
+# Round-trip the whole palette config (state$palette) so a lab can reuse a
+# palette across datasets. The JSON is a faithful, versioned mirror of the
+# config; `kind` (discrete/continuous) is not stored -- it is inferred from the
+# keys present (`colors` => discrete; `min`/`max`/`reverse`/`custom` =>
+# continuous), symmetric on both ends.
+
+# Known palette domains, in display/serialization order.
+.pal_known_domains <- c("colData", "rowData", "assays", "other")
+
+# A config item's kind, inferred from the keys present. The single definition of
+# the discrete/continuous boundary (shared by the JSON validator + the module).
+.palette_item_kind <- function(cfg)
+  if (any(c("min", "max", "reverse", "custom") %in% names(cfg))) "continuous" else "discrete"
+
+# Coerce one parsed item to the canonical config shape (discrete or continuous);
+# returns NULL for a structurally empty / unusable item.
+.palette_clean_item <- function(it) {
+  if (!is.list(it) && !is.character(it)) return(NULL)
+  it <- as.list(it)
+  has_cont <- identical(.palette_item_kind(it), "continuous")
+  name <- if (length(it$name)) as.character(it$name)[1] else NULL
+  if (has_cont) {
+    custom <- norm_color(it$custom)
+    custom <- unname(custom[!is.na(custom)])
+    out <- list(
+      name    = name %||% "viridis: viridis",
+      min     = if (length(it$min)) as.character(it$min)[1] else "",
+      max     = if (length(it$max)) as.character(it$max)[1] else "",
+      reverse = isTRUE(as.logical(it$reverse)[1]),
+      custom  = if (length(custom)) custom else NULL)
+    out
+  } else {
+    cols <- it$colors
+    if (length(cols)) {
+      nm <- names(cols)
+      cols <- norm_color(cols); names(cols) <- nm
+      cols <- cols[!is.na(cols) & nzchar(names(cols) %||% "")]
+    }
+    # No name and no usable colours -> nothing to configure.
+    if (is.null(name) && !length(cols)) return(NULL)
+    list(name = name %||% "Okabe-Ito",
+         colors = if (length(cols)) cols else NULL)
+  }
+}
+
+#' Serialize a palette config to JSON
+#'
+#' Writes a versioned, faithful mirror of `state$palette` (the Palette page's
+#' per-domain colour config). Named `colors` vectors become `{level: hex}`
+#' objects and the unnamed `custom` ramp becomes an array; scalars stay scalar.
+#' Round-trips with [palette_from_json()].
+#'
+#' @param palette The palette config list (`state$palette`): a named list of
+#'   domains (`colData`/`rowData`/`assays`/`other`), each a named list of item
+#'   configs.
+#' @param pretty Pretty-print the JSON (default `TRUE`).
+#' @return A length-1 JSON string.
+#' @export
+palette_to_json <- function(palette, pretty = TRUE) {
+  palette <- palette[intersect(.pal_known_domains, names(palette))]
+  # Drop empty domains so the JSON object stays clean (and so an all-empty
+  # config serializes its `palette` as {} rather than []).
+  palette <- Filter(function(d) length(d) > 0L, palette)
+  # jsonlite serializes a named *vector* as an array (dropping names) but a
+  # named *list* as a {key: value} object. The discrete `colors` map must keep
+  # its level names, so coerce it to a list; the unnamed `custom` ramp stays a
+  # vector (an array is what we want there).
+  palette <- lapply(palette, function(dom) lapply(dom, function(it) {
+    if (length(it$colors)) it$colors <- as.list(it$colors)
+    it
+  }))
+  if (!length(palette)) palette <- stats::setNames(list(), character(0))
+  jsonlite::toJSON(list(ddsdashboard_palette_version = 1L, palette = palette),
+                   auto_unbox = TRUE, pretty = pretty, null = "null")
+}
+
+#' Parse + validate a palette config from JSON
+#'
+#' Inverse of [palette_to_json()]. Accepts the wrapped object (`{..., palette}`)
+#' or a bare palette object; keeps only known domains; normalizes each item's
+#' colours to 6-digit hex (via [norm_color()]), `reverse` to logical, and
+#' `name`/`min`/`max` to length-1 character; drops structurally empty items.
+#' Validation is **dataset-agnostic** — kind/cardinality/conflict checks against
+#' the live dataset are the caller's job (the module). Invalid JSON `stop()`s.
+#'
+#' @param txt A JSON string (or file path / connection accepted by
+#'   [jsonlite::fromJSON()]).
+#' @return A cleaned palette config list (possibly empty).
+#' @export
+palette_from_json <- function(txt) {
+  obj <- jsonlite::fromJSON(txt, simplifyVector = TRUE,
+                            simplifyDataFrame = FALSE, simplifyMatrix = FALSE)
+  pal <- if (is.list(obj) && !is.null(obj$palette)) obj$palette else obj
+  if (!is.list(pal)) return(stats::setNames(list(), character(0)))
+  pal <- pal[intersect(.pal_known_domains, names(pal))]
+  out <- list()
+  for (dom in names(pal)) {
+    items <- pal[[dom]]
+    if (!is.list(items) || !length(items)) next
+    cleaned <- list()
+    for (it in names(items)) {
+      ci <- .palette_clean_item(items[[it]])
+      if (!is.null(ci)) cleaned[[it]] <- ci
+    }
+    if (length(cleaned)) out[[dom]] <- cleaned
+  }
+  out
+}

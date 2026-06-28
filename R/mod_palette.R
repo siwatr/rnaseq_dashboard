@@ -112,13 +112,54 @@ mod_palette_ui <- function(id) {
   bslib::navset_card_tab(
     title = tags$h3("Palette", class = "fs-6 mb-0 pe-3"),
     bslib::nav_panel(
-      tags$h4("Setting", class = "fs-6"),
+      tags$h4("Customize", class = "fs-6"),
       do.call(bslib::navset_pill, lapply(names(.pal_domains), pill))
+    ),
+    bslib::nav_panel(
+      tags$h4("Config", class = "fs-6"),
+      .pal_config_ui(ns)
     ),
     bslib::nav_panel(
       tags$h4("Preview", class = "fs-6"),
       .pal_reference_ui(ns)
     )
+  )
+}
+
+# The Config tab: export a (selectable) subset of the palette config to JSON and
+# import one back. Sidebar holds the export selector + download + import; the
+# main area is a live, read-only JSON preview of exactly what would download.
+.pal_config_ui <- function(ns) {
+  bslib::layout_sidebar(
+    sidebar = bslib::sidebar(
+      title = tags$h4("Import / Export", class = "fs-6 mb-0"), width = 340,
+      tags$div(class = "fw-semibold small", "Export"),
+      helpText(class = "small mb-1",
+               "Choose which colour mappings to include, then download. Reusing a curated palette across datasets saves re-picking colours."),
+      tags$div(class = "d-flex gap-2 mb-2",
+        actionButton(ns("exp_all"), "Select all", class = "btn-sm btn-outline-secondary"),
+        actionButton(ns("exp_none"), "Deselect all", class = "btn-sm btn-outline-secondary")),
+      uiOutput(ns("export_selector")),
+      downloadButton(ns("export"), "Download JSON", class = "btn-sm btn-primary"),
+      tags$hr(),
+      tags$div(class = "fw-semibold small", "Import"),
+      helpText(class = "small mb-1",
+               "Choose a palette JSON, then Load; you'll choose to replace or merge with the current config."),
+      fileInput(ns("import_file"), NULL, accept = ".json",
+                buttonLabel = "Browse...", placeholder = "No file selected"),
+      actionButton(ns("import_load"), "Load palette", icon = icon("upload"),
+                   class = "btn-sm btn-primary"),
+      tags$hr(),
+      tags$div(class = "fw-semibold small", "Reset"),
+      helpText(class = "small mb-1",
+               "Remove every colour mapping and start from a clean slate."),
+      actionButton(ns("clear_all"), "Clear palette config", icon = icon("trash"),
+                   class = "btn-sm btn-danger")),
+    bslib::card(
+      bslib::card_header(tags$h4("Config preview (JSON)", class = "fs-6 mb-0")),
+      tags$p(class = "text-muted small mb-2",
+             "Exactly what the download will contain (reflects the selection at left)."),
+      verbatimTextOutput(ns("config_json")))
   )
 }
 
@@ -129,7 +170,24 @@ mod_palette_server <- function(id, state) {
     ns <- session$ns
     struct <- reactiveVal(0L)
     bump <- function() struct(shiny::isolate(struct()) + 1L)
-    observeEvent(state$data_version, bump(), ignoreNULL = FALSE)
+    # On any data change, drop palette mappings no longer applicable to the dataset
+    # (a column gone after a dataset switch, or a kind change), so stale mappings
+    # don't linger in the background or get exported. Routine sample/feature edits
+    # don't change the column set, so nothing is dropped there. Notify only when it
+    # actually removes something. (reconcile_palette is defined below; resolved at
+    # call time.)
+    observeEvent(state$data_version, {
+      rec <- reconcile_palette(state$palette, trim_levels = FALSE)
+      if (length(rec$dropped)) {
+        state$palette <- rec$palette
+        showNotification(
+          sprintf("Removed %d palette mapping(s) not applicable to the current dataset: %s%s",
+                  length(rec$dropped), paste(utils::head(rec$dropped, 5), collapse = ", "),
+                  if (length(rec$dropped) > 5) ", ..." else ""),
+          type = "warning", duration = 6)
+      }
+      bump()
+    }, ignoreNULL = FALSE)
 
     has_picker <- requireNamespace("shinyWidgets", quietly = TRUE)
     update_picker <- function(i_id, value) {
@@ -138,14 +196,24 @@ mod_palette_server <- function(id, state) {
     }
 
     # --- Domain accessors (read state$working live; isolate at call sites) ----
-    dom_frame <- function(dom) {
-      if (dom == "colData") as.data.frame(SummarizedExperiment::colData(state$working))
-      else as.data.frame(SummarizedExperiment::rowData(state$working))
+    # The colData/rowData DataFrame itself (NOT coerced to a base data.frame --
+    # as.data.frame() materializes the whole thing, which is costly for wide
+    # rowData; a single `[[` column read is cheap).
+    dom_df <- function(dom) {
+      if (dom == "colData") SummarizedExperiment::colData(state$working)
+      else SummarizedExperiment::rowData(state$working)
+    }
+    # One column, decoded to a plain vector (preserves the old as.data.frame
+    # behaviour for Rle-style S4 columns; factors stay factors).
+    dom_col <- function(dom, item) {
+      col <- dom_df(dom)[[item]]
+      if (methods::is(col, "Rle")) col <- as.vector(col)
+      col
     }
     dom_items <- function(dom) {
       switch(dom,
-        colData = colnames(dom_frame("colData")),
-        rowData = colnames(dom_frame("rowData")),
+        colData = colnames(dom_df("colData")),
+        rowData = colnames(dom_df("rowData")),
         assays  = SummarizedExperiment::assayNames(state$working),
         other   = .pal_other_items)
     }
@@ -153,17 +221,81 @@ mod_palette_server <- function(id, state) {
     dom_kind <- function(dom, item) {
       if (dom == "assays") return("continuous")
       if (dom == "other")  return(.pal_other_kind[[item]])
-      if (is.numeric(dom_frame(dom)[[item]])) "continuous" else "discrete"
+      if (is.numeric(dom_col(dom, item))) "continuous" else "discrete"
     }
     dom_levels <- function(dom, item) {
-      if (dom == "other") return(.pal_removal_levels)
-      .pal_levels(dom_frame(dom)[[item]])
+      # Only removal_status is a discrete "other" map; correlation is continuous
+      # (and any future "other" item brings its own levels) -- don't blanket-
+      # assume every "other" item has the removal levels.
+      if (dom == "other") {
+        if (item == "removal_status") return(.pal_removal_levels)
+        return(character(0))
+      }
+      .pal_levels(dom_col(dom, item))
     }
     # Underlying data class for the accordion badge (helps the future factor PR).
     dom_class <- function(dom, item) {
       if (dom == "assays") return("numeric")
       if (dom == "other")  return(if (item == "correlation") "numeric" else "factor")
-      class(dom_frame(dom)[[item]])[1]
+      class(dom_col(dom, item))[1]
+    }
+    # Per-column (kind, level-count) summary for the add control's
+    # high-cardinality scan, memoized per data_version so we don't re-scan every
+    # colData/rowData column on each render. Pure cache lookup (isolated), keyed
+    # on the version; recomputed only when the data changes.
+    .meta_cache <- new.env(parent = emptyenv())
+    dom_meta <- function(dom) {
+      dv  <- shiny::isolate(state$data_version)
+      hit <- .meta_cache[[dom]]
+      if (!is.null(hit) && identical(hit$v, dv)) return(hit$meta)
+      df <- shiny::isolate(dom_df(dom))
+      meta <- stats::setNames(lapply(colnames(df), function(cn) {
+        col <- df[[cn]]; if (methods::is(col, "Rle")) col <- as.vector(col)
+        kind <- if (is.numeric(col)) "continuous" else "discrete"
+        list(kind = kind,
+             nlev = if (identical(kind, "discrete")) length(.pal_levels(col)) else NA_integer_)
+      }), colnames(df))
+      .meta_cache[[dom]] <- list(v = dv, meta = meta)
+      meta
+    }
+    # Reconcile a palette config against the CURRENT dataset: drop mappings for a
+    # column/assay that isn't present (or whose kind no longer matches, or is over
+    # the level cap); when `trim_levels`, also prune discrete colour entries for
+    # levels absent from the current column (dropping a Custom-palette mapping left
+    # with no usable colours). Keeps `other` (app-internal) untouched. Returns
+    # list(palette = reconciled, dropped = c("<item> (<reason>)", ...)). Used at
+    # import (trim) and on a dataset switch (no trim -- don't silently lose pins on
+    # a routine sample/feature edit, where columns don't change anyway).
+    reconcile_palette <- function(pal, trim_levels = FALSE) {
+      out <- list(); dropped <- character(0)
+      for (d in names(pal)) {
+        if (!length(pal[[d]])) next
+        if (d == "other") { out[[d]] <- pal[[d]]; next }
+        items_in <- if (dom_needs_data(d) && is.null(state$working)) character(0)
+                    else dom_items(d)
+        for (it in names(pal[[d]])) {
+          cfg <- pal[[d]][[it]]
+          if (!(it %in% items_in)) {
+            dropped <- c(dropped, paste0(it, " (not in dataset)")); next
+          }
+          jk <- .palette_item_kind(cfg)
+          if (!identical(jk, dom_kind(d, it))) {
+            dropped <- c(dropped, paste0(it, " (type mismatch)")); next
+          }
+          if (identical(jk, "discrete") && length(dom_levels(d, it)) > max_levels()) {
+            dropped <- c(dropped, paste0(it, " (too many levels)")); next
+          }
+          if (trim_levels && identical(jk, "discrete") && length(cfg$colors)) {
+            keep <- intersect(names(cfg$colors), dom_levels(d, it))
+            cfg$colors <- if (length(keep)) cfg$colors[keep] else NULL
+            if (is.null(cfg$colors) && identical(cfg$name, "Custom palette")) {
+              dropped <- c(dropped, paste0(it, " (no matching levels)")); next
+            }
+          }
+          out[[d]][[it]] <- cfg
+        }
+      }
+      list(palette = out, dropped = dropped)
     }
     # Preset config for a few app-internal items (NULL if none): the removal-status
     # map keeps its QC green/amber/red, and the correlation ramp defaults to a
@@ -287,8 +419,26 @@ mod_palette_server <- function(id, state) {
           updateSelectInput(session, iid("cnstops", dom, item), selected = length(cc))
           for (j in seq_along(cc)) update_picker(iid(paste0("ccol", j), dom, item), cc[j])
         }, ignoreInit = TRUE)
+        # Edit palette: copy a named (non-custom) ramp into an editable 5-stop
+        # Custom ramp. Extract with the current reverse baked into the order, then
+        # reset reverse to FALSE so the on-screen gradient is unchanged.
+        edit_obs <- observeEvent(input[[iid("cedit", dom, item)]], {
+          if (is.null(cur())) return()
+          nm <- cur()$name %||% "viridis: viridis"
+          if (identical(nm, "Custom ramp")) return()
+          stops <- .continuous_stops(nm, NULL, n = 5L, reverse = isTRUE(cur()$reverse))
+          p <- state$palette
+          p[[dom]][[item]]$name    <- "Custom ramp"
+          p[[dom]][[item]]$custom  <- unname(stops)
+          p[[dom]][[item]]$reverse <- FALSE
+          state$palette <- p
+          updateSelectInput(session, iid("cname", dom, item),   selected = "Custom ramp")
+          updateSelectInput(session, iid("cnstops", dom, item), selected = 5L)
+          updateCheckboxInput(session, iid("crev", dom, item),  value = FALSE)
+          for (j in seq_len(5L)) update_picker(iid(paste0("ccol", j), dom, item), stops[j])
+        }, ignoreInit = TRUE)
         obs_handles[[key]] <- c(ccol_obs,
-          list(name_obs, min_obs, max_obs, rev_obs, nstops_obs, reset_obs, remove_obs))
+          list(name_obs, min_obs, max_obs, rev_obs, nstops_obs, reset_obs, edit_obs, remove_obs))
         output[[iid("cpreview", dom, item)]] <- renderUI({
           cfg <- cur(); req(cfg)
           .pal_gradient_bar(cfg$name %||% "viridis: viridis", cfg$custom, isTRUE(cfg$reverse))
@@ -319,7 +469,12 @@ mod_palette_server <- function(id, state) {
           lev <- lvls[i]; hex <- norm_color(input[[pin_id(dom, item, i)]])
           if (is.na(hex)) return()
           p <- state$palette; cols <- p[[dom]][[item]]$colors
-          if (identical(unname(cols[[lev]]), unname(hex))) return()
+          # `cols` is a named atomic vector; `cols[[lev]]` ERRORS ("subscript out
+          # of bounds") when `lev` isn't one of its names -- which happens when the
+          # stored colours were imported / left over from a dataset with different
+          # levels. Look it up safely (missing -> NA) so the observer can't crash.
+          prev <- if (!is.null(cols) && lev %in% names(cols)) cols[[lev]] else NA_character_
+          if (identical(unname(prev), unname(hex))) return()
           cols[[lev]] <- unname(hex); p[[dom]][[item]]$colors <- cols
           was_named <- !identical(p[[dom]][[item]]$name, "Custom palette")
           if (was_named) p[[dom]][[item]]$name <- "Custom palette"
@@ -360,16 +515,41 @@ mod_palette_server <- function(id, state) {
       do_add(pa$dom, pa$item); pending_add(NULL); removeModal()
     })
 
+    # Register-on-visible: ensure every config item currently present in the data
+    # has its observers wired (idempotent via the `registered` env). Generalizes
+    # registration beyond add/import -- a colour stored for a column the user adds
+    # later (or imports a config for) gets wired the moment it appears in
+    # dom_items(). Fires on struct() (data_version + every bump). Only *adds*
+    # (never destroys on a data change -- that would race the deferred input
+    # flush); teardown stays on explicit Remove.
+    observe({
+      struct()
+      shiny::isolate({
+        for (d in names(.pal_domains)) {
+          if (dom_needs_data(d) && is.null(state$working)) next
+          for (it in intersect(names(state$palette[[d]]), dom_items(d)))
+            register_item(d, it)
+        }
+      })
+    })
+
     # --- Wire each domain's add control, panels, and collapse ----------------
     for (dom in names(.pal_domains)) local({
       d <- dom
+      # Trigger on struct() only (item-set / dataset / import), NOT on palette
+      # values -- so a colour edit doesn't re-run the high-cardinality scan over
+      # every colData/rowData column. The cap check reads the memoized dom_meta.
       output[[paste0("addui_", d)]] <- renderUI({
+        struct()
+        shiny::isolate({
         if (dom_needs_data(d) && is.null(state$working))
           return(helpText(class = "text-muted", "Load a dataset to configure colours."))
         unconfigured <- setdiff(dom_items(d), names(state$palette[[d]]))
-        over_cap <- Filter(function(it)
-          dom_kind(d, it) == "discrete" && length(dom_levels(d, it)) > max_levels(),
-          unconfigured)
+        meta <- if (dom_needs_data(d)) dom_meta(d) else NULL
+        over_cap <- Filter(function(it) {
+          m <- meta[[it]]
+          !is.null(m) && identical(m$kind, "discrete") && isTRUE(m$nlev > max_levels())
+        }, unconfigured)
         choices <- setdiff(unconfigured, over_cap)
         tagList(
           selectInput(ns(paste0("addsel_", d)), "Add colour mapping for",
@@ -381,6 +561,7 @@ mod_palette_server <- function(id, state) {
             helpText(class = "text-muted small mt-1", "All available items are configured."),
           if (length(over_cap))
             helpText(class = "text-muted small mt-1", .pal_hidden_note(over_cap, max_levels())))
+        })
       })
       observeEvent(input[[paste0("addbtn_", d)]], {
         item <- input[[paste0("addsel_", d)]]
@@ -428,6 +609,198 @@ mod_palette_server <- function(id, state) {
 
     observeEvent(input$collapse_ref,
                  bslib::accordion_panel_close("ref_acc", values = TRUE))
+
+    # --- Config tab: selective export ---------------------------------------
+    # Exports the *whole* config (incl. items for columns not in the current
+    # dataset, so it travels). One checkbox group per domain that has >=1
+    # configured item, all checked by default; rebuilt (re-defaulting all) when
+    # the config changes.
+    # Depend on struct() (the item-set / dataset / import signal), NOT on the
+    # palette values -- so editing a colour doesn't rebuild the selector and wipe
+    # the user's export selection. A real item add/remove/import re-defaults all.
+    output$export_selector <- renderUI({
+      struct()
+      cfg <- shiny::isolate(state$palette)
+      groups <- Filter(function(d) length(cfg[[d]]) > 0L, names(.pal_domains))
+      if (!length(groups))
+        return(helpText(class = "text-muted small", "No colour mappings to export yet."))
+      lapply(groups, function(d) {
+        items <- names(cfg[[d]])
+        checkboxGroupInput(ns(paste0("exp_", d)), label = .pal_domains[[d]],
+                           choices = items, selected = items)
+      })
+    })
+    observeEvent(input$exp_all, {
+      cfg <- state$palette
+      for (d in names(.pal_domains)) {
+        items <- names(cfg[[d]])
+        if (length(items))
+          updateCheckboxGroupInput(session, paste0("exp_", d),
+                                   selected = items)
+      }
+    })
+    observeEvent(input$exp_none, {
+      for (d in names(.pal_domains))
+        updateCheckboxGroupInput(session, paste0("exp_", d), selected = character(0))
+    })
+    # The selection, filtered to checked items, empty domains dropped. Feeds both
+    # the preview and the download, so the preview is exactly what downloads.
+    export_palette <- reactive({
+      cfg <- state$palette
+      out <- list()
+      for (d in names(.pal_domains)) {
+        items <- names(cfg[[d]])
+        if (!length(items)) next
+        sel <- intersect(items, input[[paste0("exp_", d)]])
+        if (length(sel)) out[[d]] <- cfg[[d]][sel]
+      }
+      out
+    })
+    output$config_json <- renderText(palette_to_json(export_palette()))
+    output$export <- downloadHandler(
+      filename = function() paste0("ddsdashboard-palette-", Sys.Date(), ".json"),
+      content  = function(file) writeLines(palette_to_json(export_palette()), file))
+
+    # --- Config tab: import (parse -> classify -> one modal) ----------------
+    # `conflicts` is a list of list(d, it) pairs (not a flat string key) so it
+    # round-trips the real item name for display and matches unambiguously.
+    pending_import <- reactiveVal(NULL)
+    is_conflict <- function(conf, d, it)
+      any(vapply(conf, function(x) x$d == d && x$it == it, logical(1)))
+
+    observeEvent(input$import_load, {
+      fp <- input$import_file$datapath
+      if (is.null(fp)) {
+        showNotification("Choose a palette JSON file first.", type = "message")
+        return()
+      }
+      parsed <- tryCatch(palette_from_json(fp), error = function(e) e)
+      if (inherits(parsed, "error")) {
+        showNotification(paste("Could not read palette JSON:", conditionMessage(parsed)),
+                         type = "error", duration = 8)
+        return()
+      }
+      if (!is.list(parsed) || !length(parsed)) {
+        showNotification("That file has no usable colour mappings.", type = "warning")
+        return()
+      }
+      # Keep only mappings valid for the current dataset; trim phantom levels.
+      rec <- reconcile_palette(parsed, trim_levels = TRUE)
+      kept <- rec$palette; dropped <- rec$dropped
+      if (!length(kept)) {
+        showNotification(
+          "None of the mappings in this file apply to the current dataset -- nothing imported.",
+          type = "warning", duration = 8)
+        return()
+      }
+      # Conflicts: a known named palette whose (reconciled) colours were hand-edited.
+      conflicts <- list()
+      for (d in names(kept)) for (it in names(kept[[d]])) {
+        cfg <- kept[[d]][[it]]
+        if (.palette_item_kind(cfg) == "discrete" &&
+            !identical(cfg$name, "Custom palette") && length(cfg$colors)) {
+          derived <- palette_discrete(names(cfg$colors), NULL, cfg$name %||% "Okabe-Ito")
+          if (!isTRUE(all.equal(unname(norm_color(cfg$colors)),
+                                unname(derived[names(cfg$colors)]))))
+            conflicts <- c(conflicts, list(list(d = d, it = it)))
+        }
+      }
+      # How many imported mappings share a name with ones already in the session.
+      overlap <- sum(unlist(lapply(names(kept), function(d)
+        vapply(names(kept[[d]]), function(it) it %in% names(state$palette[[d]]), logical(1)))))
+      pending_import(list(palette = kept, conflicts = conflicts))
+
+      n_items <- sum(vapply(kept, length, integer(1)))
+      body <- list(tags$p(tags$strong(sprintf(
+        "Load %d colour mapping%s into the current session?",
+        n_items, if (n_items == 1L) "" else "s"))))
+      notes <- list()
+      if (length(dropped))
+        notes <- c(notes, list(tags$li(sprintf(
+          "%d mapping%s in the file %s not valid for this dataset and will be dropped: %s%s",
+          length(dropped), if (length(dropped) == 1L) "" else "s",
+          if (length(dropped) == 1L) "is" else "are",
+          paste(utils::head(dropped, 5), collapse = ", "),
+          if (length(dropped) > 5) ", ..." else ""))))
+      if (overlap > 0L)
+        notes <- c(notes, list(tags$li(sprintf(
+          "%d mapping%s share a name with mappings already in this session -- Merge overwrites those; Replace discards all current mappings first.",
+          overlap, if (overlap == 1L) "" else "s"))))
+      if (length(notes))
+        body <- c(body, list(tags$p(class = "small text-muted mb-1", "Note:"),
+                             tags$ul(class = "small text-muted", notes)))
+      if (length(conflicts)) {
+        cn <- vapply(conflicts, function(x) x$it, character(1))
+        body <- c(body, list(radioButtons(ns("import_conflict"),
+          sprintf("%d mapping%s have colours that differ from their named palette (e.g. %s):",
+                  length(conflicts), if (length(conflicts) == 1L) "" else "s",
+                  paste(utils::head(cn, 5), collapse = ", ")),
+          c("Keep the colours (use as a custom palette)" = "colors",
+            "Force the named palette (discard the colours)" = "palette"),
+          selected = "colors")))
+      }
+      showModal(modalDialog(title = "Import palette", do.call(tagList, body),
+        footer = tagList(modalButton("Cancel"),
+          bslib::tooltip(
+            actionButton(ns("import_merge"), "Merge", icon = icon("layer-group"),
+                         class = "btn-primary"),
+            "Add the incoming mappings to your current palette; existing mappings not in the file are kept."),
+          bslib::tooltip(
+            actionButton(ns("import_replace"), "Replace", icon = icon("arrows-rotate"),
+                         class = "btn-warning"),
+            "Discard the current palette entirely and use only the imported mappings."))))
+    })
+
+    # Apply the conflict choice, then commit (Replace overwrites; Merge overlays).
+    apply_conflict <- function(pal, conf, mode) {
+      if (!length(conf) || is.null(mode)) return(pal)
+      for (d in names(pal)) for (it in names(pal[[d]])) {
+        if (!is_conflict(conf, d, it)) next
+        if (identical(mode, "palette")) pal[[d]][[it]]$colors <- NULL
+        else                            pal[[d]][[it]]$name   <- "Custom palette"
+      }
+      pal
+    }
+    apply_imported <- function(new_pal) {
+      state$palette <- new_pal
+      bump()                 # register-on-visible observe wires the new items
+      removeModal()
+    }
+    observeEvent(input$import_replace, {
+      pi <- pending_import(); req(pi)
+      apply_imported(apply_conflict(pi$palette, pi$conflicts, input$import_conflict))
+      pending_import(NULL)
+      showNotification("Palette replaced from import.", type = "message")
+    })
+    observeEvent(input$import_merge, {
+      pi <- pending_import(); req(pi)
+      pal <- apply_conflict(pi$palette, pi$conflicts, input$import_conflict)
+      merged <- state$palette
+      for (d in names(pal)) for (it in names(pal[[d]])) merged[[d]][[it]] <- pal[[d]][[it]]
+      apply_imported(merged)
+      pending_import(NULL)
+      showNotification("Palette merged from import.", type = "message")
+    })
+
+    # Clear every mapping (confirmed) -- a clean slate. Destructive and not undoable
+    # (the palette is a UI preference, not on the undo stack), so confirm first.
+    observeEvent(input$clear_all, {
+      n <- sum(vapply(state$palette, length, integer(1)))
+      if (!n) {
+        showNotification("No colour mappings to clear.", type = "message")
+        return()
+      }
+      showModal(modalDialog(title = "Clear palette config",
+        sprintf("Remove all %d colour mapping(s)? This can't be undone.", n),
+        footer = tagList(modalButton("Cancel"),
+          actionButton(ns("clear_all_confirm"), "Clear all", class = "btn-danger"))))
+    })
+    observeEvent(input$clear_all_confirm, {
+      for (k in ls(registered)) unregister_item(k)   # tear down per-item observers
+      state$palette <- list()
+      bump(); removeModal()
+      showNotification("Palette config cleared.", type = "message")
+    })
 
     invisible(NULL)
   })
@@ -481,6 +854,14 @@ mod_palette_server <- function(id, state) {
                   choices = palette_continuous_choices()[
                     c("viridis", "Brewer: Sequential", "Brewer: Divergent", "Custom")],
                   selected = name),
+      # On a named (non-custom) palette, offer to copy it into an editable
+      # 5-stop Custom ramp. Hidden client-side once Custom ramp is selected.
+      conditionalPanel(
+        condition = sprintf("input['%s'] != 'Custom ramp'", id("cname")),
+        bslib::tooltip(
+          actionButton(id("cedit"), "Edit palette", icon = icon("sliders"),
+                       class = "btn-sm btn-outline-secondary mb-2"),
+          "Copy this palette's colours into an editable 5-stop Custom ramp.")),
       checkboxInput(id("crev"), "Reverse direction", value = isTRUE(cfg$reverse)),
       bslib::layout_columns(col_widths = c(6, 6),
         textInput(id("cmin"), "Min anchor", value = cfg$min %||% "",

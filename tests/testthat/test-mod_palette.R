@@ -4,8 +4,9 @@ test_that("palette UI mounts Setting/Preview tabs + the four domain pills", {
   expect_match(ui, "palette-addui_colData")
   expect_match(ui, "palette-panels_assays")
   expect_match(ui, "palette-panels_other")
-  expect_match(ui, "Setting")
+  expect_match(ui, "Customize")
   expect_match(ui, "Preview")
+  expect_match(ui, "Config")
 })
 
 test_that("colData discrete: add seeds Okabe-Ito; editing a level flips to Custom; reset; remove", {
@@ -211,5 +212,238 @@ test_that("resetting removal_status restores the green/amber/red preset", {
     rs <- state$palette$other$removal_status
     expect_equal(rs$name, "Custom palette")
     expect_equal(unname(rs$colors[["pass"]]), "#2CA02C")         # restored
+  })
+})
+
+test_that("Config export: all selected = full config; deselect drops items/domains", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 1)
+    session$setInputs(addsel_assays = "logcounts", addbtn_assays = 1)
+    session$flushReact()
+    # All selected -> preview equals the full config.
+    session$setInputs(exp_colData = "condition", exp_assays = "logcounts")
+    session$flushReact()
+    # renderText yields a plain string; toJSON carries a "json" class -> compare text.
+    expect_equal(output$config_json, as.character(palette_to_json(state$palette)))
+    # Deselect the assay -> that domain drops from the export.
+    session$setInputs(exp_assays = character(0)); session$flushReact()
+    expect_match(output$config_json, "condition", fixed = TRUE)
+    expect_false(grepl("logcounts", output$config_json, fixed = TRUE))
+    # Editing a colour must NOT rebuild the selector / reset the selection (the
+    # selector depends on struct(), not the palette values), yet the preview
+    # still reflects the new colour live.
+    session$setInputs(pin_colData__condition_1 = "#abcdef"); session$flushReact()
+    expect_false(grepl("logcounts", output$config_json, fixed = TRUE))   # still deselected
+    expect_match(toupper(output$config_json), "ABCDEF", fixed = TRUE)     # colour edit shown
+  })
+})
+
+test_that("register-on-visible wires an item that becomes present without an explicit add", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    # Inject a config directly (as an import would) WITHOUT calling do_add, then
+    # bump the data version so the register-on-visible observe runs.
+    lv <- levels(SummarizedExperiment::colData(state$working)$condition)
+    state$palette <- list(colData = list(condition =
+      list(name = "Okabe-Ito",
+           colors = palette_discrete(lv, NULL, "Okabe-Ito"))))
+    state$data_version <- state$data_version + 1L
+    session$flushReact()
+    # The level-1 picker observer is now wired: editing it updates the config.
+    session$setInputs(pin_colData__condition_1 = "#123456"); session$flushReact()
+    expect_equal(unname(state$palette$colData$condition$colors[[lv[1]]]), "#123456")
+    expect_identical(state$palette$colData$condition$name, "Custom palette")
+  })
+})
+
+test_that("Config import: replace honours the keep-colours conflict choice", {
+  skip_if_not_installed("DESeq2")
+  tmp <- tempfile(fileext = ".json")
+  # condition: a known palette with hand-edited colours (a conflict); plus an item
+  # for a column absent from the dataset (reconciled away at import).
+  writeLines(palette_to_json(list(colData = list(
+    condition = list(name = "RColorBrewer: Set2",
+                     colors = c(control = "#FF0000", treated = "#00FF00")),
+    not_here  = list(name = "Okabe-Ito", colors = c(a = "#123456"))))), tmp)
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(import_file = list(datapath = tmp, name = "p.json"), import_load = 1)
+    session$flushReact()
+    session$setInputs(import_conflict = "colors", import_replace = 1)
+    session$flushReact()
+    cond <- state$palette$colData$condition
+    expect_identical(cond$name, "Custom palette")            # keep-colours -> Custom
+    expect_equal(unname(cond$colors[["control"]]), "#FF0000")
+    expect_null(state$palette$colData$not_here)              # absent column dropped at import
+  })
+})
+
+test_that("Config import: kind mismatch is skipped", {
+  skip_if_not_installed("DESeq2")
+  tmp <- tempfile(fileext = ".json")
+  # condition is discrete in the data, but saved here as continuous -> skip.
+  writeLines(palette_to_json(list(colData = list(
+    condition = list(name = "viridis: viridis", min = "", max = "",
+                     reverse = FALSE, custom = NULL)))), tmp)
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(import_file = list(datapath = tmp, name = "p.json"), import_load = 1)
+    session$flushReact()
+    session$setInputs(import_replace = 1); session$flushReact()
+    expect_null(state$palette$colData$condition)
+  })
+})
+
+test_that("Edit palette copies a named continuous ramp into a 5-stop Custom ramp", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(addsel_assays = "logcounts", addbtn_assays = 1); session$flushReact()
+    session$setInputs(cname_assays__logcounts = "viridis: viridis",
+                      crev_assays__logcounts = TRUE); session$flushReact()
+    exp <- ddsdashboard:::.continuous_stops("viridis: viridis", NULL, n = 5L, reverse = TRUE)
+    session$setInputs(cedit_assays__logcounts = 1); session$flushReact()
+    p <- state$palette$assays$logcounts
+    expect_identical(p$name, "Custom ramp")
+    expect_length(p$custom, 5L)
+    expect_false(isTRUE(p$reverse))                  # direction baked into the order
+    expect_equal(unname(p$custom), unname(exp))      # gradient unchanged on screen
+  })
+})
+
+test_that("add control is struct-gated: stays correct across colour edits (perf fix)", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 40, n_per_group = 3, n_spike = 2, seed = 1)
+  cd <- SummarizedExperiment::colData(dds)
+  for (k in 1:5) cd[[paste0("meta_", k)]] <- factor(sample(letters[1:3], ncol(dds), TRUE))
+  SummarizedExperiment::colData(dds) <- cd
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, dds, source = "demo")
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 1); session$flushReact()
+    # Configured item dropped from the add choices...
+    expect_false(grepl('">condition<', as.character(output$addui_colData$html), fixed = TRUE))
+    # ...and a colour edit (which no longer re-renders addui) doesn't change that.
+    session$setInputs(pin_colData__condition_1 = "#101010"); session$flushReact()
+    html <- as.character(output$addui_colData$html)
+    expect_false(grepl('">condition<', html, fixed = TRUE))
+    expect_true(grepl("meta_1", html, fixed = TRUE))   # other columns still addable
+  })
+})
+
+test_that("pin observer survives stored colours whose levels differ from the dataset (no crash)", {
+  skip_if_not_installed("DESeq2")
+  # Configure condition on d1 (control/treated), then switch to d2 where condition
+  # is X/Y. The dataset-switch prune keeps the mapping (column present) but its
+  # stored colours are now stale -- a pin echo must NOT crash (was: subscript out
+  # of bounds on cols[["X"]]).
+  d1 <- make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1)
+  d2 <- make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 2)
+  SummarizedExperiment::colData(d2)$condition <- factor(rep(c("X", "Y"), each = ncol(d2) / 2))
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, d1, source = "demo")
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 1); session$flushReact()
+    session$setInputs(pin_colData__condition_1 = "#E69F00",
+                      pin_colData__condition_2 = "#56B4E9"); session$flushReact()
+    state_load(state, d2, source = "demo"); session$flushReact()
+    expect_false(is.null(state$palette$colData$condition))   # column present -> kept
+    invisible(as.character(output$panels_colData$html))
+    expect_silent(session$setInputs(pin_colData__condition_1 = "#abcdef"))
+    session$flushReact()
+    expect_equal(unname(state$palette$colData$condition$colors[["X"]]), "#ABCDEF")
+  })
+})
+
+test_that("import reconciles to the dataset: absent columns dropped, phantom levels trimmed", {
+  skip_if_not_installed("DESeq2")
+  tmp <- tempfile(fileext = ".json")
+  writeLines(palette_to_json(list(colData = list(
+    condition = list(name = "Custom palette",
+                     colors = c(X = "#FF0000", control = "#123456")),     # partial overlap
+    cell_type = list(name = "Okabe-Ito", colors = c(a = "#111111"))))), tmp)  # absent column
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(import_file = list(datapath = tmp, name = "p.json"), import_load = 1)
+    session$flushReact()
+    session$setInputs(import_replace = 1); session$flushReact()
+    expect_null(state$palette$colData$cell_type)                          # absent column dropped
+    cols <- state$palette$colData$condition$colors
+    expect_equal(names(cols), "control")                                  # phantom X trimmed
+  })
+})
+
+test_that("dataset switch prunes palette mappings for columns no longer present", {
+  skip_if_not_installed("DESeq2")
+  d1 <- make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1)
+  d2 <- make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 2)
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, d1, source = "demo")
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 1); session$flushReact()
+    p <- state$palette
+    p$colData$gone <- list(name = "Okabe-Ito", colors = c(a = "#111111"))  # not a real column
+    state$palette <- p
+    state_load(state, d2, source = "demo"); session$flushReact()
+    expect_false(is.null(state$palette$colData$condition))   # shared column kept
+    expect_null(state$palette$colData$gone)                  # absent column pruned
+  })
+})
+
+test_that("Clear palette config wipes all mappings (after confirm) and re-add still works", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 1)
+    session$setInputs(addsel_assays = "logcounts", addbtn_assays = 1); session$flushReact()
+    expect_length(state$palette, 2L)
+    # Clear opens a confirm modal; nothing happens until confirmed.
+    session$setInputs(clear_all = 1); session$flushReact()
+    expect_length(state$palette, 2L)
+    session$setInputs(clear_all_confirm = 1); session$flushReact()
+    expect_length(state$palette, 0L)
+    # Re-adding after a clear re-registers observers (teardown was clean).
+    session$setInputs(addsel_colData = "condition", addbtn_colData = 2); session$flushReact()
+    session$setInputs(pin_colData__condition_1 = "#abcdef"); session$flushReact()
+    lv1 <- levels(SummarizedExperiment::colData(state$working)$condition)[1]
+    expect_equal(unname(state$palette$colData$condition$colors[[lv1]]), "#ABCDEF")
+  })
+})
+
+test_that("import is gated on the Load button (no auto-import on file select)", {
+  skip_if_not_installed("DESeq2")
+  tmp <- tempfile(fileext = ".json")
+  writeLines(palette_to_json(list(colData = list(
+    condition = list(name = "Custom palette",
+                     colors = c(control = "#FF0000", treated = "#00FF00"))))), tmp)
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 30, n_per_group = 2, n_spike = 1, seed = 1),
+               source = "demo")
+    # Selecting a file alone must NOT import (no modal staged).
+    session$setInputs(import_file = list(datapath = tmp, name = "p.json")); session$flushReact()
+    session$setInputs(import_replace = 1); session$flushReact()
+    expect_null(state$palette$colData$condition)
+    # Clicking Load triggers the flow; then Replace applies.
+    session$setInputs(import_load = 1); session$flushReact()
+    session$setInputs(import_replace = 1); session$flushReact()
+    expect_false(is.null(state$palette$colData$condition))
   })
 })

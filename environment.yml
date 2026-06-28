@@ -18,6 +18,7 @@ dependencies:
   - r-shinycssloaders    # loading spinners for slow renders
   - r-thematic           # ggplots match the bslib theme
   - r-ps                 # session memory footprint (process RSS) in the status bar
+  - r-jsonlite           # palette config import/export (Palette page Config tab)
   # Plotting / data wrangling / IO
   - r-ggplot2
   - r-plotly             # optional interactive plot engine (ggplotly); QC toggle

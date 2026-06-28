@@ -136,3 +136,42 @@ test_that("continuous reverse flips the ramp; custom ramp uses supplied colours"
   expect_equal(c2$colours, rev(c1$colours))
   expect_equal(c1$colours[1], "#000000")           # ramps low -> high through custom
 })
+
+test_that("palette_to_json / palette_from_json round-trip a mixed config", {
+  p <- list(
+    colData = list(condition = list(name = "Okabe-Ito",
+                                    colors = c(control = "#E69F00", treated = "#56B4E9"))),
+    assays  = list(logcounts = list(name = "viridis: viridis", min = "", max = "",
+                                    reverse = FALSE, custom = c("#FFFFFF", "#000000"))),
+    other   = list(correlation = list(name = "RColorBrewer: RdBu", min = "-1", max = "1",
+                                      reverse = TRUE, custom = NULL)))
+  j <- palette_to_json(p)
+  # The discrete colours serialize to a {level: hex} object (named, not an array).
+  expect_match(j, '"control"')
+  expect_match(j, '"ddsdashboard_palette_version"')
+  rt <- palette_from_json(j)
+  expect_equal(rt$colData$condition$colors, c(control = "#E69F00", treated = "#56B4E9"))
+  expect_equal(rt$assays$logcounts$custom, c("#FFFFFF", "#000000"))
+  expect_true(isTRUE(rt$other$correlation$reverse))
+  expect_equal(rt$other$correlation$min, "-1")
+})
+
+test_that("palette_to_json drops empty domains; empty config -> {}", {
+  expect_match(palette_to_json(list()), "\"palette\": {}", fixed = TRUE)
+  # An all-empty / unknown-only config also yields {}.
+  expect_match(palette_to_json(list(colData = list(), bogus = list(x = 1))),
+               "\"palette\": {}", fixed = TRUE)
+})
+
+test_that("palette_from_json accepts a bare palette, drops unknown domains, normalizes", {
+  bare <- '{"colData":{"x":{"name":"Okabe-Ito","colors":{"a":"gray50"}}},"bogus":{"y":{}}}'
+  out <- palette_from_json(bare)
+  expect_named(out, "colData")                       # bogus domain dropped
+  expect_equal(out$colData$x$colors[["a"]], "#7F7F7F")  # gray50 normalized to hex
+})
+
+test_that("palette_from_json drops empty items and errors on invalid JSON", {
+  out <- palette_from_json('{"palette":{"colData":{"empty":{}}}}')
+  expect_length(out, 0L)                             # nothing usable
+  expect_error(palette_from_json("{not json"))
+})
