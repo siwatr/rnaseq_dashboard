@@ -43,6 +43,21 @@
 # mode) is intentionally NOT restyled here yet - a full theme pass is planned.
 .to_plotly <- function(p) plotly::ggplotly(p, tooltip = "text")
 
+# Shared plot theme. thematic recolors fg/bg/accent to follow the live bslib theme
+# (incl. dark mode) at draw time; `dark_theme` is the explicit lever for element
+# choices thematic does not manage (gridline + text contrast). Used by QC + PCA.
+.plot_theme <- function(dark_theme = FALSE) {
+  grid <- if (isTRUE(dark_theme)) "grey35" else "grey85"
+  text <- if (isTRUE(dark_theme)) "grey90" else "grey25"
+  ggplot2::theme() +
+    ggplot2::theme(
+      panel.grid.major = ggplot2::element_line(colour = grid),
+      panel.grid.minor = ggplot2::element_blank(),
+      text = ggplot2::element_text(size = 14, color = text),
+      legend.position  = "bottom"
+    )
+}
+
 #' Host-namespace plot-engine helpers (interactivity toggle + deferred render)
 #'
 #' Call once in a page's `moduleServer` body. Returns a list of closures that

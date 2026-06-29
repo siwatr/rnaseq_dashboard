@@ -82,20 +82,8 @@
   }
 }
 
-# Plot theme. thematic recolors fg/bg/accent to follow the live bslib theme
-# (incl. dark mode) at draw time; `dark_theme` is the explicit lever for element
-# choices thematic does not manage (here, gridline + text contrast).
-.qc_theme <- function(dark_theme = FALSE) {
-  grid <- if (isTRUE(dark_theme)) "grey35" else "grey85"
-  text <- if (isTRUE(dark_theme)) "grey90" else "grey25"
-  ggplot2::theme() +
-    ggplot2::theme(
-      panel.grid.major = ggplot2::element_line(colour = grid),
-      panel.grid.minor = ggplot2::element_blank(),
-      text = ggplot2::element_text(size = 14, color = text),
-      legend.position  = "bottom"
-    )
-}
+# Plot theme moved to R/mod_plot_engine.R as the shared `.plot_theme()` (reused
+# by the PCA page); the QC builders call it below.
 
 # Build the per-sample QC plot. x_var = "sample" (discrete bar of the metric per
 # sample, optionally sorted by value) or another metric name (numeric scatter,
@@ -157,7 +145,7 @@
     p <- p + scale_fn(values = palette, labels = labs_arg, drop = FALSE,
                       name = group_lab %||% "group")
   }
-  p + .qc_theme(dark_theme)
+  p + .plot_theme(dark_theme)
 }
 
 # Before/after feature-filter density (limma/edgeR RNAseq123 style): the
@@ -173,7 +161,7 @@
     ggplot2::scale_colour_manual(values = c(before = "#9aa0a6", after = "#1f77b4"),
                                  name = NULL) +
     ggplot2::labs(x = "log2 expression", y = "density") +
-    .qc_theme(dark_theme)
+    .plot_theme(dark_theme)
 }
 
 # ---- Spike-in (ERCC) dose-response builders --------------------------------
@@ -205,7 +193,7 @@
     ggplot2::labs(x = "known concentration (attomoles/uL)", y = "observed expression",
                   colour = "group") +
     .qc_group_scale(palette, "colour") +
-    .qc_theme(dark_theme)
+    .plot_theme(dark_theme)
 }
 
 # Per-sample spike summary: a chosen metric across samples (bar, sorted), filled
@@ -222,7 +210,7 @@
     ggplot2::labs(x = "sample", y = lab, fill = "group") +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
     .qc_group_scale(palette, "fill") +
-    .qc_theme(dark_theme)
+    .plot_theme(dark_theme)
 }
 
 # ---- Dataset-level diagnostic plot builders --------------------------------
@@ -275,7 +263,7 @@
     ggplot2::geom_line(data = trend, ggplot2::aes(x = .data$rank, y = .data$sd),
                        colour = "red", linewidth = 0.7) +
     ggplot2::labs(x = "rank (mean expression)", y = "standard deviation") +
-    .qc_theme(dark_theme)
+    .plot_theme(dark_theme)
 }
 
 # Relative log expression boxplots. df: sample (factor), group, value.
@@ -288,7 +276,7 @@
     ggplot2::geom_boxplot(outlier.size = 0.4, mapping = .hover_aes(interactive)) +
     ggplot2::labs(x = "sample", y = "relative log expression", fill = "group") +
     .qc_group_scale(palette, "fill") +
-    .qc_theme(dark_theme)
+    .plot_theme(dark_theme)
   if (n > 30) {
     p + ggplot2::theme(axis.text.x = ggplot2::element_blank())
   } else {
@@ -306,7 +294,7 @@
     ggplot2::geom_density(mapping = .hover_aes(interactive)) +
     ggplot2::labs(x = "log2 expression", y = "density", colour = "group") +
     .qc_group_scale(palette, "colour") +
-    .qc_theme(dark_theme)
+    .plot_theme(dark_theme)
   if (n > 30) p + ggplot2::theme(legend.position = "none") else p
 }
 
@@ -330,7 +318,7 @@
     ggplot2::labs(x = "group", y = "mean within-group correlation",
                   fill = "group", colour = "group") +
     .qc_group_scale(palette, c("fill", "colour")) +
-    .qc_theme(dark_theme)
+    .plot_theme(dark_theme)
 }
 
 # Sample-sample correlation heatmap (ComplexHeatmap). Returns a Heatmap, or NULL
