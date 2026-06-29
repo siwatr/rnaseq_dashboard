@@ -38,12 +38,107 @@ test_that("scatter colours by metadata + gene; scree builds; gene-not-found vali
     session$setInputs(colour_by = "condition"); session$flushReact()
     expect_s3_class(build_pca_gg(FALSE), "ggplot")
     expect_s3_class(build_scree_gg(FALSE), "ggplot")
-    # Colour by a real gene resolves; a bogus one validates with a clear message.
+    # Colour by a real gene resolves (search the gene_name field); a bogus one
+    # validates with a clear message. The gene box is debounced -> elapse the timer.
     gname <- SummarizedExperiment::rowData(state$working)$gene_name[1]
-    session$setInputs(colour_by = "__gene__", gene = gname); session$flushReact()
+    session$setInputs(colour_by = "__gene__", gene_searchby = "gene_name",
+                      gene_assay = "logcounts", gene = gname)
+    session$elapse(300); session$flushReact()
     expect_s3_class(build_pca_gg(FALSE), "ggplot")
-    session$setInputs(gene = "NoSuchGene"); session$flushReact()
+    session$setInputs(gene = "NoSuchGene"); session$elapse(300); session$flushReact()
     expect_error(build_pca_gg(FALSE), "not found")
+  })
+})
+
+test_that("gene search: field selector, transform, duplicate + suggestion hints", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 120, n_per_group = 3, n_spike = 4, seed = 11))
+    rd <- SummarizedExperiment::rowData(dds)
+    rd$gene_name[2] <- rd$gene_name[1]                 # force a duplicate name
+    SummarizedExperiment::rowData(dds) <- rd
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$setInputs(assay = "vst", n_top = 80, auto = TRUE, colour_by = "__gene__",
+                      gene_searchby = "gene_name", gene_assay = "logcounts"); session$flushReact()
+    dupname <- rd$gene_name[1]
+    session$setInputs(gene = dupname); session$elapse(300); session$flushReact()
+    expect_match(as.character(output$gene_hint$html), "matched")     # "N features matched ...; showing the first"
+    expect_s3_class(build_pca_gg(FALSE), "ggplot")                   # first match used
+
+    # A near miss yields a "Did you mean ...?" suggestion (always case-insensitive).
+    real <- rd$gene_name[50]
+    session$setInputs(gene_ci = FALSE, gene = tolower(substr(real, 1, nchar(real) - 1)))
+    session$elapse(300); session$flushReact()
+    expect_match(as.character(output$gene_hint$html), "Did you mean")
+
+    # A case-insensitive hit labels the legend + caption with the STORED value
+    # (e.g. "Gene45"), not the typed lowercase query.
+    session$setInputs(gene_ci = TRUE, gene = tolower(real)); session$elapse(300); session$flushReact()
+    expect_match(build_pca_gg(FALSE)$labels$colour, real, fixed = TRUE)
+    cap <- as.character(output$gene_caption$html)
+    expect_match(cap, "Plotting expression of")
+    expect_match(cap, real, fixed = TRUE)                            # matched value
+    expect_match(cap, rownames(state$working)[50], fixed = TRUE)     # true unique id (rowname)
+
+    # Searching by Feature ID (rownames) resolves an id directly.
+    rid <- rownames(state$working)[3]
+    session$setInputs(gene_ci = FALSE, gene_searchby = "__rownames__", gene = rid)
+    session$elapse(300); session$flushReact()
+    expect_silent(g <- build_pca_gg(FALSE))
+    expect_s3_class(g, "ggplot")
+
+    # A log transform applies via expr_transform (colourbar label reflects it).
+    session$setInputs(gene_transform = "log2", gene_pseudo = 1); session$elapse(300); session$flushReact()
+    g <- build_pca_gg(FALSE)
+    expect_match(g$labels$colour, "log2")
+  })
+})
+
+test_that("colour-by optgroups are ordered General -> This session -> Data metadata", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 3, n_spike = 2, seed = 21)),
+               source = "demo"); session$flushReact()
+    html <- as.character(output$colour_ui$html)
+    pos <- function(lbl) regexpr(sprintf('label="%s"', lbl), html, fixed = TRUE)
+    expect_true(pos("General") < pos("This session"))
+    expect_true(pos("This session") < pos("Data metadata"))
+  })
+})
+
+test_that("colour by a per-sample QC metric builds a continuous scale", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 90, n_per_group = 3, n_spike = 4, seed = 12)),
+               source = "demo")
+    session$setInputs(assay = "vst", n_top = 60, auto = TRUE,
+                      colour_by = "__qc__library_size"); session$flushReact()
+    g <- build_pca_gg(FALSE)
+    expect_s3_class(g, "ggplot")
+    expect_equal(g$labels$colour, "Library size")
+    # Metrics come from the shared derived cache (keyed on data_version), not a
+    # private recompute -> the QC page and PCA page share one frame.
+    expect_false(is.null(get0("qc_metrics", envir = state$derived)))
+  })
+})
+
+test_that("shape selector offers only <=6-level discrete columns; legend position applies", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 4, n_spike = 2, seed = 13))
+    # A high-cardinality discrete column (one level per sample, 8 > 6) must be excluded.
+    SummarizedExperiment::colData(dds)$sample_id <- factor(colnames(dds))
+    state_load(state, dds, source = "demo"); session$flushReact()
+    sh <- as.character(output$shape_ui$html)
+    expect_match(sh, "condition")
+    expect_false(grepl('value=\"sample_id\"', sh))
+    session$setInputs(assay = "vst", n_top = 40, auto = TRUE, legend_pos = "none"); session$flushReact()
+    g <- build_pca_gg(FALSE)
+    expect_equal(g$theme$legend.position, "none")
   })
 })
 

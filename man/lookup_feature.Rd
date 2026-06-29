@@ -9,7 +9,8 @@ lookup_feature(
   row_data,
   ids = rownames(row_data),
   feature_type = NULL,
-  column = NULL
+  column = NULL,
+  case_insensitive = FALSE
 )
 }
 \arguments{
@@ -24,6 +25,8 @@ lookup_feature(
 \code{paste0(feature_type, "_name")} unless \code{column} is given.}
 
 \item{column}{Explicit name column to search; overrides \code{feature_type}.}
+
+\item{case_insensitive}{Match case-insensitively (default \code{FALSE}).}
 }
 \value{
 Character vector of matched feature IDs (NA where unmatched), same

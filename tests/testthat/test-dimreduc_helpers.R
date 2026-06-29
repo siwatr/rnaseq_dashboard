@@ -86,3 +86,12 @@ test_that("compute_pca errors when too few variable features", {
   m <- matrix(1, nrow = 3, ncol = 4, dimnames = list(paste0("g", 1:3), paste0("s", 1:4)))
   expect_error(compute_pca(m), "variable features")     # all constant -> nothing to PCA
 })
+
+test_that("expr_transform applies log2/log10 with a pseudocount, none is identity", {
+  x <- c(0, 1, 9, 99)
+  expect_equal(expr_transform(x, "none"), x)
+  expect_equal(expr_transform(x, "log2", 1), log2(x + 1))
+  expect_equal(expr_transform(x, "log10", 1), log10(x + 1))
+  expect_equal(expr_transform(c(0, 0.5), "log2", 0.5), log2(c(0.5, 1)))
+  expect_error(expr_transform(x, "ln"))                 # match.arg guards the set
+})

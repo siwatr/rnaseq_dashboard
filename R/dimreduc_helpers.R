@@ -84,6 +84,26 @@ pca_input <- function(dds, assay = "vst", log_transform = FALSE) {
   list(mat = m, label = assay)
 }
 
+#' Transform a gene-expression vector for colouring
+#'
+#' Optional `log2`/`log10` of an expression vector with a pseudocount, used by
+#' the PCA gene-colour aesthetic so a raw (linear) assay can be shown on a log
+#' scale. `"none"` returns the input unchanged (the pseudocount is ignored).
+#'
+#' @param x Numeric expression vector.
+#' @param transform One of `"none"` (default), `"log2"`, `"log10"`.
+#' @param pseudocount Added before a log (default 1).
+#' @return The transformed numeric vector.
+#' @export
+expr_transform <- function(x, transform = c("none", "log2", "log10"),
+                           pseudocount = 1) {
+  transform <- match.arg(transform)
+  switch(transform,
+         none  = x,
+         log2  = log2(x + pseudocount),
+         log10 = log10(x + pseudocount))
+}
+
 #' Top-variable feature ids from a value matrix
 #'
 #' Per-row variance (drops non-finite / zero-variance rows), then the most

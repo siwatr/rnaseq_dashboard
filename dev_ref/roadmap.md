@@ -116,7 +116,13 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   colour-by = first design var → condition → none; no-config colouring uses the thematic
   default (not Okabe-Ito); dark-mode aware (shared `.plot_theme`); plot-aesthetics accordion
   (1:1 ratio + point size). [PR #23]
-- **P4a-2 ⬅️ next** PCA **colour & feature-search enhancements** (single follow-up PR; details below).
+- **P4a-2 ✅ done** PCA **colour & feature-search enhancements** (sidebar accordions; grouped
+  colour/shape selectize with a "This session" group = gene expression + per-sample QC metrics;
+  always-embedded gene-colour block with field-aware Search-by, dup-column toggle, case-insensitive
+  lookup, debounced "Did you mean?" hint, expression assay + transform + pseudocount; shape ≤6-level
+  guard; legend-position select). Pure helpers `resolve_feature()`/`suggest_features()`/
+  `feature_search_choices()`/`expr_transform()` + `lookup_feature(case_insensitive=)`. QC metrics
+  share the `derived` cache; gene-colour guards a stale assay name. [PR #24]
 - **P4b** multi-panel (1/2/4 layouts), embedding computed once, aesthetics per panel.
 - **P4c (later)** t-SNE/UMAP, hard-gated by sample count (~≥30); Rtsne/uwot optional Suggests.
 - **P4-removal (deferred, separate PR)** Promote the removal-pool + sample-flag state from
@@ -124,6 +130,15 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   into shared `state`, then expose **"Suggested removal"** / **"In removal pool"** as colour/shape
   fields on PCA (the "This session" group) — also lets the "Showing" control + future plot pages
   reuse it. Pairs with the deferred "promote Showing subset to app-state" item.
+  **Also in this PR — unify the group/colour-by selectors:** extract one shared grouped-choices
+  helper (optgroups ordered **General → This session → Data metadata**, matching PCA's
+  `colour_ui`) and apply it across **all QC sample selectors** (General [done], RLE, Expression
+  density, Spike-in, Within-group correlation "Group by", filtering "Within-group grouping").
+  Per the user's call, add **Suggested removal / In removal pool** under "This session" to **all**
+  sample selectors (not just the colour-only plots) — so the within-group grouping selectors can
+  group by them too. RLE/density/spike must route their group value + palette through a
+  `sample_aes`-style resolver (today only General QC's `sample_aes` handles `__removal__`/`__pool__`).
+  Feature selector stays colData-only (feature-level; sample session-items N/A).
 
 ### P4a-2 — detailed plan (PCA colour & feature-search)
 
@@ -224,5 +239,6 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 | #21 | P3g-c: palette config JSON import/export + Edit palette |
 | #22 | P4-pre: extract shared plot engine (mod_plot_engine) |
 | #23 | P4a: dimensionality reduction — single-panel PCA |
+| #24 | P4a-2: PCA colour & feature-search enhancements |
 
 **v0.1.0** released after #21 (end of P3).
