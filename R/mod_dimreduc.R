@@ -18,24 +18,27 @@
 # pre-built ggplot scales (or NULL). `interactive` adds the plotly hover aes only.
 .pca_scatter_plot <- function(df, xlab, ylab, subtitle, colour_lab = NULL,
                               shape_lab = NULL, colour_scale = NULL,
-                              shape_scale = NULL, caption = NULL, interactive = FALSE) {
+                              shape_scale = NULL, caption = NULL, point_size = 3,
+                              fixed_ratio = FALSE, dark_theme = FALSE,
+                              interactive = FALSE) {
   aes_args <- list(x = quote(x), y = quote(y))
   if ("col" %in% names(df)) aes_args$colour <- quote(col)
   if ("shp" %in% names(df)) aes_args$shape  <- quote(shp)
   if (interactive)          aes_args$text   <- quote(text)
   p <- ggplot2::ggplot(df, do.call(ggplot2::aes, aes_args)) +
-    ggplot2::geom_point(size = 3, alpha = 0.9) +
+    ggplot2::geom_point(size = point_size, alpha = 0.9) +
     ggplot2::labs(x = xlab, y = ylab, subtitle = subtitle, caption = caption,
                   colour = colour_lab, shape = shape_lab) +
-    ggplot2::theme_minimal(base_size = 13)
+    .plot_theme(dark_theme)
   if (!is.null(colour_scale)) p <- p + colour_scale
   if (!is.null(shape_scale))  p <- p + shape_scale
+  if (isTRUE(fixed_ratio))    p <- p + ggplot2::coord_fixed()
   p
 }
 
 # Scree bar plot of %variance per PC (top `n_show`); the two plotted PCs highlighted.
 .pca_scree_plot <- function(var_pct, highlight = integer(0), n_show = 10L,
-                            interactive = FALSE) {
+                            dark_theme = FALSE, interactive = FALSE) {
   n <- min(n_show, length(var_pct))
   d <- data.frame(pc = factor(paste0("PC", seq_len(n)), levels = paste0("PC", seq_len(n))),
                   pct = var_pct[seq_len(n)],
@@ -48,7 +51,7 @@
     ggplot2::scale_fill_manual(values = c(`FALSE` = "grey70", `TRUE` = "#1f77b4"),
                                guide = "none") +
     ggplot2::labs(x = NULL, y = "% variance", title = "Variance explained") +
-    ggplot2::theme_minimal(base_size = 13)
+    .plot_theme(dark_theme)
 }
 
 mod_dimreduc_ui <- function(id) {
@@ -66,6 +69,14 @@ mod_dimreduc_ui <- function(id) {
       uiOutput(ns("colour_ui")),
       uiOutput(ns("gene_ui")),
       uiOutput(ns("shape_ui")),
+      # Pure plot aesthetics (no bearing on the data) -> tucked in an accordion.
+      bslib::accordion(
+        open = FALSE,
+        bslib::accordion_panel(
+          "Plot aesthetics",
+          checkboxInput(ns("fixed_ratio"), "Fix 1:1 aspect ratio", value = FALSE),
+          sliderInput(ns("point_size"), "Point size", min = 0.25, max = 5,
+                      value = 3, step = 0.25))),
       plot_subset_ui(ns, "pca"),
       uiOutput(ns("auto_ui")),
       actionButton(ns("render"), "Render", icon = icon("play"), class = "btn-primary")
@@ -83,10 +94,13 @@ mod_dimreduc_ui <- function(id) {
 }
 
 #' @param state the shared app-state object (see [new_app_state()]).
+#' @param dark_mode A reactive returning `TRUE` in dark mode (wired from the navbar
+#'   `input_dark_mode`); drives the plot theme contrast.
 #' @return Invisible NULL (consumes the dds; does not mutate it).
-mod_dimreduc_server <- function(id, state) {
+mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
+    dark <- function() isTRUE(dark_mode())
     eng <- plot_engine_server(input, output, session, state)
     dual_plot <- eng$dual_plot; deferred <- eng$deferred; stale_note <- eng$stale_note
     showing_samples <- plot_subset_server(input, output, session, state, suffixes = "pca")
@@ -95,6 +109,15 @@ mod_dimreduc_server <- function(id, state) {
     coldata <- function() as.data.frame(SummarizedExperiment::colData(state$working))
     discrete_cols <- function() {
       cd <- coldata(); names(cd)[!vapply(cd, is.numeric, logical(1))]
+    }
+    # Default colour-by: the first DESeq2 design variable (e.g. ~ X + Y -> "X"),
+    # then "condition", then none (covers objects with a ~1 / no usable design).
+    default_colour_col <- function() {
+      cols <- colnames(coldata())
+      dv <- tryCatch(all.vars(DESeq2::design(state$working)), error = function(e) character(0))
+      if (length(dv) && dv[1] %in% cols) return(dv[1])
+      if ("condition" %in% cols) return("condition")
+      "__none__"
     }
 
     # --- Sidebar controls (data-dependent -> server-rendered) ----------------
@@ -125,7 +148,7 @@ mod_dimreduc_server <- function(id, state) {
       req(state$working)
       ch <- c("(none)" = "__none__", stats::setNames(colnames(coldata()), colnames(coldata())),
               "Gene expression" = "__gene__")
-      selectInput(ns("colour_by"), "Colour by", choices = ch, selected = "__none__")
+      selectInput(ns("colour_by"), "Colour by", choices = ch, selected = default_colour_col())
     })
     output$gene_ui <- renderUI({
       if (!identical(input$colour_by, "__gene__")) return(NULL)
@@ -189,26 +212,30 @@ mod_dimreduc_server <- function(id, state) {
         validate(need(!is.na(id), sprintf("Feature '%s' not found.", gq)))
         m <- .qc_assay_matrix(dds, "logcounts")
         vals <- as.numeric(m[id, samples])
-        g <- .continuous_scale_from(state$palette$assays[["logcounts"]], vals)
         return(list(values = vals, discrete = FALSE, lab = paste0(gq, "\n(logcounts)"),
-                    scale = g))
+                    scale = .continuous_scale_from(state$palette$assays[["logcounts"]], vals)))
       }
       cd <- coldata()[samples, , drop = FALSE]
       x <- cd[[sel]]
       if (is.numeric(x)) {
-        g <- .continuous_scale_from(state$palette$colData[[sel]], x)
-        return(list(values = x, discrete = FALSE, lab = sel, scale = g))
+        return(list(values = x, discrete = FALSE, lab = sel,
+                    scale = .continuous_scale_from(state$palette$colData[[sel]], x)))
       }
       lv <- as.character(x); lv[is.na(lv)] <- "NA"
       f <- factor(lv)
-      cfg <- state$palette$colData[[sel]]
-      cols <- palette_discrete(levels(f), cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
       list(values = f, discrete = TRUE, lab = sel,
-           scale = ggplot2::scale_colour_manual(values = cols, na.value = "grey70"))
+           scale = .discrete_scale_from(state$palette$colData[[sel]], levels(f)))
     }
-    # Continuous colour scale from a Palette continuous config (or a viridis default).
+    # Colour scales from a Palette config, or NULL when none is set -- mirroring QC's
+    # group_palette/.qc_group_scale, so a no-config colouring falls back to thematic's
+    # theme palette (not a hard-coded Okabe-Ito / viridis).
+    .discrete_scale_from <- function(cfg, levels) {
+      if (is.null(cfg)) return(NULL)
+      cols <- palette_discrete(levels, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
+      ggplot2::scale_colour_manual(values = cols, na.value = "grey70")
+    }
     .continuous_scale_from <- function(cfg, values) {
-      cfg <- cfg %||% list(name = "viridis: viridis")
+      if (is.null(cfg)) return(NULL)
       g <- palette_gradientn(cfg$name %||% "viridis: viridis", values = values,
                              min = cfg$min, max = cfg$max, custom = cfg$custom,
                              reverse = isTRUE(cfg$reverse))
@@ -254,7 +281,9 @@ mod_dimreduc_server <- function(id, state) {
                                           " | ", v$n_genes, " top-variable genes"),
                         colour_lab = colour_lab, shape_lab = shape_lab,
                         colour_scale = colour_scale, shape_scale = shape_scale,
-                        caption = cap, interactive = interactive)
+                        caption = cap, point_size = input$point_size %||% 3,
+                        fixed_ratio = isTRUE(input$fixed_ratio), dark_theme = dark(),
+                        interactive = interactive)
     }
     dual_plot("pca", build_pca_gg, n_elements = reactive({
       v <- pca_shown$value(); if (is.null(v)) 0L else length(intersect(rownames(v$scores), showing_samples()))
@@ -265,7 +294,7 @@ mod_dimreduc_server <- function(id, state) {
       v <- pca_shown$value()
       hi <- as.integer(c(sub("PC", "", input$pc_x %||% "PC1"),
                          sub("PC", "", input$pc_y %||% "PC2")))
-      .pca_scree_plot(v$var_pct, highlight = hi, interactive = interactive)
+      .pca_scree_plot(v$var_pct, highlight = hi, dark_theme = dark(), interactive = interactive)
     }
     dual_plot("scree", build_scree_gg,
               n_elements = reactive({ v <- pca_shown$value(); if (is.null(v)) 0L else min(10L, v$n_pc) }),

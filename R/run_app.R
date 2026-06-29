@@ -203,7 +203,7 @@ app_server <- function(input, output, session) {
   mod_feature_server("feature", state)
   mod_assay_server("assay", state)
   mod_qc_server("qc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
-  mod_dimreduc_server("dimreduc", state)
+  mod_dimreduc_server("dimreduc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_de_server("de", state)
   mod_heatmap_server("heatmap", state)
   mod_palette_server("palette", state)

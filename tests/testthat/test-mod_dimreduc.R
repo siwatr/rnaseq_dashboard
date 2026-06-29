@@ -87,3 +87,66 @@ test_that("PC-axis selection is preserved across a re-render (not reset to PC1/P
     expect_match(html, 'value=\"PC3\"[^>]*selected', perl = TRUE)
   })
 })
+
+test_that("default colour-by follows the DESeq2 design's first variable, with fallbacks", {
+  skip_if_not_installed("DESeq2")
+  mk <- function() ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 2, seed = 7))
+  # ~ condition (default mock design) -> condition selected.
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    state_load(state, mk(), source = "demo"); session$flushReact()
+    expect_match(as.character(output$colour_ui$html), 'value=\"condition\"[^>]*selected', perl = TRUE)
+  })
+  # ~ batch + condition -> the FIRST design var (batch).
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    dds <- mk()
+    SummarizedExperiment::colData(dds)$batch <- factor(rep(c("a", "b"), length.out = ncol(dds)))
+    DESeq2::design(dds) <- ~ batch + condition
+    state_load(state, dds, source = "demo"); session$flushReact()
+    expect_match(as.character(output$colour_ui$html), 'value=\"batch\"[^>]*selected', perl = TRUE)
+  })
+  # No usable design + no "condition" column -> (none).
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    dds <- mk(); cd <- SummarizedExperiment::colData(dds)
+    colnames(cd)[colnames(cd) == "condition"] <- "grp"
+    SummarizedExperiment::colData(dds) <- cd
+    DESeq2::design(dds) <- ~ 1
+    state_load(state, dds, source = "demo"); session$flushReact()
+    expect_match(as.character(output$colour_ui$html), 'value=\"__none__\"[^>]*selected', perl = TRUE)
+  })
+})
+
+test_that("discrete colour uses thematic default (no manual scale) unless a Palette config is set", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3, n_spike = 2, seed = 8)),
+               source = "demo")
+    session$setInputs(assay = "vst", n_top = 60, auto = TRUE, colour_by = "condition"); session$flushReact()
+    colour_scales <- function(g) Filter(function(s) "colour" %in% s$aesthetics, g$scales$scales)
+    expect_length(colour_scales(build_pca_gg(FALSE)), 0L)         # no config -> thematic default
+    # Configure a Palette mapping for condition -> a manual colour scale appears.
+    lv <- levels(SummarizedExperiment::colData(state$working)$condition)
+    state$palette <- list(colData = list(condition = list(name = "Okabe-Ito",
+      colors = palette_discrete(lv, NULL, "Okabe-Ito"))))
+    session$flushReact()
+    expect_gte(length(colour_scales(build_pca_gg(FALSE))), 1L)
+  })
+})
+
+test_that("plot-aesthetic controls reach the plot (point size + 1:1 ratio); dark mode builds", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state, dark_mode = reactive(TRUE)), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3, n_spike = 2, seed = 9)),
+               source = "demo")
+    session$setInputs(assay = "vst", n_top = 60, auto = TRUE,
+                      point_size = 1.5, fixed_ratio = TRUE); session$flushReact()
+    g <- build_pca_gg(FALSE)
+    expect_equal(g$layers[[1]]$aes_params$size, 1.5)
+    expect_equal(g$coordinates$ratio, 1)                          # coord_fixed applied
+    expect_s3_class(build_scree_gg(FALSE), "ggplot")              # dark-mode path builds
+  })
+})
