@@ -97,11 +97,25 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   levels (drives both plot order and the palette mapping). (The legacy Themer gallery can be retired —
   its Heatmap sub-tab is already superseded by the Preview tab.)
 
-## Phase 4 — Dimensionality reduction ⬜
-- PCA-focused (t-SNE/UMAP gated by sample count). Top-variable genes (default 500, assay
-  default `logcounts`, endogenous only). Up to 4 panels (1/2/4); compute embedding once,
-  vary aesthetics per panel; colour/shape by metadata or gene expression (`lookup_feature()`).
-- Embed the reusable "Plot Showing" control (per the convention in CLAUDE.md).
+## Phase 4 — Dimensionality reduction (PCA) (sub-PR'd)
+- **P4-pre ✅** Extracted the shared plot engine (`R/mod_plot_engine.R`): the ggplot↔plotly
+  toggle (`dual_plot`/`use_plotly_base`), the deferred render gate (`deferred`/`stale_note`),
+  and the plot helpers (`.plot_msg`/`.plot_dual`/`.plotly_max_elements`/`.muffle_unknown_aes`/
+  `.to_plotly`), as a host-namespace submodule (`plot_engine_server()`) reused by QC + PCA.
+  Behaviour-preserving refactor of `mod_qc.R`. [PR #22]
+- **P4a ⬅️ (in review)** Single-panel **PCA**. New `R/dimreduc_helpers.R`: `pca_assay_advice()`
+  (tiers inputs — recommended VST/logcounts/normalized-log-counts, log-first CPM/TPM/FPKM,
+  unsuitable raw counts), `pca_input()` (endogenous-only matrix + honest subtitle label; VST
+  default with broad logcounts fallback; `norm_logcounts` estimates endogenous size factors),
+  `top_variable_features()`, `compute_pca()` (`prcomp(t(top), center, !scale)`, %var from
+  `sdev^2`, deterministic PC sign). The page (`R/mod_dimreduc.R`) caches the embedding via
+  `state_derive` behind the deferred Render gate; PCA scatter with PC-axis selectors, colour
+  by metadata (discrete/continuous Palette configs) or gene expression (logcounts gradient),
+  shape by discrete metadata (NA→"NA"), the input-used subtitle, a **scree** %-variance bar,
+  and the reusable "Showing" subset (display-only — embedding/axes stay stable). t-SNE/UMAP
+  deferred.
+- **P4b** multi-panel (1/2/4 layouts), embedding computed once, aesthetics per panel.
+- **P4c (later)** t-SNE/UMAP, hard-gated by sample count (~≥30); Rtsne/uwot optional Suggests.
 
 ## Phase 5 — Differential expression + heatmap ⬜
 - Guided design builder (reference level + full-rank check) + contrast picker; multiple
@@ -156,3 +170,9 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 | #15 | P3d: ERCC spike-in dose-response & spike-in QC (+ polish bundle) |
 | #17 | P3e: filtering by spike-in QC metrics (+ ERCC reference note) |
 | #18 | P3f: ggplot↔plotly engine toggle (global switch + sample cap + hover labels) |
+| #19 | P3g-a: project palette — discrete colData wiring |
+| #20 | P3g-b: continuous palettes + Feature/Assay/Other pills |
+| #21 | P3g-c: palette config JSON import/export + Edit palette |
+| #22 | P4-pre: extract shared plot engine (mod_plot_engine) |
+
+**v0.1.0** released after #21 (end of P3).
