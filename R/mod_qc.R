@@ -732,10 +732,43 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cols <- colnames(SummarizedExperiment::colData(state$working))
       if ("condition" %in% cols) "condition" else cols[1]
     }
-    # Per-sample group lookup for the chosen column (named by sample id).
-    group_lookup <- function(col) {
+    # Per-sample grouping factor (named by sample) for the chosen field, handling
+    # both colData columns and the "This session" removal items (promoted state).
+    # Used by the per-sample colour plots (General/RLE/density/spike). The removal
+    # status here is the 2-level pass/suggested view (the reason-aware 3-level
+    # scheme needs a plot metric, so only General QC's sample_aes uses it).
+    .session_group_values <- function(value, samples) {
+      if (identical(value, "__removal__")) {
+        fl <- state$samp_flags
+        if (is.null(fl)) return(factor(rep("flags pending", length(samples))))
+        st <- removal_status(fl$flagged[match(samples, fl$sample)])
+        factor(unname(.removal_labels[as.character(st)]),
+               levels = unname(.removal_labels[levels(droplevels(st))]))
+      } else if (identical(value, "__pool__")) {
+        pool <- state$samp_pool %||% character(0)
+        factor(ifelse(samples %in% pool, "In removal pool", "Kept"),
+               levels = c("Kept", "In removal pool"))
+      } else NULL
+    }
+    group_map <- function(col, samples = colnames(state$working)) {
+      sv <- .session_group_values(col, samples)
+      if (!is.null(sv)) return(stats::setNames(sv, samples))
       cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      stats::setNames(as.character(cd[[col]]), rownames(cd))
+      stats::setNames(factor(as.character(cd[samples, col])), samples)
+    }
+    # Colours for a group field's levels: removal/pool get their fixed map (subset
+    # to the present levels), colData columns use the project palette (or NULL).
+    group_colours <- function(col, levels) {
+      levels <- as.character(levels)
+      if (identical(col, "__removal__")) {
+        pal <- removal_status_colors(state$palette$other$removal_status)
+        full <- stats::setNames(unname(pal), unname(.removal_labels[names(pal)]))
+        return(full[intersect(levels, names(full))])
+      }
+      if (identical(col, "__pool__"))
+        return(c(Kept = "#9aa0a6", "In removal pool" = "#D62728")[
+          intersect(levels, c("Kept", "In removal pool"))])
+      group_palette(col, levels)
     }
     # Project-palette colours for a colData column's levels, or NULL when the
     # Palette page has no mapping configured for `col` (-> thematic default).
@@ -752,11 +785,21 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     removal_palette <- function() removal_status_colors(state$palette$other$removal_status)
 
     # --- DRY UI builders (data-dependent, so server-rendered) ---------------
-    group_box <- function(input_id, label = "Group / colour by") renderUI({
+    # `session = TRUE` adds the shared "This session" removal items (for the
+    # per-sample colour plots); grouping-semantic selectors keep it FALSE.
+    group_box <- function(input_id, label = "Group / colour by", session = FALSE) renderUI({
       req(state$working)
-      cols <- colnames(SummarizedExperiment::colData(state$working))
-      selectInput(ns(input_id), label, choices = cols, selected = default_group_col())
+      cols  <- colnames(SummarizedExperiment::colData(state$working))
+      items <- if (isTRUE(session)) .session_removal_items else NULL
+      selectInput(ns(input_id), label,
+                  choices = group_field_choices(cols, items, none = FALSE),
+                  selected = default_group_col())
     })
+    # A deferred-sig fragment so a plot grouped by a session item re-stales when
+    # the promoted pool / flags change (no-op for colData grouping).
+    .session_sig <- function(col)
+      if (identical(col, "__removal__") || identical(col, "__pool__"))
+        list(state$samp_pool, state$samp_flags) else NULL
     auto_box <- function(input_id) renderUI({
       req(state$working)
       checkboxInput(ns(input_id), "Auto-render", value = ncol(state$working) <= 150L)
@@ -780,14 +823,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                    expr = function() qc_per_sample_metrics(state$working))
     })
 
-    # General QC colour-by gains the removal-status / pool options.
+    # General QC colour-by gains the removal-status / pool options (grouped).
     output$group_ui <- renderUI({
       req(state$working)
       cols <- colnames(SummarizedExperiment::colData(state$working))
       selectInput(ns("group"), "Group / colour by",
-                  choices = c(stats::setNames(cols, cols),
-                              "Suggested removal" = "__removal__",
-                              "In removal pool" = "__pool__"),
+                  choices = group_field_choices(cols, .session_removal_items, none = FALSE),
                   selected = default_group_col())
     })
     output$auto_ui  <- auto_box("auto")
@@ -856,9 +897,9 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
 
     # --- Sample QC: RLE + Expression density --------------------------------
-    output$rle_group_ui  <- group_box("rle_group")
+    output$rle_group_ui  <- group_box("rle_group", session = TRUE)
     output$rle_auto_ui   <- auto_box("rle_auto")
-    output$dens_group_ui <- group_box("dens_group")
+    output$dens_group_ui <- group_box("dens_group", session = TRUE)
     output$dens_auto_ui  <- auto_box("dens_auto")
 
     rle_spec <- reactive({
@@ -866,15 +907,16 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       dds <- state$working
       rle <- qc_rle_matrix(dds)
       nf <- nrow(rle)
-      gmap <- group_lookup(input$rle_group)
+      gmap <- group_map(input$rle_group, colnames(rle))
       df <- data.frame(
         sample = factor(rep(colnames(rle), each = nf), levels = colnames(rle)),
         value  = as.numeric(rle))
-      df$group <- factor(gmap[as.character(df$sample)])
+      df$group <- gmap[as.character(df$sample)]
       list(df = df, n = ncol(dds), show = showing_samples())
     })
     rle_shown <- deferred("rle_auto", "rle_render", rle_spec,
-      sig = reactive(list(input$rle_group, showing_samples(), state$data_version)))
+      sig = reactive(list(input$rle_group, showing_samples(), state$data_version,
+                          .session_sig(input$rle_group))))
     output$rle_stale <- stale_note(rle_shown)
     rle_gg <- function(interactive) {
       validate(need(!is.null(rle_shown$value()), "Click Render (or enable auto-render)."))
@@ -883,7 +925,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
       .qc_rle_plot(d, dark(), length(levels(d$sample)), interactive = interactive,
-                   palette = group_palette(input$rle_group, d$group))
+                   palette = group_colours(input$rle_group, levels(d$group)))
     }
     dual_plot("diag_rle", rle_gg, n_elements = reactive({
       v <- rle_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
@@ -892,13 +934,14 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     dens_spec <- reactive({
       req(state$working, input$dens_group)
       dds <- state$working
-      gmap <- group_lookup(input$dens_group)
+      gmap <- group_map(input$dens_group, colnames(dds))
       df <- qc_expression_long(dds)
-      df$group <- factor(gmap[as.character(df$sample)])
+      df$group <- gmap[as.character(df$sample)]
       list(df = df, n = ncol(dds), show = showing_samples())
     })
     dens_shown <- deferred("dens_auto", "dens_render", dens_spec,
-      sig = reactive(list(input$dens_group, showing_samples(), state$data_version)))
+      sig = reactive(list(input$dens_group, showing_samples(), state$data_version,
+                          .session_sig(input$dens_group))))
     output$dens_stale <- stale_note(dens_shown)
     dens_gg <- function(interactive) {
       validate(need(!is.null(dens_shown$value()), "Click Render (or enable auto-render)."))
@@ -907,7 +950,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       d$sample <- droplevels(d$sample)
       validate(need(nrow(d) > 0, "No samples in the current 'Showing' selection."))
       .qc_density_plot(d, dark(), length(levels(d$sample)), interactive = interactive,
-                       palette = group_palette(input$dens_group, d$group))
+                       palette = group_colours(input$dens_group, levels(d$group)))
     }
     dual_plot("diag_density", dens_gg, n_elements = reactive({
       v <- dens_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
@@ -1041,7 +1084,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                    "molar spike-in input more accurately than CPM for titration.")
       )
     })
-    output$spike_group_ui <- group_box("spike_group")
+    output$spike_group_ui <- group_box("spike_group", session = TRUE)
     output$spike_auto_ui  <- auto_box("spike_auto")
 
     spike_spec <- reactive({
@@ -1052,13 +1095,15 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       list(dr = dr, show = showing_samples())   # display subset (plots only)
     })
     spike_shown <- deferred("spike_auto", "spike_render", spike_spec,
-      sig = reactive(list(input$spike_source, input$spike_assay, showing_samples(), state$data_version)))
+      sig = reactive(list(input$spike_source, input$spike_assay, showing_samples(),
+                          state$data_version,
+                          .session_sig(input$spike_group %||% default_group_col()))))
     output$spike_stale <- stale_note(spike_shown)
 
     # group column for colouring (applied at render, not part of the cached compute)
     spike_group_col <- function(samples) {
-      gmap <- group_lookup(input$spike_group %||% default_group_col())
-      factor(gmap[as.character(samples)])
+      group_map(input$spike_group %||% default_group_col(),
+                colnames(state$working))[as.character(samples)]
     }
 
     output$spike_msg <- renderUI({
@@ -1083,8 +1128,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(nrow(long) > 0, "No samples in the current 'Showing' selection."))
       long$group <- spike_group_col(long$sample)
       .qc_spike_dr_plot(long, dark_theme = dark(), interactive = interactive,
-                        palette = group_palette(input$spike_group %||% default_group_col(),
-                                                long$group))
+                        palette = group_colours(input$spike_group %||% default_group_col(),
+                                                levels(long$group)))
     }
     dual_plot("spike_dr_plot", spike_dr_gg, n_elements = reactive({
       v <- spike_shown$value(); if (is.null(v)) 0L else sum(v$dr$long$sample %in% v$show)
@@ -1098,8 +1143,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       ps$group <- spike_group_col(ps$sample)
       .qc_spike_summary_plot(ps, input$spike_metric %||% "r_squared", dark_theme = dark(),
                              interactive = interactive,
-                             palette = group_palette(input$spike_group %||% default_group_col(),
-                                                     ps$group))
+                             palette = group_colours(input$spike_group %||% default_group_col(),
+                                                     levels(ps$group)))
     }
     dual_plot("spike_summary_plot", spike_summary_gg, n_elements = reactive({
       v <- spike_shown$value(); if (is.null(v)) 0L else sum(v$dr$per_sample$sample %in% v$show)

@@ -190,16 +190,13 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # metadata vs session-derived options (gene expression + per-sample QC metrics).
     output$colour_ui <- renderUI({
       req(state$working)
-      cd <- colnames(coldata())
-      # Group order: General (none) -> This session (derived) -> Data metadata.
-      groups <- list("General" = c("(none)" = "__none__"))
-      groups[["This session"]] <- c(
+      session <- c(
         "Gene expression" = "__gene__",
         stats::setNames(paste0("__qc__", names(.qc_metric_labels)),
                         unname(.qc_metric_labels)),
         .session_removal_items)
-      if (length(cd)) groups[["Data metadata"]] <- stats::setNames(cd, cd)
-      selectInput(ns("colour_by"), "Colour by", choices = groups,
+      selectInput(ns("colour_by"), "Colour by",
+                  choices = group_field_choices(colnames(coldata()), session, none = TRUE),
                   selected = default_colour_col())
     })
     output$shape_ui <- renderUI({
@@ -207,11 +204,9 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       sc <- shape_cols()
       # Same grouped layout as Colour by: General -> This session (removal/pool,
       # both discrete and within the 6-level shape cap) -> Data metadata.
-      groups <- list("General" = c("(none)" = "__none__"),
-                     "This session" = .session_removal_items)
-      if (length(sc)) groups[["Data metadata"]] <- stats::setNames(sc, sc)
       selectInput(ns("shape_by"), "Shape by (discrete, <=6 values)",
-                  choices = groups, selected = "__none__")
+                  choices = group_field_choices(sc, .session_removal_items, none = TRUE),
+                  selected = "__none__")
     })
 
     # --- Gene-expression colour block (always embedded; helper text when off) --

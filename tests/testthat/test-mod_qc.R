@@ -238,6 +238,29 @@ test_that("flagged samples are highlight-only (pool starts empty)", {
   })
 })
 
+test_that("RLE/density/spike colour selectors group by the removal pool", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3,
+                                                      n_spike = 4, seed = 14)), source = "demo")
+    session$flushReact()
+    samp_pool(colnames(state$working)[1])            # stage one sample in the pool
+    # The colour selectors offer the session items (grouped optgroups).
+    expect_match(as.character(output$rle_group_ui$html), "__pool__", fixed = TRUE)
+    expect_match(as.character(output$dens_group_ui$html), "__removal__", fixed = TRUE)
+    # Grouping resolves to a per-sample factor with the pool split + its colours.
+    gm <- group_map("__pool__", colnames(state$working))
+    expect_setequal(levels(gm), c("Kept", "In removal pool"))
+    expect_equal(as.character(gm[1]), "In removal pool")
+    pal <- group_colours("__pool__", levels(gm))
+    expect_named(pal, c("Kept", "In removal pool"))
+    # Removal status maps to the shared reason-aware palette (subset to present).
+    gr <- group_map("__removal__", colnames(state$working))
+    expect_true(all(levels(gr) %in% unname(.removal_labels)))
+  })
+})
+
 test_that("sample pool + flags are promoted to shared state for other pages", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
