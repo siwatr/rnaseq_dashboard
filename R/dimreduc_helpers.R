@@ -11,7 +11,7 @@
 #' Guides which assays are sensible PCA inputs. Linear abundance assays
 #' (CPM/TPM/FPKM) let a few high-abundance genes dominate PC1 (mean-variance
 #' dependence) and should be log-transformed first; raw `counts` is unsuitable
-#' (not depth-normalized — a log won't fix it). VST / logcounts / normalized
+#' (not depth-normalized - a log won't fix it). VST / logcounts / normalized
 #' log-counts are ready to use.
 #'
 #' @param assay Assay/transform name (`"vst"`, `"logcounts"`, `"norm_logcounts"`,
@@ -29,13 +29,13 @@ pca_assay_advice <- function(assay) {
     CPM = , TPM = , FPKM = list(
       tier = "log_first", recommend_log = TRUE,
       msg = sprintf(paste0("%s is a linear abundance measure. Running PCA on it lets a ",
-        "few highly expressed genes dominate (mean–variance dependence) rather than ",
+        "few highly expressed genes dominate (mean-variance dependence) rather than ",
         "reflecting biological structure. VST or log-counts are recommended; applying ",
         "log2(x+1) before PCA helps."), assay)),
     counts = list(
       tier = "unsuitable", recommend_log = FALSE,
       msg = paste0("counts is not normalized for sequencing depth and is unsuitable for ",
-        "PCA — the first components will mostly reflect library-size differences, and a ",
+        "PCA - the first components will mostly reflect library-size differences, and a ",
         "log transform does not fix this. Use VST or log-counts instead.")),
     list(tier = "log_first", recommend_log = TRUE,
       msg = sprintf(paste0("'%s' is not a standard PCA input; VST or log-counts are ",
@@ -50,7 +50,7 @@ pca_assay_advice <- function(assay) {
 #' @param log_transform Apply `log2(x + 1)` to a *stored* assay (ignored for the
 #'   computed `"vst"` / `"norm_logcounts"` inputs, which are already on a log/
 #'   stabilized scale).
-#' @return A list with `mat` (genes×samples numeric, endogenous rows only) and
+#' @return A list with `mat` (genesxsamples numeric, endogenous rows only) and
 #'   `label` (for the plot subtitle, reflecting any fallback/transform).
 #' @export
 pca_input <- function(dds, assay = "vst", log_transform = FALSE) {
@@ -88,7 +88,7 @@ pca_input <- function(dds, assay = "vst", log_transform = FALSE) {
 #'
 #' Per-row variance (drops non-finite / zero-variance rows), then the most
 #' variable `n_top` (clamped to what's available).
-#' @param mat A genes×samples numeric matrix (already endogenous-only).
+#' @param mat A genesxsamples numeric matrix (already endogenous-only).
 #' @param n_top Number of features to keep (default 500).
 #' @return Character vector of row ids (possibly fewer than `n_top`).
 #' @export
@@ -111,7 +111,7 @@ top_variable_features <- function(mat, n_top = 500) {
 #' scale. = FALSE)` (samples as observations), and applies a deterministic sign
 #' convention (each PC's largest-magnitude loading made positive) so re-renders
 #' don't mirror-flip.
-#' @param mat A genes×samples numeric matrix (endogenous-only).
+#' @param mat A genesxsamples numeric matrix (endogenous-only).
 #' @param n_top Number of top-variable features (default 500).
 #' @return A list: `scores` (data.frame, rows = samples, cols `PC1..PCk`),
 #'   `var_pct` (numeric, % variance per PC), `n_genes`, `n_pc`.

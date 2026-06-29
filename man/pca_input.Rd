@@ -17,7 +17,7 @@ computed \code{"vst"} / \code{"norm_logcounts"} inputs, which are already on a l
 stabilized scale).}
 }
 \value{
-A list with \code{mat} (genes×samples numeric, endogenous rows only) and
+A list with \code{mat} (genesxsamples numeric, endogenous rows only) and
 \code{label} (for the plot subtitle, reflecting any fallback/transform).
 }
 \description{

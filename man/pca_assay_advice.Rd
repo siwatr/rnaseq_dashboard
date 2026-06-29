@@ -19,6 +19,6 @@ user-facing warning, or \code{NULL}).
 Guides which assays are sensible PCA inputs. Linear abundance assays
 (CPM/TPM/FPKM) let a few high-abundance genes dominate PC1 (mean-variance
 dependence) and should be log-transformed first; raw \code{counts} is unsuitable
-(not depth-normalized — a log won't fix it). VST / logcounts / normalized
+(not depth-normalized - a log won't fix it). VST / logcounts / normalized
 log-counts are ready to use.
 }

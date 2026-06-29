@@ -7,7 +7,7 @@
 compute_pca(mat, n_top = 500)
 }
 \arguments{
-\item{mat}{A genes×samples numeric matrix (endogenous-only).}
+\item{mat}{A genesxsamples numeric matrix (endogenous-only).}
 
 \item{n_top}{Number of top-variable features (default 500).}
 }

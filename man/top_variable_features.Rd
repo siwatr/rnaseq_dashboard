@@ -7,7 +7,7 @@
 top_variable_features(mat, n_top = 500)
 }
 \arguments{
-\item{mat}{A genes×samples numeric matrix (already endogenous-only).}
+\item{mat}{A genesxsamples numeric matrix (already endogenous-only).}
 
 \item{n_top}{Number of features to keep (default 500).}
 }

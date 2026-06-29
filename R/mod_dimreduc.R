@@ -251,7 +251,7 @@ mod_dimreduc_server <- function(id, state) {
       }
       .pca_scatter_plot(df, xlab = pcpct(px), ylab = pcpct(py),
                         subtitle = paste0("Input: ", v$label,
-                                          " · ", v$n_genes, " top-variable genes"),
+                                          " | ", v$n_genes, " top-variable genes"),
                         colour_lab = colour_lab, shape_lab = shape_lab,
                         colour_scale = colour_scale, shape_scale = shape_scale,
                         caption = cap, interactive = interactive)
