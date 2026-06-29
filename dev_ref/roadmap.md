@@ -103,7 +103,7 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   and the plot helpers (`.plot_msg`/`.plot_dual`/`.plotly_max_elements`/`.muffle_unknown_aes`/
   `.to_plotly`), as a host-namespace submodule (`plot_engine_server()`) reused by QC + PCA.
   Behaviour-preserving refactor of `mod_qc.R`. [PR #22]
-- **P4a ⬅️ (in review)** Single-panel **PCA**. New `R/dimreduc_helpers.R`: `pca_assay_advice()`
+- **P4a ✅** Single-panel **PCA**. New `R/dimreduc_helpers.R`: `pca_assay_advice()`
   (tiers inputs — recommended VST/logcounts/normalized-log-counts, log-first CPM/TPM/FPKM,
   unsuitable raw counts), `pca_input()` (endogenous-only matrix + honest subtitle label; VST
   default with broad logcounts fallback; `norm_logcounts` estimates endogenous size factors),
@@ -112,10 +112,59 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   `state_derive` behind the deferred Render gate; PCA scatter with PC-axis selectors, colour
   by metadata (discrete/continuous Palette configs) or gene expression (logcounts gradient),
   shape by discrete metadata (NA→"NA"), the input-used subtitle, a **scree** %-variance bar,
-  and the reusable "Showing" subset (display-only — embedding/axes stay stable). t-SNE/UMAP
-  deferred.
+  and the reusable "Showing" subset (display-only — embedding/axes stay stable). Default
+  colour-by = first design var → condition → none; no-config colouring uses the thematic
+  default (not Okabe-Ito); dark-mode aware (shared `.plot_theme`); plot-aesthetics accordion
+  (1:1 ratio + point size). [PR #23]
+- **P4a-2 ⬅️ next** PCA **colour & feature-search enhancements** (single follow-up PR; details below).
 - **P4b** multi-panel (1/2/4 layouts), embedding computed once, aesthetics per panel.
 - **P4c (later)** t-SNE/UMAP, hard-gated by sample count (~≥30); Rtsne/uwot optional Suggests.
+- **P4-removal (deferred, separate PR)** Promote the removal-pool + sample-flag state from
+  `mod_qc.R` (currently page-local: `samp_pool` reactiveVal + threshold-driven `flag_samples()`)
+  into shared `state`, then expose **"Suggested removal"** / **"In removal pool"** as colour/shape
+  fields on PCA (the "This session" group) — also lets the "Showing" control + future plot pages
+  reuse it. Pairs with the deferred "promote Showing subset to app-state" item.
+
+### P4a-2 — detailed plan (PCA colour & feature-search)
+
+Builds on P4a's `mod_dimreduc.R`; pure helpers in `dimreduc_helpers.R`/`utils_lookup.R` (tested).
+Sidebar reorganised into **bslib accordions** to manage clutter: **Embedding** (input assay · log ·
+n_top · Render/auto, open) · **Appearance** (colour/shape + an always-visible Gene-expression block) ·
+**Plot aesthetics** · **Showing**.
+
+- **Grouped colour/shape selectize** (`selectInput` optgroups, like the Palette selector): **Data
+  metadata** = `colData` columns; **This session** = Gene expression + per-sample QC metrics
+  (`qc_per_sample_metrics()` → library_size/detected/pct_mito/pct_spike, continuous). (Removal-status
+  / in-pool join this group in P4-removal.) Shape-by: discrete `colData` columns **filtered to ≤6
+  levels** (hide the rest), label "Shape by (discrete, ≤6 values)"; keep the runtime guard defensively.
+- **Gene-expression block — always embedded** (not conditionally revealed): when Colour by ≠ Gene
+  expression, show helper text "Select 'Gene expression' in 'Colour by' to enable this." Controls:
+  - **Search by** `selectInput`: candidate `rowData` fields **excluding logical columns** (keep
+    integer/numeric — some IDs are numeric, e.g. Entrez) + **"Feature ID (rownames)"** (always; unique
+    by construction). Default = `<feature_type>_name` if present, else Feature ID.
+  - **"Include columns with duplicate values"** `input_switch` (tooltip): OFF hides columns where
+    `anyDuplicated(col) != 0`; default **ON when the logical-filtered `rowData` has ≤10 columns**, else OFF.
+  - **Case-insensitive** `input_switch` for the lookup.
+  - **Duplicate handling** (case-folding or genuine dups): take the **first** match + warn
+    "N features matched '<q>'; showing the first."
+  - **Search hint** (on an exact miss, query length **≥2**): search the chosen field **always
+    case-insensitively (independent of the case-insensitive toggle**, so case-sensitive "duxf3" still
+    suggests "Duxf3"); **raw-match cap = 100** → over cap show "too many partial matches; type more to
+    narrow it down" (no list); else rank by match position (prefix `^q` > word-start > substring;
+    tiebreak shorter length then alpha), show **top 5** + "(+N more)". Pure tested helper
+    `suggest_features(query, values, n=5, cap=100)`; **debounce the gene input ~300 ms**; pre-lowercase
+    the search vector cached per `data_version`. Message tiers: found→colour; miss+hits→"Did you
+    mean …?"; miss+too-broad→refine; miss+none→"not found".
+  - **Expression assay** `selectInput` (any assay; default logcounts) + **Transformation** select
+    (none [default] / log2 / log10); when log, a **Pseudocount** numeric appears — default **1 for
+    integer assays** (detect via `all(m == round(m), na.rm=TRUE)`), else **0.5**. Already-log assays
+    (logcounts/VST) default to none. Colourbar label reflects assay + transform.
+- **`lookup_feature()`/`suggest_features()`**: add case-insensitive matching + a match **count**
+  (for the warning); the "Feature ID" choice searches rownames; `suggest_features` does the ranked
+  regex hint. All unit-tested (prefix ranks first, cap triggers, min-length gate, duplicate count).
+- **Plot aesthetics**: swap the 1:1-ratio checkbox for **`bslib::input_switch()`**; add a
+  **legend-position** `selectInput` (right [default]/left/top/bottom/none → `theme(legend.position=)`,
+  overriding `.plot_theme`'s bottom for PCA).
 
 ## Phase 5 — Differential expression + heatmap ⬜
 - Guided design builder (reference level + full-rank check) + contrast picker; multiple
@@ -174,5 +223,6 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 | #20 | P3g-b: continuous palettes + Feature/Assay/Other pills |
 | #21 | P3g-c: palette config JSON import/export + Edit palette |
 | #22 | P4-pre: extract shared plot engine (mod_plot_engine) |
+| #23 | P4a: dimensionality reduction — single-panel PCA |
 
 **v0.1.0** released after #21 (end of P3).
