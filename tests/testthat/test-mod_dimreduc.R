@@ -95,6 +95,19 @@ test_that("gene search: field selector, transform, duplicate + suggestion hints"
   })
 })
 
+test_that("colour-by optgroups are ordered General -> This session -> Data metadata", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 3, n_spike = 2, seed = 21)),
+               source = "demo"); session$flushReact()
+    html <- as.character(output$colour_ui$html)
+    pos <- function(lbl) regexpr(sprintf('label="%s"', lbl), html, fixed = TRUE)
+    expect_true(pos("General") < pos("This session"))
+    expect_true(pos("This session") < pos("Data metadata"))
+  })
+})
+
 test_that("colour by a per-sample QC metric builds a continuous scale", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()

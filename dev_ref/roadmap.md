@@ -130,6 +130,15 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   into shared `state`, then expose **"Suggested removal"** / **"In removal pool"** as colour/shape
   fields on PCA (the "This session" group) — also lets the "Showing" control + future plot pages
   reuse it. Pairs with the deferred "promote Showing subset to app-state" item.
+  **Also in this PR — unify the group/colour-by selectors:** extract one shared grouped-choices
+  helper (optgroups ordered **General → This session → Data metadata**, matching PCA's
+  `colour_ui`) and apply it across **all QC sample selectors** (General [done], RLE, Expression
+  density, Spike-in, Within-group correlation "Group by", filtering "Within-group grouping").
+  Per the user's call, add **Suggested removal / In removal pool** under "This session" to **all**
+  sample selectors (not just the colour-only plots) — so the within-group grouping selectors can
+  group by them too. RLE/density/spike must route their group value + palette through a
+  `sample_aes`-style resolver (today only General QC's `sample_aes` handles `__removal__`/`__pool__`).
+  Feature selector stays colData-only (feature-level; sample session-items N/A).
 
 ### P4a-2 — detailed plan (PCA colour & feature-search)
 

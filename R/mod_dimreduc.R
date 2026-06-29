@@ -186,12 +186,13 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     output$colour_ui <- renderUI({
       req(state$working)
       cd <- colnames(coldata())
+      # Group order: General (none) -> This session (derived) -> Data metadata.
       groups <- list("General" = c("(none)" = "__none__"))
-      if (length(cd)) groups[["Data metadata"]] <- stats::setNames(cd, cd)
       groups[["This session"]] <- c(
         "Gene expression" = "__gene__",
         stats::setNames(paste0("__qc__", names(.qc_metric_labels)),
                         unname(.qc_metric_labels)))
+      if (length(cd)) groups[["Data metadata"]] <- stats::setNames(cd, cd)
       selectInput(ns("colour_by"), "Colour by", choices = groups,
                   selected = default_colour_col())
     })
