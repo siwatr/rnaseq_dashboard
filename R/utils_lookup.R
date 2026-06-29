@@ -44,17 +44,20 @@ lookup_feature <- function(query, row_data, ids = rownames(row_data),
 #' @param values Character vector of searchable values, one per feature.
 #' @param ids Feature ids aligned to `values` (default `values`).
 #' @param case_insensitive Match case-insensitively (default `FALSE`).
-#' @return A list: `id` (first matching id, or `NA_character_`) and `n` (number
-#'   of matches).
+#' @return A list: `id` (first matching id, or `NA_character_`), `match` (the
+#'   actual matched value as stored -- e.g. `"Duxf3"` for a case-insensitive
+#'   query `"duxf3"` -- or `NA_character_`), and `n` (number of matches).
 #' @export
 resolve_feature <- function(query, values, ids = values,
                             case_insensitive = FALSE) {
   q <- as.character(query)[1]
   v <- as.character(values)
-  if (isTRUE(case_insensitive)) { q <- tolower(q); v <- tolower(v) }
-  hit <- which(v == q)
-  list(id = if (length(hit)) as.character(ids)[hit[1]] else NA_character_,
-       n = length(hit))
+  cmp_q <- if (isTRUE(case_insensitive)) tolower(q) else q
+  cmp_v <- if (isTRUE(case_insensitive)) tolower(v) else v
+  hit <- which(cmp_v == cmp_q)
+  list(id    = if (length(hit)) as.character(ids)[hit[1]] else NA_character_,
+       match = if (length(hit)) v[hit[1]] else NA_character_,
+       n     = length(hit))
 }
 
 #' Suggest feature names for a near-miss query ("Did you mean ...?")

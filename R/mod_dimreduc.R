@@ -101,6 +101,7 @@ mod_dimreduc_ui <- function(id) {
     bslib::card(
       bslib::card_header(tags$h3("PCA", class = "fs-6 mb-0")),
       uiOutput(ns("pca_stale")),
+      uiOutput(ns("gene_caption")),
       .plot_dual(ns("pca_container"))
     ),
     bslib::card(
@@ -307,31 +308,47 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       rd <- as.data.frame(SummarizedExperiment::rowData(state$working), optional = TRUE)
       if (field %in% names(rd)) as.character(rd[[field]]) else rownames(state$working)
     })
+    # The resolved feature for the current query/field (id + the actual matched
+    # value + match count), or NULL when not colouring by gene / box is empty.
+    # Shared by the legend label, the in-card caption, and the hint.
+    gene_resolved <- reactive({
+      req(identical(input$colour_by %||% "", "__gene__"), state$working)
+      q <- trimws(gene_q()); if (!nzchar(q)) return(NULL)
+      resolve_feature(q, search_values(), rownames(state$working),
+                      case_insensitive = isTRUE(input$gene_ci))
+    })
     # Inline feedback under the gene box: duplicate-hit note, "Did you mean ...?"
-    # on a near miss, a refine hint when too broad, or a not-found warning.
+    # on a near miss, a refine hint when too broad, or a not-found message.
     output$gene_hint <- renderUI({
       req(identical(input$colour_by %||% "", "__gene__"))
       q <- trimws(gene_q()); if (!nzchar(q)) return(NULL)
-      vals <- search_values()
-      rf <- resolve_feature(q, vals, rownames(state$working),
-                            case_insensitive = isTRUE(input$gene_ci))
+      rf <- gene_resolved()
       note <- function(cls, ...) tags$div(class = paste("small mb-2", cls), ...)
-      if (!is.na(rf$id)) {
+      if (!is.null(rf) && !is.na(rf$id)) {
         if (rf$n > 1L)
-          return(note("text-muted", sprintf("%d features matched '%s'; showing the first.",
-                                             rf$n, q)))
+          return(note("text-muted", sprintf("%d features matched '%s'; showing the first (%s).",
+                                             rf$n, q, rf$match)))
         return(NULL)
       }
-      sg <- suggest_features(q, vals)   # always case-insensitive (independent of toggle)
+      sg <- suggest_features(q, search_values())  # always case-insensitive (independent of toggle)
       if (isTRUE(sg$over_cap))
-        return(note("text-info", "Too many partial matches - type more to narrow it down."))
+        return(note("text-primary", "Too many partial matches - type more to narrow it down."))
       if (length(sg$suggestions)) {
         more <- sg$n_match - length(sg$suggestions)
         txt <- paste(sg$suggestions, collapse = ", ")
         if (more > 0L) txt <- paste0(txt, sprintf(" (+%d more)", more))
-        return(note("text-info", sprintf("Feature '%s' not found. Did you mean: %s?", q, txt)))
+        return(note("text-primary", sprintf("Feature '%s' not found. Did you mean: %s?", q, txt)))
       }
-      note("text-warning", sprintf("Feature '%s' not found.", q))
+      note("text-primary", sprintf("Feature '%s' not found.", q))
+    })
+    # In-card caption naming the feature + its true unique id (the dds rowname)
+    # the expression colour is plotting, shown only when colouring by a gene.
+    output$gene_caption <- renderUI({
+      if (!identical(input$colour_by %||% "", "__gene__")) return(NULL)
+      rf <- gene_resolved()
+      if (is.null(rf) || is.na(rf$id)) return(NULL)
+      tags$div(class = "small text-muted px-2 pb-1",
+               sprintf("Plotting expression of %s (%s)", rf$match, rf$id))
     })
 
     # --- Colour / shape resolution (consumes the Palette configs) -----------
@@ -343,21 +360,21 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       if (identical(sel, "__gene__")) {
         q <- trimws(gene_q())
         validate(need(nzchar(q), "Enter a feature to colour by."))
-        id <- resolve_feature(q, search_values(), rownames(dds),
-                              case_insensitive = isTRUE(input$gene_ci))$id
-        validate(need(!is.na(id), sprintf("Feature '%s' not found.", q)))
+        rf <- gene_resolved()
+        validate(need(!is.null(rf) && !is.na(rf$id), sprintf("Feature '%s' not found.", q)))
         assay_name <- input$gene_assay %||% "logcounts"
         # Guard against a stale assay name so the data shown matches the colourbar
         # label (.qc_assay_matrix would silently fall back to log2(CPM+1) otherwise).
         validate(need(assay_name %in% SummarizedExperiment::assayNames(dds),
                       sprintf("Assay '%s' is no longer available.", assay_name)))
         m <- .qc_assay_matrix(dds, assay_name)
-        raw <- as.numeric(m[id, samples])
+        raw <- as.numeric(m[rf$id, samples])
         tf <- input$gene_transform %||% "none"
         pc <- input$gene_pseudo %||% 1
         vals <- expr_transform(raw, tf, pc)
         suffix <- if (identical(tf, "none")) assay_name else paste0(assay_name, ", ", tf)
-        return(list(values = vals, discrete = FALSE, lab = paste0(q, "\n(", suffix, ")"),
+        # Label with the actual matched value (e.g. "Duxf3"), not the typed query.
+        return(list(values = vals, discrete = FALSE, lab = paste0(rf$match, "\n(", suffix, ")"),
                     scale = .continuous_scale_from(state$palette$assays[[assay_name]], vals)))
       }
       if (startsWith(sel, "__qc__")) {

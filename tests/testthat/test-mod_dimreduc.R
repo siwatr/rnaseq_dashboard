@@ -72,9 +72,18 @@ test_that("gene search: field selector, transform, duplicate + suggestion hints"
     session$elapse(300); session$flushReact()
     expect_match(as.character(output$gene_hint$html), "Did you mean")
 
+    # A case-insensitive hit labels the legend + caption with the STORED value
+    # (e.g. "Gene45"), not the typed lowercase query.
+    session$setInputs(gene_ci = TRUE, gene = tolower(real)); session$elapse(300); session$flushReact()
+    expect_match(build_pca_gg(FALSE)$labels$colour, real, fixed = TRUE)
+    cap <- as.character(output$gene_caption$html)
+    expect_match(cap, "Plotting expression of")
+    expect_match(cap, real, fixed = TRUE)                            # matched value
+    expect_match(cap, rownames(state$working)[50], fixed = TRUE)     # true unique id (rowname)
+
     # Searching by Feature ID (rownames) resolves an id directly.
     rid <- rownames(state$working)[3]
-    session$setInputs(gene_searchby = "__rownames__", gene = rid)
+    session$setInputs(gene_ci = FALSE, gene_searchby = "__rownames__", gene = rid)
     session$elapse(300); session$flushReact()
     expect_silent(g <- build_pca_gg(FALSE))
     expect_s3_class(g, "ggplot")

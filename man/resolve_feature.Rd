@@ -16,8 +16,9 @@ resolve_feature(query, values, ids = values, case_insensitive = FALSE)
 \item{case_insensitive}{Match case-insensitively (default \code{FALSE}).}
 }
 \value{
-A list: \code{id} (first matching id, or \code{NA_character_}) and \code{n} (number
-of matches).
+A list: \code{id} (first matching id, or \code{NA_character_}), \code{match} (the
+actual matched value as stored -- e.g. \code{"Duxf3"} for a case-insensitive
+query \code{"duxf3"} -- or \code{NA_character_}), and \code{n} (number of matches).
 }
 \description{
 Searches \code{query} against \code{values} (a per-feature character vector, e.g. a

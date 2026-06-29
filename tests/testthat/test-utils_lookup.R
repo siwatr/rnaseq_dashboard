@@ -34,16 +34,18 @@ test_that("resolve_feature returns the first id and a match count", {
   ids  <- c("ENSG1", "ENSG2", "ENSG3")
   r <- resolve_feature("Actb", vals, ids)
   expect_equal(r$id, "ENSG1")     # first match
+  expect_equal(r$match, "Actb")   # actual matched value
   expect_equal(r$n, 2L)           # duplicated name
   expect_equal(resolve_feature("Gapdh", vals, ids)$n, 1L)
   miss <- resolve_feature("Nope", vals, ids)
-  expect_true(is.na(miss$id)); expect_equal(miss$n, 0L)
+  expect_true(is.na(miss$id)); expect_true(is.na(miss$match)); expect_equal(miss$n, 0L)
 })
 
-test_that("resolve_feature case-insensitive folds query and values", {
+test_that("resolve_feature case-insensitive folds query but returns the stored value", {
   r <- resolve_feature("duxf3", c("Duxf3", "Actb"), c("ID1", "ID2"),
                        case_insensitive = TRUE)
   expect_equal(r$id, "ID1"); expect_equal(r$n, 1L)
+  expect_equal(r$match, "Duxf3")                                      # stored case, not query
   expect_true(is.na(resolve_feature("duxf3", c("Duxf3"), "ID1")$id))  # sensitive miss
 })
 
