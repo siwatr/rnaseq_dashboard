@@ -362,3 +362,15 @@ test_that(".merge_meta widens narrowed factor levels instead of NA-ing re-added 
   expect_false(anyNA(cd$condition))                                # re-added 'treated' not NA-ed
   expect_setequal(as.character(cd$condition), c("control", "treated"))
 })
+
+test_that("removal_status_colors gives the built-in scheme or a config override", {
+  d <- removal_status_colors(NULL)
+  expect_named(d, c("pass", "suggested_other", "suggested_this"))
+  expect_equal(unname(d["pass"]), "#2CA02C")
+  cfg <- list(name = "Okabe-Ito",
+              colors = c(pass = "#111111", suggested_other = "#222222",
+                         suggested_this = "#333333"))
+  o <- removal_status_colors(cfg)
+  expect_equal(unname(o["pass"]), "#111111")
+  expect_equal(unname(o["suggested_this"]), "#333333")
+})

@@ -14,14 +14,9 @@
 # correlation heatmap without touching the data (view-only; no data_version bump).
 # Each diagnostic carries a "How to read this" note below it (.qc_diag_help).
 
-# Semantic 3-colour scheme for the "Removal status" colour-by (reason-aware):
-# green = QC pass, yellow = suggested for some other reason, red = suggested for
-# the reason of the current plot. A fixed scale (not the qualitative palette);
-# the Palette page will later own these values.
-.removal_palette <- c(pass = "#2CA02C", suggested_other = "#E6B800",
-                      suggested_this = "#D62728")
-.removal_labels <- c(pass = "QC pass", suggested_other = "Suggested drop (other)",
-                     suggested_this = "Suggested drop (this reason)")
+# The reason-aware removal-status colour scheme (.removal_palette / .removal_labels)
+# and its resolver removal_status_colors() now live in filter_helpers.R, shared
+# with the PCA "Suggested removal" aesthetic.
 # Sample QC metric -> the flag_samples() reason column it corresponds to (used to
 # pick the "this reason" highlight). One column per metric, so % spike-in maps to
 # the over-spiked side only; under-spiked samples (low_spike) still show as
@@ -753,13 +748,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       palette_discrete(levels, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
     }
     # Removal-status colours: the project "Other" map if configured, else the
-    # built-in green/yellow/red. Levels come from .removal_palette's names.
-    removal_palette <- function() {
-      cfg <- state$palette$other$removal_status
-      if (is.null(cfg)) return(.removal_palette)
-      palette_discrete(names(.removal_palette), cfg$colors, cfg$name %||% "Okabe-Ito",
-                       cfg$custom)
-    }
+    # built-in green/amber/red (shared resolver, so PCA agrees).
+    removal_palette <- function() removal_status_colors(state$palette$other$removal_status)
 
     # --- DRY UI builders (data-dependent, so server-rendered) ---------------
     group_box <- function(input_id, label = "Group / colour by") renderUI({
@@ -1135,7 +1125,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
 
     # --- Filtering: shared flags + removal pools ----------------------------
-    samp_pool <- reactiveVal(character(0))
+    # The sample pool is promoted to shared state so other pages (PCA) can read
+    # it; this proxy keeps the reactiveVal-style get/set call sites unchanged.
+    samp_pool <- function(x) {
+      if (missing(x)) state$samp_pool %||% character(0)
+      else { state$samp_pool <- x; invisible(x) }
+    }
     feat_pool <- reactiveVal(character(0))
 
     # Advisory flags, cached on data_version + the rule inputs. Shared by the
@@ -1182,6 +1177,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                      dose_slope_max = .blank_na(input$samp_slope_max))
       })
     })
+    # Mirror the computed sample flags into shared state so PCA (and future plot
+    # pages) can colour/shape by "Suggested removal" without re-deriving them.
+    # Forces samp_flags() to evaluate even while the Filtering tab is hidden (the
+    # threshold inputs stay rendered), so the value is ready when PCA reads it.
+    observeEvent(samp_flags(), { state$samp_flags <- samp_flags() }, ignoreNULL = FALSE)
+
     feat_flags <- reactive({
       req(state$working)
       ms <- if (isTRUE(input$feat_use_min_samples)) input$feat_min_samples else NULL

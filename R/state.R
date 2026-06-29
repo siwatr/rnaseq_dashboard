@@ -35,7 +35,14 @@ new_app_state <- function() {
     # plot_interactive: per-attribute colour mappings, untouched by load/reset,
     # no data_version impact. Shape: list(colData = list(<col> = list(type,
     # palette, pins)), ...). Empty list = fall back to thematic / default colours.
-    palette = list()
+    palette = list(),
+    # Sample-removal selections owned by the QC Filtering page but promoted here
+    # so other plot pages (PCA, ...) can colour/shape by them: `samp_pool` is the
+    # staged removal pool (sample ids); `samp_flags` is the latest flag_samples()
+    # data.frame (or NULL). Session UI state (like palette) - the QC page clears
+    # the pool on data load; no data_version impact.
+    samp_pool  = character(0),
+    samp_flags = NULL
   )
   # A plain environment so writing cache entries does not trigger reactivity
   # (avoids reactive-write-in-reactive churn); staleness is keyed on data_version.

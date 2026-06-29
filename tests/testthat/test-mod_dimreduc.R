@@ -125,6 +125,47 @@ test_that("colour by a per-sample QC metric builds a continuous scale", {
   })
 })
 
+test_that("PCA colours/shapes by promoted removal flags + pool (shared state)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3, n_spike = 2, seed = 31))
+    state_load(state, dds, source = "demo")
+    samples <- colnames(state$working)
+    # Simulate what the QC Filtering page promotes into shared state.
+    state$samp_flags <- data.frame(sample = samples,
+                                   flagged = c(TRUE, rep(FALSE, length(samples) - 1L)),
+                                   stringsAsFactors = FALSE)
+    state$samp_pool <- samples[2]
+    session$setInputs(assay = "vst", n_top = 50, auto = TRUE,
+                      colour_by = "__removal__", shape_by = "__pool__"); session$flushReact()
+    g <- build_pca_gg(FALSE)
+    expect_s3_class(g, "ggplot")
+    expect_equal(g$labels$colour, "Suggested removal")
+    expect_equal(g$labels$shape, "Removal pool")
+    # Swap the roles: colour by pool, shape by removal status.
+    session$setInputs(colour_by = "__pool__", shape_by = "__removal__"); session$flushReact()
+    g2 <- build_pca_gg(FALSE)
+    expect_equal(g2$labels$colour, "Removal pool")
+    expect_equal(g2$labels$shape, "Suggested removal")
+    # The session items are offered in both selectors' "This session" group.
+    expect_match(as.character(output$colour_ui$html), "__removal__", fixed = TRUE)
+    expect_match(as.character(output$shape_ui$html), "__pool__", fixed = TRUE)
+  })
+})
+
+test_that("PCA removal colour validates clearly when flags are not yet computed", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 2, seed = 32)),
+               source = "demo")                       # state$samp_flags is NULL
+    session$setInputs(assay = "vst", n_top = 40, auto = TRUE,
+                      colour_by = "__removal__"); session$flushReact()
+    expect_error(build_pca_gg(FALSE), "not ready")
+  })
+})
+
 test_that("shape selector offers only <=6-level discrete columns; legend position applies", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()

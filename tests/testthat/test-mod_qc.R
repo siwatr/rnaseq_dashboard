@@ -238,6 +238,23 @@ test_that("flagged samples are highlight-only (pool starts empty)", {
   })
 })
 
+test_that("sample pool + flags are promoted to shared state for other pages", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3,
+                                                      n_spike = 1, seed = 13)), source = "demo")
+    session$flushReact()
+    # samp_pool() proxies state$samp_pool; the flags mirror lands in state.
+    expect_identical(samp_pool(), state$samp_pool)
+    expect_false(is.null(state$samp_flags))
+    expect_true(all(c("sample", "flagged") %in% colnames(state$samp_flags)))
+    # Adopting the suggestions writes through to shared state.
+    samp_pool(colnames(state$working)[1]); session$flushReact()
+    expect_identical(state$samp_pool, colnames(state$working)[1])
+  })
+})
+
 test_that("samp_flags incorporates spike-in criteria when a rule is set", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
