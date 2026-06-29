@@ -57,3 +57,33 @@ test_that("PCA needs >=3 samples (clear validate message)", {
     expect_error(pca_spec(), "at least 3 samples")
   })
 })
+
+test_that("stale banner fires on an embedding-input change when auto-render is off", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 120, n_per_group = 3, n_spike = 4, seed = 5)),
+               source = "demo")
+    session$setInputs(assay = "vst", n_top = 100, auto = FALSE, render = 1); session$flushReact()
+    expect_false(is.null(pca_shown$value()))
+    expect_false(pca_shown$stale())
+    session$setInputs(n_top = 50); session$flushReact()      # changed, not yet re-rendered
+    expect_true(pca_shown$stale())
+    session$setInputs(render = 2); session$flushReact()
+    expect_false(pca_shown$stale())
+  })
+})
+
+test_that("PC-axis selection is preserved across a re-render (not reset to PC1/PC2)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 120, n_per_group = 3, n_spike = 4, seed = 6)),
+               source = "demo")
+    session$setInputs(assay = "vst", n_top = 100, auto = TRUE, pc_x = "PC3"); session$flushReact()
+    session$setInputs(n_top = 60); session$flushReact()       # forces pc_ui to re-render
+    html <- as.character(output$pc_ui$html)
+    expect_match(html, "PC3")                                 # still offered + kept (isolate)
+    expect_match(html, 'value=\"PC3\"[^>]*selected', perl = TRUE)
+  })
+})

@@ -18,14 +18,14 @@
 # pre-built ggplot scales (or NULL). `interactive` adds the plotly hover aes only.
 .pca_scatter_plot <- function(df, xlab, ylab, subtitle, colour_lab = NULL,
                               shape_lab = NULL, colour_scale = NULL,
-                              shape_scale = NULL, interactive = FALSE) {
+                              shape_scale = NULL, caption = NULL, interactive = FALSE) {
   aes_args <- list(x = quote(x), y = quote(y))
   if ("col" %in% names(df)) aes_args$colour <- quote(col)
   if ("shp" %in% names(df)) aes_args$shape  <- quote(shp)
   if (interactive)          aes_args$text   <- quote(text)
   p <- ggplot2::ggplot(df, do.call(ggplot2::aes, aes_args)) +
     ggplot2::geom_point(size = 3, alpha = 0.9) +
-    ggplot2::labs(x = xlab, y = ylab, subtitle = subtitle,
+    ggplot2::labs(x = xlab, y = ylab, subtitle = subtitle, caption = caption,
                   colour = colour_lab, shape = shape_lab) +
     ggplot2::theme_minimal(base_size = 13)
   if (!is.null(colour_scale)) p <- p + colour_scale
@@ -141,16 +141,22 @@ mod_dimreduc_server <- function(id, state) {
     output$pc_ui <- renderUI({
       np <- pca_n_pc()
       pcs <- paste0("PC", seq_len(np))
+      # Preserve the current pick across re-renders (a new embedding invalidates
+      # this UI even when the PC count is unchanged); isolate to avoid a feedback dep.
+      keep <- function(cur, default) if (!is.null(cur) && cur %in% pcs) cur else default
+      curx <- shiny::isolate(input$pc_x); cury <- shiny::isolate(input$pc_y)
       bslib::layout_columns(
         col_widths = c(6, 6),
-        selectInput(ns("pc_x"), "X axis", choices = pcs, selected = "PC1"),
+        selectInput(ns("pc_x"), "X axis", choices = pcs, selected = keep(curx, "PC1")),
         selectInput(ns("pc_y"), "Y axis", choices = pcs,
-                    selected = if (np >= 2L) "PC2" else "PC1"))
+                    selected = keep(cury, if (np >= 2L) "PC2" else "PC1")))
     })
 
     # --- Embedding (cached + deferred) --------------------------------------
-    log_on <- function() isTRUE(input$log_transform) &&
-      !(input$assay %in% c("vst", "norm_logcounts", "logcounts"))
+    log_on <- function() {
+      a <- input$assay %||% ""
+      isTRUE(input$log_transform) && !(a %in% c("vst", "norm_logcounts", "logcounts"))
+    }
     pca_spec <- reactive({
       req(state$working, input$assay)
       validate(need(ncol(state$working) >= 3L,
@@ -232,23 +238,27 @@ mod_dimreduc_server <- function(id, state) {
       df <- data.frame(x = v$scores[shown, px], y = v$scores[shown, py],
                        sample = shown, stringsAsFactors = FALSE)
       cr <- colour_resolve(shown); sr <- shape_resolve(shown)
-      colour_lab <- NULL; shape_lab <- NULL; colour_scale <- NULL; shape_scale <- NULL
+      colour_lab <- NULL; shape_lab <- NULL; colour_scale <- NULL; shape_scale <- NULL; cap <- NULL
       if (!is.null(cr)) { df$col <- cr$values; colour_lab <- cr$lab; colour_scale <- cr$scale }
       if (!is.null(sr) && !isTRUE(sr$skip)) { df$shp <- sr$values; shape_lab <- sr$lab }
-      pcpct <- function(p) sprintf("%s: %.0f%%", p, v$var_pct[as.integer(sub("PC", "", p))])
-      hov <- if (interactive) {
+      if (!is.null(sr) && isTRUE(sr$skip))   # ggplot's shape palette caps at 6 levels
+        cap <- sprintf("Shape: '%s' has more than 6 groups - not shown.", sr$lab)
+      pcpct <- function(p) sprintf("%s: %.1f%%", p, v$var_pct[as.integer(sub("PC", "", p))])
+      if (interactive) {
         df$text <- sprintf("%s\n%s, %s", df$sample, pcpct(px), pcpct(py))
-        if (!is.null(cr)) df$text <- paste0(df$text, "\n", cr$lab, ": ", df$col)
+        if (!is.null(cr)) df$text <- paste0(df$text, "\n", cr$lab, ": ",
+                                            if (cr$discrete) df$col else round(df$col, 3))
       }
       .pca_scatter_plot(df, xlab = pcpct(px), ylab = pcpct(py),
                         subtitle = paste0("Input: ", v$label,
                                           " · ", v$n_genes, " top-variable genes"),
                         colour_lab = colour_lab, shape_lab = shape_lab,
                         colour_scale = colour_scale, shape_scale = shape_scale,
-                        interactive = interactive)
+                        caption = cap, interactive = interactive)
     }
-    dual_plot("pca", build_pca_gg,
-              n_elements = reactive({ v <- pca_shown$value(); if (is.null(v)) 0L else nrow(v$scores) }))
+    dual_plot("pca", build_pca_gg, n_elements = reactive({
+      v <- pca_shown$value(); if (is.null(v)) 0L else length(intersect(rownames(v$scores), showing_samples()))
+    }))
 
     build_scree_gg <- function(interactive) {
       validate(need(!is.null(pca_shown$value()), "Render to see the variance explained."))
