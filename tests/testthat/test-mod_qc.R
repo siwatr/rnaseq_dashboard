@@ -238,6 +238,21 @@ test_that("flagged samples are highlight-only (pool starts empty)", {
   })
 })
 
+test_that("General QC groups a numeric colData column discretely (not a gradient)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 2, seed = 19))
+    SummarizedExperiment::colData(dds)$rin <- as.numeric(seq_len(ncol(dds)))   # numeric covariate
+    state_load(state, dds, source = "demo"); session$flushReact()
+    session$setInputs(x_axis = "sample", metric = "library_size", group = "rin",
+                      sort = "none", auto = TRUE); session$flushReact()
+    g <- plot_gg(FALSE)
+    expect_s3_class(g, "ggplot")
+    expect_true(is.factor(g$data$group))            # discrete grouping, not numeric
+  })
+})
+
 test_that("RLE/density/spike colour selectors group by the removal pool", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
@@ -273,22 +288,23 @@ test_that("correlation heatmap annotation offers grouped session items + QC metr
     expect_match(html, "This session")                  # grouped optgroups
     expect_match(html, "__removal__", fixed = TRUE)
     expect_match(html, "__qc__library_size", fixed = TRUE)
-    # A mix of colData + session items + a QC metric builds the annotation frame.
+    # A mix of colData + session items + a QC metric builds the annotation frame
+    # (values snapshotted in the spec; resolved via the shared catalog).
     session$setInputs(cor_method = "spearman", cor_auto = FALSE, cor_render = 1,
                       cor_anno = c("condition", "__removal__", "__pool__", "__qc__library_size"))
     session$flushReact()
-    adf <- cor_shown$value()$anno_df
+    adf <- cor_shown$value()$anno$df
     expect_true(all(c("condition", "Suggested removal", "Removal pool", "Library size")
                     %in% colnames(adf)))
     expect_s3_class(adf[["Removal pool"]], "factor")
     expect_true(is.numeric(adf[["Library size"]]))      # continuous track
     expect_equal(as.character(adf[colnames(state$working)[1], "Removal pool"]), "In removal pool")
-    # Colours resolve: fixed map for the pool track, ramp/function for the metric.
-    cfg <- c(state$palette$colData, .cor_anno_session_config(colnames(state$working)))
-    cols <- qc_annotation_colors(adf, cfg)
-    expect_true("In removal pool" %in% names(cols[["Removal pool"]]))
+    # Colours resolve live via the shared resolver: fixed map for the pool track,
+    # a colorRamp2 for the metric.
+    a <- aes_annotation(state, cor_shown$value()$anno$keys, colnames(state$working))
+    expect_true("In removal pool" %in% names(a$col[["Removal pool"]]))
     skip_if_not_installed("circlize")
-    expect_true(is.function(cols[["Library size"]]))    # colorRamp2 for numeric
+    expect_true(is.function(a$col[["Library size"]]))   # colorRamp2 for numeric
   })
 })
 

@@ -2,6 +2,12 @@
 
 export(add_meta_column)
 export(add_normalized_assays)
+export(aes_annotation)
+export(aes_catalog)
+export(aes_choices)
+export(aes_ggplot_scale)
+export(aes_heatmap_col)
+export(aes_resolve)
 export(annotate_with_gtf)
 export(annotate_with_orgdb)
 export(annotation_coverage)
