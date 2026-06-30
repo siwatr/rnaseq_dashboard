@@ -128,28 +128,6 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     feature_type <- function() state$meta$feature_type %||% "gene"
     coldata <- function() as.data.frame(SummarizedExperiment::colData(state$working))
-    discrete_cols <- function() {
-      cd <- coldata(); names(cd)[!vapply(cd, is.numeric, logical(1))]
-    }
-    # Discrete colData columns usable for *shape* (ggplot's shape palette caps at
-    # 6 levels). NA counts as its own "NA" level (we never silently drop points).
-    shape_cols <- function() {
-      cd <- coldata()
-      Filter(function(c) {
-        lv <- unique(ifelse(is.na(cd[[c]]), "NA", as.character(cd[[c]])))
-        length(lv) <= 6L
-      }, discrete_cols())
-    }
-    # Per-sample QC metrics offered as continuous colour options ("This session").
-    # Share the QC page's derived cache (keyed on data_version) so we don't recompute
-    # scater::perCellQCMetrics on every tab visit.
-    qc_metrics <- reactive({
-      req(state$working)
-      state_derive(state, "qc_metrics", params = list(),
-                   expr = function() qc_per_sample_metrics(state$working))
-    })
-    .qc_metric_labels <- c(library_size = "Library size", detected = "Detected features",
-                           pct_mito = "% mitochondrial", pct_spike = "% spike-in")
     # Default colour-by: the first DESeq2 design variable (e.g. ~ X + Y -> "X"),
     # then "condition", then none (covers objects with a ~1 / no usable design).
     default_colour_col <- function() {
@@ -184,26 +162,21 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       req(state$working)
       checkboxInput(ns("auto"), "Auto-render", value = ncol(state$working) <= 150L)
     })
-    # Grouped colour selector (<optgroup>s like the Palette selector): dataset
-    # metadata vs session-derived options (gene expression + per-sample QC metrics).
+    # Grouped colour selector (<optgroup>s): the shared attribute catalog (gene
+    # expression + per-sample QC metrics + removal/pool under "This session",
+    # colData under "Data metadata").
     output$colour_ui <- renderUI({
       req(state$working)
-      session <- c(
-        "Gene expression" = "__gene__",
-        stats::setNames(paste0("__qc__", names(.qc_metric_labels)),
-                        unname(.qc_metric_labels)),
-        .session_removal_items)
       selectInput(ns("colour_by"), "Colour by",
-                  choices = group_field_choices(colnames(coldata()), session, none = TRUE),
+                  choices = aes_choices(aes_catalog(state, gene = TRUE), none = TRUE),
                   selected = default_colour_col())
     })
     output$shape_ui <- renderUI({
       req(state$working)
-      sc <- shape_cols()
-      # Same grouped layout as Colour by: General -> This session (removal/pool,
-      # both discrete and within the 6-level shape cap) -> Data metadata.
+      # Discrete attributes only, colData capped at 6 levels (ggplot's shape cap).
       selectInput(ns("shape_by"), "Shape by (discrete, <=6 values)",
-                  choices = group_field_choices(sc, .session_removal_items, none = TRUE),
+                  choices = aes_choices(aes_catalog(state), kinds = "discrete", none = TRUE,
+                                        max_levels = 6L, state = state),
                   selected = "__none__")
     })
 
@@ -357,40 +330,15 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     # Resolve a "This session" removal aesthetic (promoted from the QC page) to a
     # per-sample factor + its colours/labels, or NULL when the flags aren't ready.
-    session_removal <- function(value, samples) {
-      if (identical(value, "__removal__")) {
-        fl <- state$samp_flags
-        if (is.null(fl)) return(NULL)
-        i <- match(samples, fl$sample)
-        list(values = droplevels(removal_status(fl$flagged[i])),
-             lab = "Suggested removal",
-             colors = removal_status_colors(state$palette$other$removal_status),
-             labels = .removal_labels_2)
-      } else if (identical(value, "__pool__")) {
-        pool <- state$samp_pool %||% character(0)
-        list(values = factor(ifelse(samples %in% pool, "in removal pool", "kept"),
-                             levels = c("kept", "in removal pool")),
-             lab = "Removal pool",
-             colors = c(kept = "#9aa0a6", "in removal pool" = "#D62728"), labels = NULL)
-      } else NULL
-    }
-
-    # --- Colour / shape resolution (consumes the Palette configs) -----------
+    # --- Colour / shape resolution (via the shared attribute resolver) ------
     # Returns list(values, discrete, lab, scale) for the colour aesthetic, or NULL.
+    # colData / QC metrics / removal / pool resolve through aes_resolve(); gene
+    # expression is PCA-only (this module owns the gene-search UI) and feeds its
+    # precomputed values into aes_resolve for the assay-config colour scale.
     colour_resolve <- function(samples) {
       sel <- input$colour_by %||% "__none__"
       if (identical(sel, "__none__")) return(NULL)
       dds <- state$working
-      if (sel %in% c("__removal__", "__pool__")) {
-        rs <- session_removal(sel, samples)
-        validate(need(!is.null(rs),
-                      "Removal flags are not ready yet - open the QC Filtering tab once."))
-        scale <- if (is.null(rs$labels))
-          ggplot2::scale_colour_manual(values = rs$colors, na.value = "grey70")
-        else
-          ggplot2::scale_colour_manual(values = rs$colors, labels = rs$labels, na.value = "grey70")
-        return(list(values = rs$values, discrete = TRUE, lab = rs$lab, scale = scale))
-      }
       if (identical(sel, "__gene__")) {
         q <- trimws(gene_q())
         validate(need(nzchar(q), "Enter a feature to colour by."))
@@ -408,56 +356,27 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         vals <- expr_transform(raw, tf, pc)
         suffix <- if (identical(tf, "none")) assay_name else paste0(assay_name, ", ", tf)
         # Label with the actual matched value (e.g. "Duxf3"), not the typed query.
-        return(list(values = vals, discrete = FALSE, lab = paste0(rf$match, "\n(", suffix, ")"),
-                    scale = .continuous_scale_from(state$palette$assays[[assay_name]], vals)))
+        res <- aes_resolve(state, "__gene__", samples,
+                           ctx = list(values = vals, assay = assay_name,
+                                      label = paste0(rf$match, "\n(", suffix, ")")))
+        return(list(values = res$values, discrete = FALSE, lab = res$label,
+                    scale = aes_ggplot_scale(res, "colour")))
       }
-      if (startsWith(sel, "__qc__")) {
-        metric <- sub("^__qc__", "", sel)
-        qm <- qc_metrics()
-        vals <- as.numeric(qm[samples, metric])
-        return(list(values = vals, discrete = FALSE,
-                    lab = unname(.qc_metric_labels[metric]) %||% metric, scale = NULL))
-      }
-      cd <- coldata()[samples, , drop = FALSE]
-      x <- cd[[sel]]
-      if (is.numeric(x)) {
-        return(list(values = x, discrete = FALSE, lab = sel,
-                    scale = .continuous_scale_from(state$palette$colData[[sel]], x)))
-      }
-      lv <- as.character(x); lv[is.na(lv)] <- "NA"
-      f <- factor(lv)
-      list(values = f, discrete = TRUE, lab = sel,
-           scale = .discrete_scale_from(state$palette$colData[[sel]], levels(f)))
-    }
-    # Colour scales from a Palette config, or NULL when none is set -- mirroring QC's
-    # group_palette/.qc_group_scale, so a no-config colouring falls back to thematic's
-    # theme palette (not a hard-coded Okabe-Ito / viridis).
-    .discrete_scale_from <- function(cfg, levels) {
-      if (is.null(cfg)) return(NULL)
-      cols <- palette_discrete(levels, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
-      ggplot2::scale_colour_manual(values = cols, na.value = "grey70")
-    }
-    .continuous_scale_from <- function(cfg, values) {
-      if (is.null(cfg)) return(NULL)
-      g <- palette_gradientn(cfg$name %||% "viridis: viridis", values = values,
-                             min = cfg$min, max = cfg$max, custom = cfg$custom,
-                             reverse = isTRUE(cfg$reverse))
-      ggplot2::scale_colour_gradientn(colours = g$colours, values = g$values, limits = g$limits)
+      res <- aes_resolve(state, sel, samples)
+      validate(need(!is.null(res),
+                    "Removal flags are not ready yet - open the QC Filtering tab once."))
+      list(values = res$values, discrete = identical(res$kind, "discrete"),
+           lab = res$label, scale = aes_ggplot_scale(res, "colour"))
     }
     shape_resolve <- function(samples) {
       sel <- input$shape_by %||% "__none__"
       if (identical(sel, "__none__")) return(NULL)
-      if (sel %in% c("__removal__", "__pool__")) {
-        rs <- session_removal(sel, samples)
-        if (is.null(rs)) return(NULL)              # flags not ready -> no shape
-        return(list(values = rs$values, lab = rs$lab, scale = NULL))
-      }
-      x <- coldata()[samples, sel]
-      lv <- as.character(x); lv[is.na(lv)] <- "NA"
-      f <- factor(lv)
+      res <- aes_resolve(state, sel, samples)
+      if (is.null(res)) return(NULL)               # flags not ready -> no shape
+      f <- if (is.factor(res$values)) res$values else factor(res$values)
       if (nlevels(f) > 6L)
-        return(list(skip = TRUE, lab = sel))   # ggplot's shape palette caps at 6
-      list(values = f, lab = sel, scale = NULL)
+        return(list(skip = TRUE, lab = res$label))  # ggplot's shape palette caps at 6
+      list(values = f, lab = res$label, scale = NULL)
     }
 
     # --- The two plots (re-plot live from the cached embedding) -------------

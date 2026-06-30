@@ -324,7 +324,8 @@
 # tune via the Themer "Heatmap" sub-tab.
 .qc_correlation_heatmap <- function(cor_mat, anno_df = NULL, dark_theme = FALSE,
                                     n_samples = ncol(cor_mat), method = "spearman",
-                                    palette_config = NULL, cor_config = NULL) {
+                                    palette_config = NULL, cor_config = NULL,
+                                    anno_col = NULL) {
   if (!requireNamespace("ComplexHeatmap", quietly = TRUE)) return(NULL)
   fg <- if (isTRUE(dark_theme)) "grey90" else "grey10"
   legend_lab <- if (identical(method, "pearson")) "Pearson r" else "Spearman rho"
@@ -343,8 +344,10 @@
   top <- NULL
   if (!is.null(anno_df) && ncol(as.data.frame(anno_df)) > 0) {
     adf <- as.data.frame(anno_df)[colnames(cor_mat), , drop = FALSE]
-    top <- ComplexHeatmap::HeatmapAnnotation(df = adf,
-                                             col = qc_annotation_colors(adf, palette_config))
+    # Precomputed colours (from the shared resolver) when given; else fall back to
+    # the colData-config path for any other caller.
+    cols <- anno_col %||% qc_annotation_colors(adf, palette_config)
+    top <- ComplexHeatmap::HeatmapAnnotation(df = adf, col = cols)
   }
   show_names <- n_samples <= 30
   gp <- grid::gpar(col = fg)
@@ -737,53 +740,22 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # Used by the per-sample colour plots (General/RLE/density/spike). The removal
     # status here is the 2-level pass/suggested view (the reason-aware 3-level
     # scheme needs a plot metric, so only General QC's sample_aes uses it).
-    .session_group_values <- function(value, samples) {
-      if (identical(value, "__removal__")) {
-        fl <- state$samp_flags
-        if (is.null(fl)) return(factor(rep("flags pending", length(samples))))
-        st <- removal_status(fl$flagged[match(samples, fl$sample)])
-        factor(unname(.removal_labels_2[as.character(st)]),
-               levels = unname(.removal_labels_2[levels(droplevels(st))]))
-      } else if (identical(value, "__pool__")) {
-        pool <- state$samp_pool %||% character(0)
-        factor(ifelse(samples %in% pool, "In removal pool", "Kept"),
-               levels = c("Kept", "In removal pool"))
-      } else NULL
-    }
+    # Per-sample grouping factor (named by sample) for a colour plot, via the
+    # shared attribute resolver (colData / removal / pool). Falls back to a single
+    # "flags pending" level when removal flags are not computed yet.
     group_map <- function(col, samples = colnames(state$working)) {
-      sv <- .session_group_values(col, samples)
-      if (!is.null(sv)) return(stats::setNames(sv, samples))
-      cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      stats::setNames(factor(as.character(cd[samples, col])), samples)
+      res <- aes_resolve(state, col, samples)
+      vals <- if (is.null(res)) factor(rep("flags pending", length(samples)))
+              else if (is.factor(res$values)) res$values else factor(res$values)
+      stats::setNames(vals, samples)
     }
-    # Colours for a group field's levels: removal/pool get their fixed map (subset
-    # to the present levels), colData columns use the project palette (or NULL).
+    # Colours for a colour plot's group-field levels (subset to those present), or
+    # NULL when a colData column has no project palette config (-> thematic default).
     group_colours <- function(col, levels) {
-      levels <- as.character(levels)
-      if (identical(col, "__removal__")) {
-        pal <- removal_status_colors(state$palette$other$removal_status)
-        full <- stats::setNames(unname(pal), unname(.removal_labels_2[names(pal)]))
-        full <- full[!duplicated(names(full))]      # suggested_* collapse to one label
-        return(full[intersect(levels, names(full))])
-      }
-      if (identical(col, "__pool__"))
-        return(c(Kept = "#9aa0a6", "In removal pool" = "#D62728")[
-          intersect(levels, c("Kept", "In removal pool"))])
-      group_palette(col, levels)
+      res <- aes_resolve(state, col, colnames(state$working))
+      if (is.null(res) || is.null(res$colors)) return(NULL)
+      res$colors[intersect(as.character(levels), names(res$colors))]
     }
-    # Project-palette colours for a colData column's levels, or NULL when the
-    # Palette page has no mapping configured for `col` (-> thematic default).
-    # Feeds the QC ggplot group scales (matched by level name, so order-agnostic).
-    group_palette <- function(col, levels) {
-      cfg <- state$palette$colData[[col]]
-      levels <- unique(as.character(levels))
-      levels <- levels[!is.na(levels)]
-      if (is.null(cfg) || !length(levels)) return(NULL)
-      palette_discrete(levels, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
-    }
-    # Removal-status colours: the project "Other" map if configured, else the
-    # built-in green/amber/red (shared resolver, so PCA agrees).
-    removal_palette <- function() removal_status_colors(state$palette$other$removal_status)
 
     # --- DRY UI builders (data-dependent, so server-rendered) ---------------
     # `session = TRUE` adds the shared "This session" removal items (for the
@@ -834,27 +806,18 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
     output$auto_ui  <- auto_box("auto")
 
-    # Colour aesthetic for the General QC plot: a colData column, the reason-aware
-    # removal status (green/yellow/red), or removal-pool membership.
+    # Colour aesthetic for the General QC plot via the shared resolver. The plot
+    # metric drives the reason-aware removal highlight (green/amber/red) through
+    # `ctx$reason`; colData / pool resolve as elsewhere.
     sample_aes <- function(col, metric, samples) {
-      if (identical(col, "__removal__")) {
-        fl <- samp_flags(); i <- match(samples, fl$sample)
-        rcol <- .metric_reason[[metric]]
-        this <- if (!is.null(rcol)) fl[[rcol]][i] else NULL
-        list(values = removal_status(fl$flagged[i], this), lab = "Suggested removal",
-             palette = removal_palette(), labels = .removal_labels)
-      } else if (identical(col, "__pool__")) {
-        inp <- samples %in% samp_pool()
-        list(values = factor(ifelse(inp, "in removal pool", "kept"),
-                             levels = c("kept", "in removal pool")),
-             lab = "Removal pool",
-             palette = c(kept = "#9aa0a6", "in removal pool" = "#D62728"), labels = NULL)
-      } else {
-        cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-        v <- if (!is.null(col) && col %in% colnames(cd)) as.factor(cd[samples, col])
-             else factor(rep("all", length(samples)))
-        list(values = v, lab = col, palette = group_palette(col, levels(v)), labels = NULL)
-      }
+      res <- aes_resolve(state, col, samples, ctx = list(reason = metric))
+      if (is.null(res))                          # removal before flags computed (rare)
+        return(list(values = factor(rep("flags pending", length(samples))),
+                    lab = "Suggested removal", palette = NULL, labels = NULL))
+      # General QC groups discretely (a numeric colData column is binned to a
+      # factor, as the pre-resolver code did); mirrors group_map() for RLE/density.
+      vals <- if (is.factor(res$values)) res$values else factor(res$values)
+      list(values = vals, lab = res$label, palette = res$colors, labels = res$labels)
     }
 
     current_spec <- reactive({
@@ -985,43 +948,9 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       hit <- intersect(dv, cd_cols)
       if (length(hit)) hit else utils::head(cd_cols, 1)
     }
-    # Per-sample QC metrics offered as continuous heatmap-annotation tracks.
-    .cor_anno_qc_labels <- c(library_size = "Library size", detected = "Detected features",
-                             pct_mito = "% mitochondrial", pct_spike = "% spike-in")
-    # Grouped annotation choices (multi-select): same "This session" / "Data
-    # metadata" layout as the group/colour-by selectors (no "(none)" -> a blank
-    # multi-select already means no annotation).
-    cor_anno_choices <- function() {
-      cols <- colnames(SummarizedExperiment::colData(state$working))
-      session <- c(.session_removal_items,
-                   stats::setNames(paste0("__qc__", names(.cor_anno_qc_labels)),
-                                   unname(.cor_anno_qc_labels)))
-      group_field_choices(cols, session, none = FALSE)
-    }
-    # Annotation track names for the session items (distinct from their level
-    # labels, e.g. the pool track "Removal pool" holds Kept / In removal pool).
-    .cor_anno_track <- c("__removal__" = "Suggested removal", "__pool__" = "Removal pool")
-    # Build one annotation column (name + per-sample values) for a chosen field:
-    # a colData column, a "This session" removal item, or a QC metric.
-    .cor_anno_column <- function(value, samples, cd, qm) {
-      if (value %in% c("__removal__", "__pool__"))
-        return(list(name = unname(.cor_anno_track[value]),
-                    values = .session_group_values(value, samples)))
-      if (startsWith(value, "__qc__")) {
-        m <- sub("^__qc__", "", value)
-        return(list(name = unname(.cor_anno_qc_labels[m]), values = as.numeric(qm[samples, m])))
-      }
-      list(name = value, values = cd[samples, value])     # colData column
-    }
-    # Fixed colours for the session annotation columns (keyed by their track name),
-    # merged into the colData palette config at draw so colours stay stable.
-    .cor_anno_session_config <- function(samples) {
-      stats::setNames(
-        list(list(colors = group_colours("__removal__",
-                    levels(.session_group_values("__removal__", samples))), name = "Okabe-Ito"),
-             list(colors = c(Kept = "#9aa0a6", "In removal pool" = "#D62728"), name = "Okabe-Ito")),
-        unname(.cor_anno_track[c("__removal__", "__pool__")]))
-    }
+    # Annotation choices (multi-select): the shared catalog (no gene, no "(none)";
+    # a blank multi-select already means no annotation).
+    cor_anno_choices <- function() aes_choices(aes_catalog(state), none = FALSE)
     output$cor_anno_ui <- renderUI({
       req(state$working)
       selectizeInput(ns("cor_anno"), "Annotate by (one or more)",
@@ -1041,19 +970,23 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                                         value = 1,
                                         qc_sample_correlation(state$working, method = method))
                          })
-      cd <- as.data.frame(SummarizedExperiment::colData(state$working))
       samples <- colnames(state$working)
-      sel <- intersect(input$cor_anno,
-                       c(colnames(cd), "__removal__", "__pool__",
-                         paste0("__qc__", names(.cor_anno_qc_labels))))
-      anno_df <- if (!length(sel)) NULL else {
-        qm <- qc_tbl()
-        built <- lapply(sel, .cor_anno_column, samples = samples, cd = cd, qm = qm)
-        data.frame(stats::setNames(lapply(built, `[[`, "values"),
-                                   vapply(built, `[[`, "", "name")),
-                   row.names = samples, check.names = FALSE, stringsAsFactors = FALSE)
+      valid <- vapply(aes_catalog(state), `[[`, "", "key")
+      sel <- intersect(input$cor_anno, valid)
+      # Snapshot the annotation *values* (deferred); colours resolve live at draw
+      # so Palette edits recolour without a re-render.
+      anno <- if (!length(sel)) NULL else {
+        built <- Filter(Negate(is.null), lapply(sel, function(k) {
+          r <- aes_resolve(state, k, samples)
+          if (is.null(r)) NULL else list(key = k, name = r$label, values = r$values)
+        }))
+        if (!length(built)) NULL else list(
+          keys = vapply(built, `[[`, "", "key"),
+          df = data.frame(stats::setNames(lapply(built, `[[`, "values"),
+                                          vapply(built, `[[`, "", "name")),
+                          row.names = samples, check.names = FALSE, stringsAsFactors = FALSE))
       }
-      list(cm = cm, anno_df = anno_df, n = ncol(state$working), method = method,
+      list(cm = cm, anno = anno, n = ncol(state$working), method = method,
            show = showing_samples())
     })
     cor_shown <- deferred("cor_auto", "cor_render", cor_spec,
@@ -1070,13 +1003,18 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(length(show) > 1,
                     "Need at least two samples in the current 'Showing' selection."))
       cm <- s$cm[show, show, drop = FALSE]
-      anno <- if (is.null(s$anno_df)) NULL else s$anno_df[show, , drop = FALSE]
-      # Merge fixed colours for the session annotation tracks into the colData
-      # palette config (colData colours stay live from the Palette page).
-      anno_cfg <- c(state$palette$colData, .cor_anno_session_config(colnames(state$working)))
+      anno_df <- NULL; anno_col <- NULL
+      if (!is.null(s$anno)) {
+        anno_df <- s$anno$df[show, , drop = FALSE]
+        # Resolve colours live (so a Palette edit recolours without re-render),
+        # keyed by track name to match the snapshot value columns.
+        res_list <- Filter(Negate(is.null), lapply(s$anno$keys, function(k) aes_resolve(state, k, show)))
+        anno_col <- stats::setNames(lapply(res_list, aes_heatmap_col),
+                                    vapply(res_list, function(r) r$label, ""))
+      }
       ComplexHeatmap::draw(.qc_correlation_heatmap(
-        cm, anno, dark_theme = dark(), n_samples = length(show), method = s$method,
-        palette_config = anno_cfg, cor_config = state$palette$other$correlation))
+        cm, anno_df, dark_theme = dark(), n_samples = length(show), method = s$method,
+        anno_col = anno_col, cor_config = state$palette$other$correlation))
     })
 
     # --- Sample Correlation: Within-group -----------------------------------
@@ -1095,7 +1033,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       s <- wg_shown$value()
       d <- s$df[s$df$sample %in% s$show, , drop = FALSE]
       .qc_within_group_plot(d, dark_theme = dark(), interactive = interactive,
-                            palette = group_palette(input$wg_group, d$group))
+                            palette = group_colours(input$wg_group, levels(d$group)))
     }
     dual_plot("wg_plot", wg_gg, n_elements = reactive({
       v <- wg_shown$value(); if (is.null(v)) 0L else sum(v$df$sample %in% v$show)
