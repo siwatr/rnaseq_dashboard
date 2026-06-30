@@ -6,6 +6,12 @@
 #   Data metadata - the colData columns
 # Pure (no Shiny), so it is unit-testable and reusable.
 
+# The shared "This session" removal options (QC removal pool / flag status
+# promoted to shared state, see new_app_state()), used as `session_items` by the
+# PCA and QC per-sample colour/shape selectors.
+.session_removal_items <- c("Suggested removal" = "__removal__",
+                            "In removal pool"   = "__pool__")
+
 #' Grouped colour/group-by choices for a plot-page selector
 #'
 #' @param coldata_cols Character vector of `colData` column names (the

@@ -742,8 +742,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         fl <- state$samp_flags
         if (is.null(fl)) return(factor(rep("flags pending", length(samples))))
         st <- removal_status(fl$flagged[match(samples, fl$sample)])
-        factor(unname(.removal_labels[as.character(st)]),
-               levels = unname(.removal_labels[levels(droplevels(st))]))
+        factor(unname(.removal_labels_2[as.character(st)]),
+               levels = unname(.removal_labels_2[levels(droplevels(st))]))
       } else if (identical(value, "__pool__")) {
         pool <- state$samp_pool %||% character(0)
         factor(ifelse(samples %in% pool, "In removal pool", "Kept"),
@@ -762,7 +762,8 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       levels <- as.character(levels)
       if (identical(col, "__removal__")) {
         pal <- removal_status_colors(state$palette$other$removal_status)
-        full <- stats::setNames(unname(pal), unname(.removal_labels[names(pal)]))
+        full <- stats::setNames(unname(pal), unname(.removal_labels_2[names(pal)]))
+        full <- full[!duplicated(names(full))]      # suggested_* collapse to one label
         return(full[intersect(levels, names(full))])
       }
       if (identical(col, "__pool__"))
@@ -1094,10 +1095,13 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                          expr = function() spike_dose_response(state$working, assay = assay, source = source))
       list(dr = dr, show = showing_samples())   # display subset (plots only)
     })
+    # The group is applied at *render* (spike_group_col below), not baked into the
+    # cached spec - so the group field (incl. session pool/flags) is deliberately
+    # absent from the sig (like General QC's group): the plot recolours live, no
+    # stale banner. RLE/density differ: they bake df$group into their spec.
     spike_shown <- deferred("spike_auto", "spike_render", spike_spec,
       sig = reactive(list(input$spike_source, input$spike_assay, showing_samples(),
-                          state$data_version,
-                          .session_sig(input$spike_group %||% default_group_col()))))
+                          state$data_version)))
     output$spike_stale <- stale_note(spike_shown)
 
     # group column for colouring (applied at render, not part of the cached compute)

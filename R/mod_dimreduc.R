@@ -5,10 +5,8 @@
 # configs. Reuses the shared plot engine (R/mod_plot_engine.R) and the "Showing"
 # subset control (R/mod_plot_subset.R). t-SNE/UMAP are deferred (P4c).
 
-# Session-derived sample aesthetics shared by the colour + shape selectors: the
-# QC removal pool / flag status promoted to shared state (see new_app_state()).
-.session_removal_items <- c("Suggested removal" = "__removal__",
-                            "In removal pool"   = "__pool__")
+# .session_removal_items (the shared "This session" removal options) lives in
+# R/utils_group_choices.R, next to group_field_choices().
 
 # Recommended PCA inputs (computed) + whatever stored assays exist, de-duplicated.
 .pca_assay_choices <- function(dds) {
@@ -367,7 +365,7 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         list(values = droplevels(removal_status(fl$flagged[i])),
              lab = "Suggested removal",
              colors = removal_status_colors(state$palette$other$removal_status),
-             labels = .removal_labels)
+             labels = .removal_labels_2)
       } else if (identical(value, "__pool__")) {
         pool <- state$samp_pool %||% character(0)
         list(values = factor(ifelse(samples %in% pool, "in removal pool", "kept"),

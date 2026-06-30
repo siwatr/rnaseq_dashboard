@@ -257,7 +257,7 @@ test_that("RLE/density/spike colour selectors group by the removal pool", {
     expect_named(pal, c("Kept", "In removal pool"))
     # Removal status maps to the shared reason-aware palette (subset to present).
     gr <- group_map("__removal__", colnames(state$working))
-    expect_true(all(levels(gr) %in% unname(.removal_labels)))
+    expect_true(all(levels(gr) %in% unname(.removal_labels_2)))
   })
 })
 
@@ -499,6 +499,25 @@ test_that("QC spike-in view caches dose-response keyed on source + assay", {
     cached <- get("spike_dr", envir = state$derived)
     expect_equal(cached$version, state$data_version)
     expect_equal(nrow(cached$value$per_sample), ncol(state$working))
+  })
+})
+
+test_that("spike plot grouped by pool does not go stale on a pool change (render-time group)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 2,
+                                                     n_spike = 8, seed = 16)), source = "demo")
+    session$flushReact()
+    session$setInputs(spike_source = "mix1", spike_assay = "CPM",
+                      spike_group = "__pool__", spike_auto = FALSE, spike_render = 1)
+    session$flushReact()
+    expect_false(is.null(spike_shown$value()))
+    expect_false(spike_shown$stale())
+    # The group is applied at render, so staging a sample re-colours live without
+    # marking the cached dose-response stale (no misleading "click Render" banner).
+    samp_pool(colnames(state$working)[1]); session$flushReact()
+    expect_false(spike_shown$stale())
   })
 })
 

@@ -326,6 +326,10 @@ removal_status <- function(flagged, this_reason = NULL) {
                       suggested_this = "#D62728")
 .removal_labels <- c(pass = "QC pass", suggested_other = "Suggested drop (other)",
                      suggested_this = "Suggested drop (this reason)")
+# Labels for the metric-free 2-level view (no "this reason" context): used by PCA
+# + the RLE/density/spike colour-by, where only pass vs suggested is meaningful.
+.removal_labels_2 <- c(pass = "QC pass", suggested_other = "Suggested removal",
+                       suggested_this = "Suggested removal")
 
 #' Resolve the removal-status colour vector
 #'
