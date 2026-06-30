@@ -3,6 +3,7 @@
 ^sandbox$
 ^README\.md$
 ^CLAUDE\.md$
+^CLAUDE\.local\.md$
 ^environment\.yml$
 ^data-raw$
 ^dev_ref$

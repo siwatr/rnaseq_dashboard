@@ -52,6 +52,9 @@ rsconnect/
 sandbox/
 .claude/settings.json
 
+# Machine-specific Claude notes (gh path, local tooling) — never committed
+CLAUDE.local.md
+
 # testthat failure artifacts
 tests/testthat/_problems/
 tests/testthat/testthat-problems.rds

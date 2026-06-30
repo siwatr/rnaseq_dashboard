@@ -8,7 +8,7 @@ metadata:
 
 # Scaffolding a dashboard module
 
-Every page in this app is a Shiny module so state and namespacing stay isolated. Pair with the `shiny-bslib` skill for layout and `rnaseq-bioc` for any data logic.
+Every page in this app is a Shiny module so state and namespacing stay isolated. Pair with the `shiny-bslib` skill for layout, `rnaseq-bioc` for any data logic, and **`shiny-plot-aesthetics` for any plot that colours / groups / annotates by an attribute** (the shared `aes_helpers.R` catalog + resolver + the palette standard — don't hand-roll colour scales).
 
 ## The shared app-state object
 
