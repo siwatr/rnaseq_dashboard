@@ -125,20 +125,24 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   share the `derived` cache; gene-colour guards a stale assay name. [PR #24]
 - **P4b** multi-panel (1/2/4 layouts), embedding computed once, aesthetics per panel.
 - **P4c (later)** t-SNE/UMAP, hard-gated by sample count (~≥30); Rtsne/uwot optional Suggests.
-- **P4-removal (deferred, separate PR)** Promote the removal-pool + sample-flag state from
-  `mod_qc.R` (currently page-local: `samp_pool` reactiveVal + threshold-driven `flag_samples()`)
-  into shared `state`, then expose **"Suggested removal"** / **"In removal pool"** as colour/shape
-  fields on PCA (the "This session" group) — also lets the "Showing" control + future plot pages
-  reuse it. Pairs with the deferred "promote Showing subset to app-state" item.
-  **Also in this PR — unify the group/colour-by selectors:** extract one shared grouped-choices
-  helper (optgroups ordered **General → This session → Data metadata**, matching PCA's
-  `colour_ui`) and apply it across **all QC sample selectors** (General [done], RLE, Expression
-  density, Spike-in, Within-group correlation "Group by", filtering "Within-group grouping").
-  Per the user's call, add **Suggested removal / In removal pool** under "This session" to **all**
-  sample selectors (not just the colour-only plots) — so the within-group grouping selectors can
-  group by them too. RLE/density/spike must route their group value + palette through a
-  `sample_aes`-style resolver (today only General QC's `sample_aes` handles `__removal__`/`__pool__`).
-  Feature selector stays colData-only (feature-level; sample session-items N/A).
+- **P4-removal ✅ done** Promoted the removal-pool + sample-flag state from `mod_qc.R` into shared
+  `state` (`samp_pool` + `samp_flags`; `mod_qc` proxies the pool to state and mirrors the computed
+  flags). PCA exposes **"Suggested removal"** / **"In removal pool"** under the colour-by + shape-by
+  "This session" group, resolved from shared state. Extracted `group_field_choices()` (optgroups
+  **General → This session → Data metadata**) and applied it across the **QC per-sample colour
+  selectors** (General, RLE, Expression density, Spike-in) with the same session items, routed
+  through session-aware `group_map()`/`group_colours()`; shared removal colour scheme +
+  `removal_status_colors()` moved to `filter_helpers.R`. **Decision (revised after implementation):**
+  the **grouping-semantic** selectors (Within-group correlation "Group by", filtering "Within-group
+  grouping") + the Feature selector stay **colData-only** — grouping a correlation/flagging
+  computation by removal-status/pool isn't a meaningful biological grouping, and "Suggested removal"
+  on the flagging selector is *circular* (the flags would group by their own output).
+  The **sample-correlation heatmap "Annotate by"** multi-select also adopts the grouped layout and
+  offers the session items (Suggested removal / Removal pool, discrete) **and** the per-sample QC
+  metrics (library size / detected / % mito / % spike-in, continuous) as top-annotation tracks,
+  via a mixed-type `anno_df` + merged session-track colours through `qc_annotation_colors()`. [PR #25]
+  Still-open follow-ups it sets up: **promote the "Showing" subset to app-state** so other plot
+  pages reuse it; and P4b/P5 plot pages can now reuse the session removal aesthetics.
 
 ### P4a-2 — detailed plan (PCA colour & feature-search)
 

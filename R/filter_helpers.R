@@ -317,6 +317,36 @@ removal_status <- function(flagged, this_reason = NULL) {
   factor(out, levels = c("pass", "suggested_other", "suggested_this"))
 }
 
+# Semantic 3-colour scheme for the "Removal status" colour-by (reason-aware):
+# green = QC pass, amber = suggested for some other reason, red = suggested for
+# the reason of the current plot. A fixed scale (not the qualitative palette);
+# the Palette page can override it via state$palette$other$removal_status. Shared
+# by the QC plots and the PCA "Suggested removal" aesthetic so they agree.
+.removal_palette <- c(pass = "#2CA02C", suggested_other = "#E6B800",
+                      suggested_this = "#D62728")
+.removal_labels <- c(pass = "QC pass", suggested_other = "Suggested drop (other)",
+                     suggested_this = "Suggested drop (this reason)")
+# Labels for the metric-free 2-level view (no "this reason" context): used by PCA
+# + the RLE/density/spike colour-by, where only pass vs suggested is meaningful.
+.removal_labels_2 <- c(pass = "QC pass", suggested_other = "Suggested removal",
+                       suggested_this = "Suggested removal")
+
+#' Resolve the removal-status colour vector
+#'
+#' The named colour vector for [removal_status()]'s levels: the project Palette
+#' "Other" config when set, else the built-in green/amber/red. Pure so the QC
+#' page and PCA resolve identical colours.
+#'
+#' @param config Optional `state$palette$other$removal_status` config
+#'   (`list(name, colors, custom)`), or `NULL` for the built-in scheme.
+#' @return A named character vector (`pass`/`suggested_other`/`suggested_this` -> hex).
+#' @export
+removal_status_colors <- function(config = NULL) {
+  if (is.null(config)) return(.removal_palette)
+  palette_discrete(names(.removal_palette), config$colors,
+                   config$name %||% "Okabe-Ito", config$custom)
+}
+
 # Subset + keep downstream consistent: recompute library-size-dependent assays
 # and (only if they were already set) re-estimate endogenous size factors.
 .refit_after_subset <- function(dds) {

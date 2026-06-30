@@ -238,6 +238,77 @@ test_that("flagged samples are highlight-only (pool starts empty)", {
   })
 })
 
+test_that("RLE/density/spike colour selectors group by the removal pool", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3,
+                                                      n_spike = 4, seed = 14)), source = "demo")
+    session$flushReact()
+    samp_pool(colnames(state$working)[1])            # stage one sample in the pool
+    # The colour selectors offer the session items (grouped optgroups).
+    expect_match(as.character(output$rle_group_ui$html), "__pool__", fixed = TRUE)
+    expect_match(as.character(output$dens_group_ui$html), "__removal__", fixed = TRUE)
+    # Grouping resolves to a per-sample factor with the pool split + its colours.
+    gm <- group_map("__pool__", colnames(state$working))
+    expect_setequal(levels(gm), c("Kept", "In removal pool"))
+    expect_equal(as.character(gm[1]), "In removal pool")
+    pal <- group_colours("__pool__", levels(gm))
+    expect_named(pal, c("Kept", "In removal pool"))
+    # Removal status maps to the shared reason-aware palette (subset to present).
+    gr <- group_map("__removal__", colnames(state$working))
+    expect_true(all(levels(gr) %in% unname(.removal_labels_2)))
+  })
+})
+
+test_that("correlation heatmap annotation offers grouped session items + QC metrics (mixed types)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 70, n_per_group = 3,
+                                                      n_spike = 4, seed = 17)), source = "demo")
+    session$flushReact()
+    samp_pool(colnames(state$working)[1])               # stage one sample in the pool
+    html <- as.character(output$cor_anno_ui$html)
+    expect_match(html, "This session")                  # grouped optgroups
+    expect_match(html, "__removal__", fixed = TRUE)
+    expect_match(html, "__qc__library_size", fixed = TRUE)
+    # A mix of colData + session items + a QC metric builds the annotation frame.
+    session$setInputs(cor_method = "spearman", cor_auto = FALSE, cor_render = 1,
+                      cor_anno = c("condition", "__removal__", "__pool__", "__qc__library_size"))
+    session$flushReact()
+    adf <- cor_shown$value()$anno_df
+    expect_true(all(c("condition", "Suggested removal", "Removal pool", "Library size")
+                    %in% colnames(adf)))
+    expect_s3_class(adf[["Removal pool"]], "factor")
+    expect_true(is.numeric(adf[["Library size"]]))      # continuous track
+    expect_equal(as.character(adf[colnames(state$working)[1], "Removal pool"]), "In removal pool")
+    # Colours resolve: fixed map for the pool track, ramp/function for the metric.
+    cfg <- c(state$palette$colData, .cor_anno_session_config(colnames(state$working)))
+    cols <- qc_annotation_colors(adf, cfg)
+    expect_true("In removal pool" %in% names(cols[["Removal pool"]]))
+    skip_if_not_installed("circlize")
+    expect_true(is.function(cols[["Library size"]]))    # colorRamp2 for numeric
+  })
+})
+
+test_that("sample pool + flags are promoted to shared state for other pages", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3,
+                                                      n_spike = 1, seed = 13)), source = "demo")
+    session$flushReact()
+    # samp_pool() proxies state$samp_pool; the flags mirror lands in state.
+    expect_identical(samp_pool(), state$samp_pool)
+    expect_false(is.null(state$samp_flags))
+    expect_true(all(c("sample", "flagged") %in% colnames(state$samp_flags)))
+    # Adopting the suggestions writes through to shared state.
+    samp_pool(colnames(state$working)[1]); session$flushReact()
+    expect_identical(state$samp_pool, colnames(state$working)[1])
+  })
+})
+
 test_that("samp_flags incorporates spike-in criteria when a rule is set", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
@@ -459,6 +530,25 @@ test_that("QC spike-in view caches dose-response keyed on source + assay", {
     cached <- get("spike_dr", envir = state$derived)
     expect_equal(cached$version, state$data_version)
     expect_equal(nrow(cached$value$per_sample), ncol(state$working))
+  })
+})
+
+test_that("spike plot grouped by pool does not go stale on a pool change (render-time group)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 2,
+                                                     n_spike = 8, seed = 16)), source = "demo")
+    session$flushReact()
+    session$setInputs(spike_source = "mix1", spike_assay = "CPM",
+                      spike_group = "__pool__", spike_auto = FALSE, spike_render = 1)
+    session$flushReact()
+    expect_false(is.null(spike_shown$value()))
+    expect_false(spike_shown$stale())
+    # The group is applied at render, so staging a sample re-colours live without
+    # marking the cached dose-response stale (no misleading "click Render" banner).
+    samp_pool(colnames(state$working)[1]); session$flushReact()
+    expect_false(spike_shown$stale())
   })
 })
 

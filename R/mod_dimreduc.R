@@ -5,6 +5,9 @@
 # configs. Reuses the shared plot engine (R/mod_plot_engine.R) and the "Showing"
 # subset control (R/mod_plot_subset.R). t-SNE/UMAP are deferred (P4c).
 
+# .session_removal_items (the shared "This session" removal options) lives in
+# R/utils_group_choices.R, next to group_field_choices().
+
 # Recommended PCA inputs (computed) + whatever stored assays exist, de-duplicated.
 .pca_assay_choices <- function(dds) {
   stored <- SummarizedExperiment::assayNames(dds)
@@ -185,23 +188,23 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # metadata vs session-derived options (gene expression + per-sample QC metrics).
     output$colour_ui <- renderUI({
       req(state$working)
-      cd <- colnames(coldata())
-      # Group order: General (none) -> This session (derived) -> Data metadata.
-      groups <- list("General" = c("(none)" = "__none__"))
-      groups[["This session"]] <- c(
+      session <- c(
         "Gene expression" = "__gene__",
         stats::setNames(paste0("__qc__", names(.qc_metric_labels)),
-                        unname(.qc_metric_labels)))
-      if (length(cd)) groups[["Data metadata"]] <- stats::setNames(cd, cd)
-      selectInput(ns("colour_by"), "Colour by", choices = groups,
+                        unname(.qc_metric_labels)),
+        .session_removal_items)
+      selectInput(ns("colour_by"), "Colour by",
+                  choices = group_field_choices(colnames(coldata()), session, none = TRUE),
                   selected = default_colour_col())
     })
     output$shape_ui <- renderUI({
       req(state$working)
       sc <- shape_cols()
-      ch <- c("(none)" = "__none__", stats::setNames(sc, sc))
+      # Same grouped layout as Colour by: General -> This session (removal/pool,
+      # both discrete and within the 6-level shape cap) -> Data metadata.
       selectInput(ns("shape_by"), "Shape by (discrete, <=6 values)",
-                  choices = ch, selected = "__none__")
+                  choices = group_field_choices(sc, .session_removal_items, none = TRUE),
+                  selected = "__none__")
     })
 
     # --- Gene-expression colour block (always embedded; helper text when off) --
@@ -352,12 +355,42 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                sprintf("Plotting expression of %s (%s)", rf$match, rf$id))
     })
 
+    # Resolve a "This session" removal aesthetic (promoted from the QC page) to a
+    # per-sample factor + its colours/labels, or NULL when the flags aren't ready.
+    session_removal <- function(value, samples) {
+      if (identical(value, "__removal__")) {
+        fl <- state$samp_flags
+        if (is.null(fl)) return(NULL)
+        i <- match(samples, fl$sample)
+        list(values = droplevels(removal_status(fl$flagged[i])),
+             lab = "Suggested removal",
+             colors = removal_status_colors(state$palette$other$removal_status),
+             labels = .removal_labels_2)
+      } else if (identical(value, "__pool__")) {
+        pool <- state$samp_pool %||% character(0)
+        list(values = factor(ifelse(samples %in% pool, "in removal pool", "kept"),
+                             levels = c("kept", "in removal pool")),
+             lab = "Removal pool",
+             colors = c(kept = "#9aa0a6", "in removal pool" = "#D62728"), labels = NULL)
+      } else NULL
+    }
+
     # --- Colour / shape resolution (consumes the Palette configs) -----------
     # Returns list(values, discrete, lab, scale) for the colour aesthetic, or NULL.
     colour_resolve <- function(samples) {
       sel <- input$colour_by %||% "__none__"
       if (identical(sel, "__none__")) return(NULL)
       dds <- state$working
+      if (sel %in% c("__removal__", "__pool__")) {
+        rs <- session_removal(sel, samples)
+        validate(need(!is.null(rs),
+                      "Removal flags are not ready yet - open the QC Filtering tab once."))
+        scale <- if (is.null(rs$labels))
+          ggplot2::scale_colour_manual(values = rs$colors, na.value = "grey70")
+        else
+          ggplot2::scale_colour_manual(values = rs$colors, labels = rs$labels, na.value = "grey70")
+        return(list(values = rs$values, discrete = TRUE, lab = rs$lab, scale = scale))
+      }
       if (identical(sel, "__gene__")) {
         q <- trimws(gene_q())
         validate(need(nzchar(q), "Enter a feature to colour by."))
@@ -414,6 +447,11 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     shape_resolve <- function(samples) {
       sel <- input$shape_by %||% "__none__"
       if (identical(sel, "__none__")) return(NULL)
+      if (sel %in% c("__removal__", "__pool__")) {
+        rs <- session_removal(sel, samples)
+        if (is.null(rs)) return(NULL)              # flags not ready -> no shape
+        return(list(values = rs$values, lab = rs$lab, scale = NULL))
+      }
       x <- coldata()[samples, sel]
       lv <- as.character(x); lv[is.na(lv)] <- "NA"
       f <- factor(lv)
