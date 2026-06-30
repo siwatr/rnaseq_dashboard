@@ -4,7 +4,12 @@
 \alias{group_field_choices}
 \title{Grouped colour/group-by choices for a plot-page selector}
 \usage{
-group_field_choices(coldata_cols, session_items = NULL, none = TRUE)
+group_field_choices(
+  coldata_cols,
+  session_items = NULL,
+  none = TRUE,
+  spike_items = NULL
+)
 }
 \arguments{
 \item{coldata_cols}{Character vector of \code{colData} column names (the
@@ -17,12 +22,17 @@ group_field_choices(coldata_cols, session_items = NULL, none = TRUE)
 \item{none}{Include a "General" optgroup holding a single "(none)" =
 \code{"__none__"} entry (default \code{TRUE}). Set \code{FALSE} for selectors that must
 always pick a real grouping.}
+
+\item{spike_items}{Named character vector for the "Spike-in" optgroup (the
+per-sample dose-response metrics), or \code{NULL}/empty to omit it. Placed
+between "This session" and "Data metadata".}
 }
 \value{
 A named list suitable for \code{selectInput(choices = )}, each element an
 \verb{<optgroup>}. Empty optgroups are dropped. When the only group would be
-"Data metadata" (no \code{none}, no \code{session_items}), the bare named vector is
-returned instead, so a plain colData selector shows no redundant optgroup.
+"Data metadata" (no \code{none}, no \code{session_items}, no \code{spike_items}), the bare
+named vector is returned instead, so a plain colData selector shows no
+redundant optgroup.
 }
 \description{
 Grouped colour/group-by choices for a plot-page selector

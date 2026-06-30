@@ -83,9 +83,50 @@ test_that("aes_resolve honours a colData discrete palette config", {
   expect_true(is.character(r$colors)); expect_named(r$colors, lv, ignore.order = TRUE)
 })
 
-test_that("aes_other_palette_items lists removal/pool/QC-metric customizable attrs", {
+test_that("spike-in metrics are catalog attributes only when the dataset has spikes", {
+  with_spike <- mk_state(seed = 5)                       # n_spike = 4
+  keys <- vapply(aes_catalog(with_spike), `[[`, "", "key")
+  expect_true("__spike__slope" %in% keys)
+  byk <- function(cat, k) Filter(function(d) d$key == k, cat)[[1]]
+  cat_s <- aes_catalog(with_spike)
+  d <- byk(cat_s, "__spike__slope")
+  expect_equal(d$group, "Spike-in"); expect_equal(d$kind, "continuous")
+  # % spike-in (pct_spike) is grouped under "Spike-in", not "This session".
+  expect_equal(byk(cat_s, "__qc__pct_spike")$group, "Spike-in")
+  expect_equal(byk(cat_s, "__qc__library_size")$group, "This session")
+  # No spikes -> no spike attributes offered.
+  st0 <- new_app_state()
+  shiny::reactiveConsole(TRUE); withr::defer(shiny::reactiveConsole(FALSE))
+  state_load(st0, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 3, n_spike = 0, seed = 6)),
+             source = "demo")
+  keys0 <- vapply(aes_catalog(st0), `[[`, "", "key")
+  expect_false(any(grepl("^__spike__", keys0)))
+  expect_false("__qc__pct_spike" %in% keys0)             # % spike-in is spike-gated too
+})
+
+test_that("aes_resolve resolves a spike metric per sample (cached via spike_dr)", {
+  state <- mk_state(seed = 5); s <- colnames(state$working)
+  r <- aes_resolve(state, "__spike__n_spike_detected", s)
+  expect_equal(r$kind, "continuous"); expect_length(r$values, length(s))
+  expect_true(all(is.finite(r$values)))                  # detected-spike counts
+  expect_true(exists("spike_dr", envir = state$derived, inherits = FALSE))
+  expect_equal(r$label, "Detected spike features")
+})
+
+test_that("aes_choices builds a 'Spike-in' optgroup when spikes exist", {
+  state <- mk_state(seed = 5)
+  ch <- aes_choices(aes_catalog(state, gene = TRUE), none = TRUE)
+  expect_true("Spike-in" %in% names(ch))
+  expect_true("__spike__r_squared" %in% unlist(ch))
+  # Shape (discrete only) excludes the continuous spike metrics.
+  disc <- aes_choices(aes_catalog(state), kinds = "discrete", none = TRUE, state = state)
+  expect_false("Spike-in" %in% names(disc))
+})
+
+test_that("aes_other_palette_items lists removal/pool/QC-metric + spike customizable attrs", {
   it <- aes_other_palette_items()
-  expect_true(all(c("removal_status", "__pool__", "__qc__library_size") %in% names(it)))
+  expect_true(all(c("removal_status", "__pool__", "__qc__library_size",
+                    "__spike__slope") %in% names(it)))
   expect_equal(it[["__pool__"]]$kind, "discrete")
   expect_equal(it[["__pool__"]]$levels, c("Kept", "In removal pool"))
   expect_equal(it[["__qc__library_size"]]$kind, "continuous")

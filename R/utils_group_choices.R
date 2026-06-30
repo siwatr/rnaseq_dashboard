@@ -22,15 +22,21 @@
 #' @param none Include a "General" optgroup holding a single "(none)" =
 #'   `"__none__"` entry (default `TRUE`). Set `FALSE` for selectors that must
 #'   always pick a real grouping.
+#' @param spike_items Named character vector for the "Spike-in" optgroup (the
+#'   per-sample dose-response metrics), or `NULL`/empty to omit it. Placed
+#'   between "This session" and "Data metadata".
 #' @return A named list suitable for `selectInput(choices = )`, each element an
 #'   `<optgroup>`. Empty optgroups are dropped. When the only group would be
-#'   "Data metadata" (no `none`, no `session_items`), the bare named vector is
-#'   returned instead, so a plain colData selector shows no redundant optgroup.
+#'   "Data metadata" (no `none`, no `session_items`, no `spike_items`), the bare
+#'   named vector is returned instead, so a plain colData selector shows no
+#'   redundant optgroup.
 #' @export
-group_field_choices <- function(coldata_cols, session_items = NULL, none = TRUE) {
+group_field_choices <- function(coldata_cols, session_items = NULL, none = TRUE,
+                                spike_items = NULL) {
   groups <- list()
   if (isTRUE(none)) groups[["General"]] <- c("(none)" = "__none__")
   if (length(session_items)) groups[["This session"]] <- session_items
+  if (length(spike_items)) groups[["Spike-in"]] <- spike_items
   if (length(coldata_cols))
     groups[["Data metadata"]] <- stats::setNames(as.character(coldata_cols),
                                                  as.character(coldata_cols))
