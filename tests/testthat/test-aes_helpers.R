@@ -88,14 +88,20 @@ test_that("spike-in metrics are catalog attributes only when the dataset has spi
   keys <- vapply(aes_catalog(with_spike), `[[`, "", "key")
   expect_true("__spike__slope" %in% keys)
   byk <- function(cat, k) Filter(function(d) d$key == k, cat)[[1]]
-  d <- byk(aes_catalog(with_spike), "__spike__slope")
+  cat_s <- aes_catalog(with_spike)
+  d <- byk(cat_s, "__spike__slope")
   expect_equal(d$group, "Spike-in"); expect_equal(d$kind, "continuous")
+  # % spike-in (pct_spike) is grouped under "Spike-in", not "This session".
+  expect_equal(byk(cat_s, "__qc__pct_spike")$group, "Spike-in")
+  expect_equal(byk(cat_s, "__qc__library_size")$group, "This session")
   # No spikes -> no spike attributes offered.
   st0 <- new_app_state()
   shiny::reactiveConsole(TRUE); withr::defer(shiny::reactiveConsole(FALSE))
   state_load(st0, ensure_logcounts(make_mock_dds(n_genes = 50, n_per_group = 3, n_spike = 0, seed = 6)),
              source = "demo")
-  expect_false(any(grepl("^__spike__", vapply(aes_catalog(st0), `[[`, "", "key"))))
+  keys0 <- vapply(aes_catalog(st0), `[[`, "", "key")
+  expect_false(any(grepl("^__spike__", keys0)))
+  expect_false("__qc__pct_spike" %in% keys0)             # % spike-in is spike-gated too
 })
 
 test_that("aes_resolve resolves a spike metric per sample (cached via spike_dr)", {

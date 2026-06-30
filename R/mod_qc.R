@@ -194,12 +194,14 @@
 # Per-sample spike summary: a chosen metric across samples (bar, sorted), filled
 # by group. `df` is spike_dose_response()$per_sample with a `group` column.
 .qc_spike_summary_plot <- function(df, metric, dark_theme = FALSE, interactive = FALSE,
-                                   palette = NULL) {
+                                   palette = NULL, sort = "none") {
   lab <- .spike_metric_labels[[metric]] %||% metric
   d <- df[is.finite(df[[metric]]), , drop = FALSE]
   if (!nrow(d)) return(.plot_msg(paste("No", lab, "to show.")))
   d$text <- sprintf("Sample: %s<br>%s: %s", d$sample, lab, signif(d[[metric]], 4))
-  d$sample <- factor(d$sample, levels = d$sample[order(d[[metric]])])
+  lvls <- if (identical(sort, "none")) d$sample
+          else d$sample[order(d[[metric]], decreasing = identical(sort, "decreasing"))]
+  d$sample <- factor(d$sample, levels = lvls)
   ggplot2::ggplot(d, ggplot2::aes(x = .data$sample, y = .data[[metric]], fill = .data$group)) +
     ggplot2::geom_col(mapping = .hover_aes(interactive)) +
     ggplot2::labs(x = "sample", y = lab, fill = "group") +
@@ -633,6 +635,10 @@ mod_qc_ui <- function(id) {
                                     "Dose-response slope" = "slope",
                                     "Dose-response R-squared" = "r_squared"),
                         selected = "r_squared"),
+            selectInput(ns("spike_sort"), "Sort by",
+                        choices = c("None" = "none", "Decreasing" = "decreasing",
+                                    "Increasing" = "increasing"),
+                        selected = "none"),
             uiOutput(ns("spike_cv")),
             .plot_dual(ns("spike_summary_plot_container"))),
           bslib::nav_panel("Spike-in QC Matrix",
@@ -1134,7 +1140,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(nrow(ps) > 0, "No samples in the current 'Showing' selection."))
       ps$group <- spike_group_col(ps$sample)
       .qc_spike_summary_plot(ps, input$spike_metric %||% "r_squared", dark_theme = dark(),
-                             interactive = interactive,
+                             interactive = interactive, sort = input$spike_sort %||% "none",
                              palette = group_colours(input$spike_group %||% default_group_col(),
                                                      levels(ps$group)))
     }

@@ -102,11 +102,12 @@ aes_other_palette_items <- function() {
 aes_catalog <- function(state, gene = FALSE) {
   out <- list()
   cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-  # This session: gene (optional) + QC metrics (continuous) + removal/pool (discrete).
+  # This session: gene (optional) + QC metrics (continuous) + removal/pool
+  # (discrete). `% spike-in` is grouped under "Spike-in" instead (see below).
   if (isTRUE(gene))
     out <- c(out, list(list(key = "__gene__", label = "Gene expression",
                             group = "This session", kind = "continuous", loc = NULL)))
-  for (m in names(.aes_qc_labels))
+  for (m in setdiff(names(.aes_qc_labels), "pct_spike"))
     out <- c(out, list(list(key = paste0("__qc__", m), label = unname(.aes_qc_labels[m]),
                             group = "This session", kind = "continuous",
                             loc = list("other", paste0("__qc__", m)))))
@@ -115,12 +116,17 @@ aes_catalog <- function(state, gene = FALSE) {
          kind = "discrete", loc = list("other", "removal_status")),
     list(key = "__pool__", label = "Removal pool", group = "This session",
          kind = "discrete", loc = list("other", "__pool__"))))
-  # Spike-in: per-sample dose-response metrics, only when the dataset has spikes.
-  if (.aes_has_spike(state))
+  # Spike-in: % spike-in (a per-sample QC metric) + the dose-response metrics,
+  # only when the dataset has spikes.
+  if (.aes_has_spike(state)) {
+    out <- c(out, list(list(key = "__qc__pct_spike", label = unname(.aes_qc_labels["pct_spike"]),
+                            group = "Spike-in", kind = "continuous",
+                            loc = list("other", "__qc__pct_spike"))))
     for (m in names(.aes_spike_labels))
       out <- c(out, list(list(key = paste0("__spike__", m), label = unname(.aes_spike_labels[m]),
                               group = "Spike-in", kind = "continuous",
                               loc = list("other", paste0("__spike__", m)))))
+  }
   # Data metadata: colData columns, typed by class.
   for (col in colnames(cd))
     out <- c(out, list(list(key = col, label = col, group = "Data metadata",

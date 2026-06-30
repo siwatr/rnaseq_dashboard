@@ -533,6 +533,17 @@ test_that("spike-in plot builders return ggplots (light + dark)", {
   expect_s3_class(ddsdashboard:::.qc_spike_summary_plot(ps, "pct_spike", FALSE), "ggplot")
 })
 
+test_that("spike per-sample summary 'Sort by' orders the bars (none = sample order)", {
+  ps <- data.frame(sample = c("s1", "s2", "s3"), pct_spike = c(3, 1, 2),
+                   group = factor("a"), stringsAsFactors = FALSE)
+  none <- ddsdashboard:::.qc_spike_summary_plot(ps, "pct_spike", sort = "none")
+  inc  <- ddsdashboard:::.qc_spike_summary_plot(ps, "pct_spike", sort = "increasing")
+  dec  <- ddsdashboard:::.qc_spike_summary_plot(ps, "pct_spike", sort = "decreasing")
+  expect_equal(levels(none$data$sample), c("s1", "s2", "s3"))   # original order
+  expect_equal(levels(inc$data$sample),  c("s2", "s3", "s1"))   # 1,2,3 -> s2,s3,s1
+  expect_equal(levels(dec$data$sample),  c("s1", "s3", "s2"))   # decreasing
+})
+
 test_that("QC spike-in view caches dose-response keyed on source + assay", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
