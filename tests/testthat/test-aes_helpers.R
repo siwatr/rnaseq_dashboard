@@ -83,6 +83,43 @@ test_that("aes_resolve honours a colData discrete palette config", {
   expect_true(is.character(r$colors)); expect_named(r$colors, lv, ignore.order = TRUE)
 })
 
+test_that("aes_other_palette_items lists removal/pool/QC-metric customizable attrs", {
+  it <- aes_other_palette_items()
+  expect_true(all(c("removal_status", "__pool__", "__qc__library_size") %in% names(it)))
+  expect_equal(it[["__pool__"]]$kind, "discrete")
+  expect_equal(it[["__pool__"]]$levels, c("Kept", "In removal pool"))
+  expect_equal(it[["__qc__library_size"]]$kind, "continuous")
+  expect_equal(it[["__qc__pct_mito"]]$label, "% mitochondrial")
+})
+
+test_that("aes_resolve pool honours an 'other' palette config (else the default)", {
+  state <- mk_state(); s <- colnames(state$working)
+  d <- aes_resolve(state, "__pool__", s)
+  expect_equal(unname(d$colors["In removal pool"]), "#D62728")   # built-in default
+  # A configured custom map overrides the pool colours.
+  state$palette <- list(other = list(`__pool__` = list(name = "Custom palette",
+    colors = c(Kept = "#101010", "In removal pool" = "#FEFEFE"))))
+  d2 <- aes_resolve(state, "__pool__", s)
+  expect_equal(unname(d2$colors["Kept"]), "#101010")
+  expect_equal(unname(d2$colors["In removal pool"]), "#FEFEFE")
+})
+
+test_that("a configured QC-metric ramp flows through to ggplot + heatmap scales", {
+  state <- mk_state(); s <- colnames(state$working)
+  # No config -> thematic default (NULL ggplot scale); heatmap default ramp.
+  r0 <- aes_resolve(state, "__qc__library_size", s)
+  expect_null(r0$ramp_config)
+  expect_null(aes_ggplot_scale(r0))
+  # Configure a continuous ramp in the Palette "Other" slot for this metric.
+  state$palette <- list(other = list(`__qc__library_size` = list(
+    name = "viridis: viridis", min = "", max = "", custom = NULL, reverse = FALSE)))
+  r <- aes_resolve(state, "__qc__library_size", s)
+  expect_equal(r$ramp_config$name, "viridis: viridis")
+  expect_s3_class(aes_ggplot_scale(r), "Scale")              # gradient scale built
+  skip_if_not_installed("circlize")
+  expect_true(is.function(aes_heatmap_col(r)))               # colorRamp2 from the config
+})
+
 test_that("aes_ggplot_scale: NULL without config, manual/gradient with one", {
   state <- mk_state(); s <- colnames(state$working)
   expect_null(aes_ggplot_scale(aes_resolve(state, "condition", s)))            # no config

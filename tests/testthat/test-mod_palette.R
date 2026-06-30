@@ -88,6 +88,32 @@ test_that("Other pill: removal_status (discrete) and correlation (continuous) co
   })
 })
 
+test_that("Other pill: removal pool + QC metrics are configurable session attributes", {
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    # The add control lists the new session/derived items (friendly-labelled).
+    addui <- as.character(output$addui_other$html)
+    expect_match(addui, "__pool__", fixed = TRUE)
+    expect_match(addui, "__qc__library_size", fixed = TRUE)
+    expect_match(addui, "Removal pool")          # friendly label, not the raw id
+    expect_match(addui, "Library size")
+    # Pool is discrete and seeds the grey/red preset.
+    session$setInputs(addsel_other = "__pool__", addbtn_other = 1)
+    pl <- state$palette$other[["__pool__"]]
+    expect_equal(pl$name, "Custom palette")
+    expect_equal(unname(pl$colors[["In removal pool"]]), "#D62728")
+    # A QC metric is continuous and seeds viridis.
+    session$setInputs(addsel_other = "__qc__pct_mito", addbtn_other = 2)
+    qm <- state$palette$other[["__qc__pct_mito"]]
+    expect_equal(qm$name, "viridis: viridis")
+    expect_true("min" %in% names(qm))            # continuous config shape
+    # Round-trips through JSON faithfully (kind inferred from keys).
+    rt <- palette_from_json(palette_to_json(state$palette))
+    expect_equal(rt$other[["__pool__"]]$colors[["In removal pool"]], "#D62728")
+    expect_equal(rt$other[["__qc__pct_mito"]]$name, "viridis: viridis")
+  })
+})
+
 test_that("discrete attributes above the hard cap are hidden from the add control", {
   skip_if_not_installed("DESeq2")
   withr::local_options(ddsdashboard.palette_max_levels = 1L)   # condition has 2 levels
