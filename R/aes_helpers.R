@@ -29,6 +29,37 @@
 # Fixed pool-membership colours (the default when no Palette "Other" config).
 .aes_pool_colors <- c(Kept = "#9aa0a6", "In removal pool" = "#D62728")
 
+# Per-sample spike-in (ERCC) dose-response metrics offered as continuous "Spike-in"
+# attributes (from spike_dose_response()$per_sample). Available only when the
+# dataset has spike-in features.
+.aes_spike_labels <- c(slope = "Dose-response slope", r_squared = "Dose-response R-squared",
+                       lod = "Lowest detected conc", n_spike_detected = "Detected spike features")
+
+# Does the dataset have spike-in features? (gates the spike attributes.)
+.aes_has_spike <- function(state) {
+  !is.null(state$working) && any(.detect_spike_features(state$working))
+}
+# Canonical dose-response source/assay - the same *defaults* the QC Spike-in tab
+# uses, so at those defaults colouring/annotating by a spike metric reuses the
+# QC tab's `spike_dr` cache entry. (If the QC user picks a non-default source/
+# assay there, this path keeps the canonical key and simply forgoes the shared
+# entry - aes_helpers stays page-independent and never reads module inputs.)
+.aes_spike_assay <- function(state) {
+  present <- SummarizedExperiment::assayNames(state$working)
+  if ("TPM" %in% present) "TPM" else if ("FPKM" %in% present) "FPKM" else "CPM"
+}
+.aes_spike_src <- function(state) {
+  ids <- rownames(state$working)[.detect_spike_features(state$working)]
+  ok <- length(ids) && length(spike_features_missing_conc(state$working)) < length(ids)
+  if (ok) "column" else "mix1"
+}
+# The per-sample dose-response frame via the shared `spike_dr` derived cache.
+.aes_spike_metrics <- function(state) {
+  src <- .aes_spike_src(state); asy <- .aes_spike_assay(state)
+  state_derive(state, "spike_dr", params = list(source = src, assay = asy),
+               expr = function() spike_dose_response(state$working, assay = asy, source = src))$per_sample
+}
+
 #' Customizable "Other"-domain attribute palette items
 #'
 #' The session/derived attributes whose palette config lives in the Palette page
@@ -51,6 +82,11 @@ aes_other_palette_items <- function() {
   for (m in names(.aes_qc_labels))
     items[[paste0("__qc__", m)]] <- list(kind = "continuous", levels = character(0),
                                          class = "numeric", label = unname(.aes_qc_labels[m]))
+  # Spike-in dose-response metrics are customizable too (dataset-independent here;
+  # the *selectors* gate them on the dataset having spikes via aes_catalog()).
+  for (m in names(.aes_spike_labels))
+    items[[paste0("__spike__", m)]] <- list(kind = "continuous", levels = character(0),
+                                            class = "numeric", label = unname(.aes_spike_labels[m]))
   items
 }
 
@@ -79,6 +115,12 @@ aes_catalog <- function(state, gene = FALSE) {
          kind = "discrete", loc = list("other", "removal_status")),
     list(key = "__pool__", label = "Removal pool", group = "This session",
          kind = "discrete", loc = list("other", "__pool__"))))
+  # Spike-in: per-sample dose-response metrics, only when the dataset has spikes.
+  if (.aes_has_spike(state))
+    for (m in names(.aes_spike_labels))
+      out <- c(out, list(list(key = paste0("__spike__", m), label = unname(.aes_spike_labels[m]),
+                              group = "Spike-in", kind = "continuous",
+                              loc = list("other", paste0("__spike__", m)))))
   # Data metadata: colData columns, typed by class.
   for (col in colnames(cd))
     out <- c(out, list(list(key = col, label = col, group = "Data metadata",
@@ -114,12 +156,14 @@ aes_choices <- function(catalog, kinds = c("discrete", "continuous"), none = FAL
       TRUE                                  # session discrete items are small
     }, keep)
   }
-  session <- keep[vapply(keep, function(d) identical(d$group, "This session"), logical(1))]
-  coldata <- keep[vapply(keep, function(d) identical(d$group, "Data metadata"), logical(1))]
-  sess_items <- stats::setNames(vapply(session, `[[`, "", "key"),
-                                vapply(session, `[[`, "", "label"))
-  cd_cols <- vapply(coldata, `[[`, "", "key")
-  group_field_choices(cd_cols, sess_items, none = none)
+  in_group <- function(g) keep[vapply(keep, function(d) identical(d$group, g), logical(1))]
+  items_of <- function(ds) stats::setNames(vapply(ds, `[[`, "", "key"),
+                                           vapply(ds, `[[`, "", "label"))
+  session <- in_group("This session")
+  spike   <- in_group("Spike-in")
+  coldata <- in_group("Data metadata")
+  group_field_choices(vapply(coldata, `[[`, "", "key"), items_of(session), none = none,
+                      spike_items = items_of(spike))
 }
 
 # --- Value + colour resolution ---------------------------------------------
@@ -181,6 +225,14 @@ aes_resolve <- function(state, key, samples, ctx = list()) {
     qm <- .aes_qc_metrics(state)
     return(list(values = as.numeric(qm[samples, m]), kind = "continuous",
                 label = unname(.aes_qc_labels[m]) %||% m, colors = NULL, labels = NULL,
+                ramp_config = state$palette$other[[key]]))
+  }
+  if (startsWith(key, "__spike__")) {
+    if (!.aes_has_spike(state)) return(NULL)
+    m <- sub("^__spike__", "", key)
+    ps <- .aes_spike_metrics(state)
+    return(list(values = as.numeric(ps[match(samples, ps$sample), m]), kind = "continuous",
+                label = unname(.aes_spike_labels[m]) %||% m, colors = NULL, labels = NULL,
                 ramp_config = state$palette$other[[key]]))
   }
   # colData column.

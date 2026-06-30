@@ -549,6 +549,28 @@ test_that("QC spike-in view caches dose-response keyed on source + assay", {
   })
 })
 
+test_that("aes spike resolve shares the QC Spike-in tab's spike_dr cache (at defaults)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 2,
+                                                     n_spike = 8, seed = 18)), source = "demo")
+    session$flushReact()
+    # Drive the QC Spike-in tab to the SAME canonical source/assay the aes path
+    # uses, so the keys provably match regardless of the fixture's conc column.
+    src <- .aes_spike_src(state); asy <- .aes_spike_assay(state)
+    session$setInputs(spike_source = src, spike_assay = asy,
+                      spike_auto = FALSE, spike_render = 1); session$flushReact()
+    expect_true(exists("spike_dr", envir = state$derived, inherits = FALSE))
+    before <- get("spike_dr", envir = state$derived)$params
+    # The aes path (used by PCA / heatmap) resolves a spike metric and must reuse
+    # the same cache key -> the stored params are unchanged (no recompute/evict).
+    v <- aes_resolve(state, "__spike__slope", colnames(state$working))
+    expect_equal(v$kind, "continuous")
+    expect_identical(get("spike_dr", envir = state$derived)$params, before)
+  })
+})
+
 test_that("spike plot grouped by pool does not go stale on a pool change (render-time group)", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()

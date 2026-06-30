@@ -108,6 +108,22 @@ test_that("colour-by optgroups are ordered General -> This session -> Data metad
   })
 })
 
+test_that("PCA offers + colours by a spike-in metric when the dataset has spikes", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_dimreduc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 90, n_per_group = 3, n_spike = 6, seed = 41)),
+               source = "demo"); session$flushReact()
+    expect_match(as.character(output$colour_ui$html), "Spike-in")          # optgroup present
+    expect_match(as.character(output$colour_ui$html), "__spike__slope", fixed = TRUE)
+    session$setInputs(assay = "vst", n_top = 60, auto = TRUE,
+                      colour_by = "__spike__n_spike_detected"); session$flushReact()
+    g <- build_pca_gg(FALSE)
+    expect_s3_class(g, "ggplot")
+    expect_equal(g$labels$colour, "Detected spike features")
+  })
+})
+
 test_that("colour by a per-sample QC metric builds a continuous scale", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
