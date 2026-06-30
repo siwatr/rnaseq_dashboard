@@ -26,6 +26,34 @@
                expr = function() qc_per_sample_metrics(state$working))
 }
 
+# Fixed pool-membership colours (the default when no Palette "Other" config).
+.aes_pool_colors <- c(Kept = "#9aa0a6", "In removal pool" = "#D62728")
+
+#' Customizable "Other"-domain attribute palette items
+#'
+#' The session/derived attributes whose palette config lives in the Palette page
+#' "Other" domain (`state$palette$other[[item]]`): the removal status, removal
+#' pool, and the per-sample QC metrics. The single source of truth shared by the
+#' resolver (which reads the configs) and the Palette page (which sets them), so
+#' the two stay in sync. (The sample-correlation ramp is a separate app-internal
+#' "other" item owned by the Palette page, not an attribute, and not listed here.)
+#'
+#' @return A named list keyed by palette item id, each
+#'   `list(kind, levels, class, label)`.
+#' @export
+aes_other_palette_items <- function() {
+  items <- list(
+    removal_status = list(kind = "discrete",
+                          levels = c("pass", "suggested_other", "suggested_this"),
+                          class = "factor", label = "Suggested removal"),
+    `__pool__` = list(kind = "discrete", levels = c("Kept", "In removal pool"),
+                      class = "factor", label = "Removal pool"))
+  for (m in names(.aes_qc_labels))
+    items[[paste0("__qc__", m)]] <- list(kind = "continuous", levels = character(0),
+                                         class = "numeric", label = unname(.aes_qc_labels[m]))
+  items
+}
+
 #' Catalog of color/annotation attributes for the current dataset
 #'
 #' @param state The shared app-state (see [new_app_state()]).
@@ -120,10 +148,12 @@ aes_choices <- function(catalog, kinds = c("discrete", "continuous"), none = FAL
 
 .aes_pool <- function(state, samples) {
   pool <- state$samp_pool %||% character(0)
-  list(values = factor(ifelse(samples %in% pool, "In removal pool", "Kept"),
-                       levels = c("Kept", "In removal pool")),
-       kind = "discrete", label = "Removal pool",
-       colors = c(Kept = "#9aa0a6", "In removal pool" = "#D62728"),
+  lv <- c("Kept", "In removal pool")
+  cfg <- state$palette$other[["__pool__"]]
+  colors <- if (is.null(cfg)) .aes_pool_colors
+            else palette_discrete(lv, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
+  list(values = factor(ifelse(samples %in% pool, "In removal pool", "Kept"), levels = lv),
+       kind = "discrete", label = "Removal pool", colors = colors,
        labels = NULL, ramp_config = NULL)
 }
 

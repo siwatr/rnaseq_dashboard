@@ -244,5 +244,13 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 | #22 | P4-pre: extract shared plot engine (mod_plot_engine) |
 | #23 | P4a: dimensionality reduction — single-panel PCA |
 | #24 | P4a-2: PCA colour & feature-search enhancements |
+| #25 | P4-removal: promote removal state; PCA removal/pool; QC colour-selector unification; heatmap session/QC annotations |
+| #27 | anno-refactor-A: shared color/annotation attribute catalog + resolver (parity) |
 
 **v0.1.0** released after #21 (end of P3).
+
+### Color/annotation standardization (epic, post-P4-removal)
+One shared attribute **catalog + resolver** (`R/aes_helpers.R`) so QC + PCA + future pages (t-SNE/UMAP, DE heatmap) agree on the selectable colour/annotation attributes and every attribute's palette is customizable.
+- **PR A ✅ (#27)** extract the shared catalog/resolver; migrate PCA + QC + heatmap annotation onto it (parity).
+- **PR B ✅** generalize the Palette **"Other"** domain so removal-pool + per-sample QC metrics are user-customizable (`aes_other_palette_items()` is the single source; `.aes_pool` reads its config; pool seeds a grey/red preset, QC metrics viridis). **Project standard:** every colour/annotation attribute has a palette slot and is editable on the Palette page.
+- **PR C ⬅️ next** spike-in QC metrics (`slope`/`r²`/`lod`/`n_spike_detected`) as attributes + a dedicated **"Spike-in"** optgroup, availability-gated on spikes, reusing the `spike_dr` cache.

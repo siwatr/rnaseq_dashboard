@@ -38,9 +38,15 @@
 # The four Setting pills: domain -> display label.
 .pal_domains <- c(colData = "Sample", rowData = "Feature",
                   assays = "Assay", other = "Other")
-# "other" maps are fixed, app-internal.
-.pal_other_items <- c("removal_status", "correlation")
-.pal_other_kind  <- c(removal_status = "discrete", correlation = "continuous")
+# "other" domain items: the customizable session/derived attributes (removal
+# status, removal pool, the per-sample QC metrics; the single source is
+# aes_other_palette_items()) plus the app-internal sample-correlation ramp.
+.pal_other_meta <- function() {
+  c(aes_other_palette_items(),
+    list(correlation = list(kind = "continuous", levels = character(0),
+                            class = "numeric", label = "Sample correlation")))
+}
+.pal_other_items <- function() names(.pal_other_meta())
 .pal_removal_levels <- c("pass", "suggested_other", "suggested_this")
 
 # Preview swatch for a palette. `discrete` -> equal-width solid blocks (no
@@ -96,7 +102,7 @@ mod_palette_ui <- function(id) {
   blurb <- c(colData = "Set colours per sample-metadata column (colData). They feed the QC plots and the ComplexHeatmap annotations.",
              rowData = "Set colours per feature-metadata column (rowData). Used for heatmap row annotations (P5).",
              assays  = "Set the expression colour ramp per assay. Used for the expression heatmap / PCA gene colouring (P4/P5).",
-             other   = "Recolour app-internal maps: the QC removal-status colours and the sample-correlation ramp.")
+             other   = "Recolour the session/derived attributes: the QC suggested-removal status, removal-pool membership, the per-sample QC metrics, and the sample-correlation ramp. These feed the QC plots, PCA, and the heatmap annotations.")
   pill <- function(dom) {
     label <- .pal_domains[[dom]]
     bslib::nav_panel(label,
@@ -215,29 +221,29 @@ mod_palette_server <- function(id, state) {
         colData = colnames(dom_df("colData")),
         rowData = colnames(dom_df("rowData")),
         assays  = SummarizedExperiment::assayNames(state$working),
-        other   = .pal_other_items)
+        other   = .pal_other_items())
     }
     dom_needs_data <- function(dom) dom %in% c("colData", "rowData", "assays")
     dom_kind <- function(dom, item) {
       if (dom == "assays") return("continuous")
-      if (dom == "other")  return(.pal_other_kind[[item]])
+      if (dom == "other")  return(.pal_other_meta()[[item]]$kind)
       if (is.numeric(dom_col(dom, item))) "continuous" else "discrete"
     }
     dom_levels <- function(dom, item) {
-      # Only removal_status is a discrete "other" map; correlation is continuous
-      # (and any future "other" item brings its own levels) -- don't blanket-
-      # assume every "other" item has the removal levels.
-      if (dom == "other") {
-        if (item == "removal_status") return(.pal_removal_levels)
-        return(character(0))
-      }
+      if (dom == "other") return(.pal_other_meta()[[item]]$levels %||% character(0))
       .pal_levels(dom_col(dom, item))
     }
     # Underlying data class for the accordion badge (helps the future factor PR).
     dom_class <- function(dom, item) {
       if (dom == "assays") return("numeric")
-      if (dom == "other")  return(if (item == "correlation") "numeric" else "factor")
+      if (dom == "other")  return(.pal_other_meta()[[item]]$class %||% "factor")
       class(dom_col(dom, item))[1]
+    }
+    # Friendly label for an item (the raw id for data domains; a readable label
+    # for the "other" session/derived items, e.g. __qc__library_size -> "Library size").
+    dom_item_label <- function(dom, item) {
+      if (dom == "other") return(.pal_other_meta()[[item]]$label %||% item)
+      item
     }
     # Per-column (kind, level-count) summary for the add control's
     # high-cardinality scan, memoized per data_version so we don't re-scan every
@@ -304,6 +310,8 @@ mod_palette_server <- function(id, state) {
     preset_for <- function(dom, item) {
       if (dom == "other" && item == "removal_status")
         return(list(name = "Custom palette", colors = .removal_palette))
+      if (dom == "other" && item == "__pool__")
+        return(list(name = "Custom palette", colors = .aes_pool_colors))
       if (dom == "other" && item == "correlation")
         return(list(name = "RColorBrewer: RdBu", min = "-1", max = "1",
                     reverse = TRUE, custom = NULL))
@@ -551,9 +559,12 @@ mod_palette_server <- function(id, state) {
           !is.null(m) && identical(m$kind, "discrete") && isTRUE(m$nlev > max_levels())
         }, unconfigured)
         choices <- setdiff(unconfigured, over_cap)
+        # Friendly labels for the "other" session/derived items (raw ids elsewhere).
+        choice_vec <- if (length(choices))
+          stats::setNames(choices, vapply(choices, function(it) dom_item_label(d, it), "")) else character(0)
         tagList(
           selectInput(ns(paste0("addsel_", d)), "Add colour mapping for",
-                      choices = if (length(choices)) choices else character(0)),
+                      choices = choice_vec),
           actionButton(ns(paste0("addbtn_", d)), "Add", icon = icon("plus"),
                        class = "btn-sm btn-primary",
                        disabled = if (!length(choices)) NA else NULL),
@@ -572,7 +583,7 @@ mod_palette_server <- function(id, state) {
             pending_add(list(dom = d, item = item))
             showModal(modalDialog(title = "Many unique values",
               sprintf("'%s' has %d unique values; adding it creates %d colour pickers and may be slow.",
-                      item, n, n),
+                      dom_item_label(d, item), n, n),
               footer = tagList(modalButton("Cancel"),
                                actionButton(ns("confirm_add"), "Proceed", class = "btn-warning"))))
             return()
@@ -595,7 +606,8 @@ mod_palette_server <- function(id, state) {
                                                                  shiny::isolate(dom_kind(d, it)),
                                                                  shiny::isolate(dom_class(d, it)),
                                                                  shiny::isolate(dom_levels(d, it)),
-                                                                 has_picker))
+                                                                 has_picker,
+                                                                 label = shiny::isolate(dom_item_label(d, it))))
         # Preserve which panels are open across rebuilds (a rebuild otherwise
         # re-opens all): keep the currently-open set + the just-added item.
         open_now <- shiny::isolate(input[[paste0("acc_", d)]])
@@ -815,8 +827,10 @@ mod_palette_server <- function(id, state) {
       tags$span(class = "badge rounded-pill text-bg-light ms-1 fw-normal", klass))
 }
 
-# Build the accordion panel for one item (discrete or continuous).
-.palette_item_panel <- function(ns, dom, item, cfg, kind, klass, levels, has_picker) {
+# Build the accordion panel for one item (discrete or continuous). `label` is the
+# friendly title shown in the accordion (defaults to the raw item id).
+.palette_item_panel <- function(ns, dom, item, cfg, kind, klass, levels, has_picker,
+                                label = item) {
   key <- paste0(dom, "__", .pal_safe(item))
   id  <- function(prefix) ns(paste0(prefix, "_", key))
   remove_btn <- actionButton(id("remove"), "Remove mapping", icon = icon("trash"),
@@ -914,7 +928,7 @@ mod_palette_server <- function(id, state) {
           "Reset to the default palette (or this attribute's preset), clearing per-level edits."),
         remove_btn))
   }
-  bslib::accordion_panel(title = tags$span(item, .pal_badges(kind, klass)),
+  bslib::accordion_panel(title = tags$span(label, .pal_badges(kind, klass)),
                          value = item, body)
 }
 
