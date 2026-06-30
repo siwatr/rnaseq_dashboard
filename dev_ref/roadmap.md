@@ -2,7 +2,9 @@
 
 Living, detailed phase plan + status. **This file is the source of truth for "what's
 done / next".** `CLAUDE.md` links here; the design narrative (the *why*) lives in
-[rough_design.md](rough_design.md). Keep this updated as PRs merge.
+[rough_design.md](rough_design.md). Keep this updated as PRs merge. **When a sub-phase
+merges, collapse its pre-build detail to the status bullet + a Merged-PR log row** — the
+shipped code is the truth, so verbose plan blocks shouldn't accumulate here.
 
 Legend: ✅ done · ⬅️ next · ⬜ later
 
