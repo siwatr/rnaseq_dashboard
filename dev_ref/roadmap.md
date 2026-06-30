@@ -149,47 +149,6 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   Still-open follow-ups it sets up: **promote the "Showing" subset to app-state** so other plot
   pages reuse it; and P4b/P5 plot pages can now reuse the session removal aesthetics.
 
-### P4a-2 — detailed plan (PCA colour & feature-search)
-
-Builds on P4a's `mod_dimreduc.R`; pure helpers in `dimreduc_helpers.R`/`utils_lookup.R` (tested).
-Sidebar reorganised into **bslib accordions** to manage clutter: **Embedding** (input assay · log ·
-n_top · Render/auto, open) · **Appearance** (colour/shape + an always-visible Gene-expression block) ·
-**Plot aesthetics** · **Showing**.
-
-- **Grouped colour/shape selectize** (`selectInput` optgroups, like the Palette selector): **Data
-  metadata** = `colData` columns; **This session** = Gene expression + per-sample QC metrics
-  (`qc_per_sample_metrics()` → library_size/detected/pct_mito/pct_spike, continuous). (Removal-status
-  / in-pool join this group in P4-removal.) Shape-by: discrete `colData` columns **filtered to ≤6
-  levels** (hide the rest), label "Shape by (discrete, ≤6 values)"; keep the runtime guard defensively.
-- **Gene-expression block — always embedded** (not conditionally revealed): when Colour by ≠ Gene
-  expression, show helper text "Select 'Gene expression' in 'Colour by' to enable this." Controls:
-  - **Search by** `selectInput`: candidate `rowData` fields **excluding logical columns** (keep
-    integer/numeric — some IDs are numeric, e.g. Entrez) + **"Feature ID (rownames)"** (always; unique
-    by construction). Default = `<feature_type>_name` if present, else Feature ID.
-  - **"Include columns with duplicate values"** `input_switch` (tooltip): OFF hides columns where
-    `anyDuplicated(col) != 0`; default **ON when the logical-filtered `rowData` has ≤10 columns**, else OFF.
-  - **Case-insensitive** `input_switch` for the lookup.
-  - **Duplicate handling** (case-folding or genuine dups): take the **first** match + warn
-    "N features matched '<q>'; showing the first."
-  - **Search hint** (on an exact miss, query length **≥2**): search the chosen field **always
-    case-insensitively (independent of the case-insensitive toggle**, so case-sensitive "duxf3" still
-    suggests "Duxf3"); **raw-match cap = 100** → over cap show "too many partial matches; type more to
-    narrow it down" (no list); else rank by match position (prefix `^q` > word-start > substring;
-    tiebreak shorter length then alpha), show **top 5** + "(+N more)". Pure tested helper
-    `suggest_features(query, values, n=5, cap=100)`; **debounce the gene input ~300 ms**; pre-lowercase
-    the search vector cached per `data_version`. Message tiers: found→colour; miss+hits→"Did you
-    mean …?"; miss+too-broad→refine; miss+none→"not found".
-  - **Expression assay** `selectInput` (any assay; default logcounts) + **Transformation** select
-    (none [default] / log2 / log10); when log, a **Pseudocount** numeric appears — default **1 for
-    integer assays** (detect via `all(m == round(m), na.rm=TRUE)`), else **0.5**. Already-log assays
-    (logcounts/VST) default to none. Colourbar label reflects assay + transform.
-- **`lookup_feature()`/`suggest_features()`**: add case-insensitive matching + a match **count**
-  (for the warning); the "Feature ID" choice searches rownames; `suggest_features` does the ranked
-  regex hint. All unit-tested (prefix ranks first, cap triggers, min-length gate, duplicate count).
-- **Plot aesthetics**: swap the 1:1-ratio checkbox for **`bslib::input_switch()`**; add a
-  **legend-position** `selectInput` (right [default]/left/top/bottom/none → `theme(legend.position=)`,
-  overriding `.plot_theme`'s bottom for PCA).
-
 ## Phase 5 — Differential expression ⬅️ next ⬜
 DE statistics + DEG plots (the heatmap split out to Phase 7).
 - Guided design builder (reference level + full-rank check) + contrast picker; multiple
@@ -295,12 +254,14 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 | #23 | P4a: dimensionality reduction — single-panel PCA |
 | #24 | P4a-2: PCA colour & feature-search enhancements |
 | #25 | P4-removal: promote removal state; PCA removal/pool; QC colour-selector unification; heatmap session/QC annotations |
-| #27 | anno-refactor-A: shared color/annotation attribute catalog + resolver (parity) |
+| #27 | anno-refactor-A: shared colour/annotation catalog + resolver (`aes_helpers.R`, parity) |
+| #28 | anno-refactor-B: generalize Palette "Other" (removal-pool + QC metrics customizable) |
+| #29 | anno-refactor-C: spike-in QC metrics as attributes + "Spike-in" optgroup |
+| #30 | docs: shared colour/annotation resolver convention (`shiny-plot-aesthetics` skill) |
 
 **v0.1.0** released after #21 (end of P3).
 
-### Color/annotation standardization (epic, post-P4-removal)
-One shared attribute **catalog + resolver** (`R/aes_helpers.R`) so QC + PCA + future pages (t-SNE/UMAP, DE heatmap) agree on the selectable colour/annotation attributes and every attribute's palette is customizable.
-- **PR A ✅ (#27)** extract the shared catalog/resolver; migrate PCA + QC + heatmap annotation onto it (parity).
-- **PR B ✅** generalize the Palette **"Other"** domain so removal-pool + per-sample QC metrics are user-customizable (`aes_other_palette_items()` is the single source; `.aes_pool` reads its config; pool seeds a grey/red preset, QC metrics viridis). **Project standard:** every colour/annotation attribute has a palette slot and is editable on the Palette page.
-- **PR C ✅** spike-in QC metrics (`slope`/`r²`/`lod`/`n_spike_detected`) as continuous attributes + a dedicated **"Spike-in"** optgroup; availability-gated on spikes in `aes_catalog()` (so PCA colour + the heatmap annotation offer them only when spikes exist), resolved from the shared `spike_dr` cache (canonical source/assay = the QC Spike-in tab's defaults), and customizable via the Palette "Other" domain (`aes_other_palette_items()`). `group_field_choices()` grew a `spike_items` optgroup. **Epic complete.**
+> **Colour/annotation standardization epic ✅ (#27–#29):** one shared attribute catalog +
+> resolver (`R/aes_helpers.R`) so QC + PCA + future pages agree on selectable attributes and
+> every attribute's palette is customizable (Palette "Other"). See the `shiny-plot-aesthetics`
+> skill for the full reference.
