@@ -136,7 +136,11 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   the **grouping-semantic** selectors (Within-group correlation "Group by", filtering "Within-group
   grouping") + the Feature selector stay **colData-only** — grouping a correlation/flagging
   computation by removal-status/pool isn't a meaningful biological grouping, and "Suggested removal"
-  on the flagging selector is *circular* (the flags would group by their own output). [PR #25]
+  on the flagging selector is *circular* (the flags would group by their own output).
+  The **sample-correlation heatmap "Annotate by"** multi-select also adopts the grouped layout and
+  offers the session items (Suggested removal / Removal pool, discrete) **and** the per-sample QC
+  metrics (library size / detected / % mito / % spike-in, continuous) as top-annotation tracks,
+  via a mixed-type `anno_df` + merged session-track colours through `qc_annotation_colors()`. [PR #25]
   Still-open follow-ups it sets up: **promote the "Showing" subset to app-state** so other plot
   pages reuse it; and P4b/P5 plot pages can now reuse the session removal aesthetics.
 
