@@ -161,11 +161,17 @@ User can specify which assay can be (default: `logcounts`), as well as how many 
 
 #### Page panel: 
 
-Ideally, this page should be able to show up to 4 plots panels at the same time. This can either be: 
-(a) 4 ReduceDim plots, or 
-(b) 3 ReduceDim plots with 1 box plot (prioritized being the last plot (right, or bottom right panel, if possible)) or violin plot of expression of specific gene of interest.
+Ideally, this page should be able to show up to 4 **ReduceDim** plot panels at the same time
+(all of the same embedding, computed once, differing only by aesthetic mapping).
 
 The page can start by 1 RedeceDim plot (e.g., PCA), and only adding more plot panel if user decided to add more panel -- e.g., if they want to look at plot colored by condition and look side-by-side with the same plot colored by biological replicate. Thus, the possible layout for this page is 1, 2, and 4 panels.
+
+> **Reviewed (design revision):** the original idea of a mixed panel — *3 ReduceDim plots + 1
+> box/violin plot of a single gene's expression* — is **dropped here** and consolidated onto the
+> **Expression** page (Single genes tab), to avoid building the same single-gene plot twice. The
+> ReduceDim multi-panel therefore shows **ReduceDim plots only**. What remains on this page is
+> **colour-by gene expression** (a ReduceDim scatter coloured by a gene's expression gradient — an
+> *embedding aesthetic*, distinct from a single-gene box/violin plot).
 
 
 #### Plot customization: 
@@ -214,9 +220,81 @@ User can have some freedom to modify the range of x- and y-axis. Data point outs
 <!--
 MARK: 6th page 
 -->
-### The sixth page: Expression heatmap
+### The sixth page: Gene Sets
 
-User can import set of genes of interest, and this can be used to make a gene expression heatmap plot. By default, plots will be made using differentially expressed genes. 
+A dedicated page for defining, recording, and managing **named gene sets of interest** — the
+resource the **Expression** page (seventh page) consumes for its gene-set heatmap, and a
+cross-cutting object that DESeq2 results can feed into. It sits between DE and Expression so a
+contrast's DEGs can be promoted into a curated set.
+
+A gene set can be assembled from several **opt-in** sources (nothing is auto-included):
+* **Paste names/IDs** — type or paste a list (one per line); each entry is resolved against a
+  chosen `rowData` field (default `<feature_type>_name`, fallback feature ID). Manual route.
+* **Upload a file** — CSV/TXT (one gene per line, or a column), so the same set can be reused
+  across projects and users.
+* **Add from DE results** — pick a stored contrast and add its DEGs; allow **select/Add-all** for
+  mass import. Opt-in, not automatic.
+* **Add from top-variable genes** — the N most-variable (endogenous) genes; a low-bias way to
+  define a set without DE. Opt-in, like the DEG route.
+
+> **Reviewed:**
+> - **Report unmatched entries.** When resolving pasted/uploaded names, list the queries that
+>   didn't match any feature so the user can fix them.
+> - **Store by canonical feature ID (rownames).** Resolution from a name/field happens at add-time;
+>   the saved set is feature IDs, so it survives a change of the display name field.
+> - **Reconcile on data change.** Gene sets are a session/UI object (not part of the `dds`); when
+>   features are removed, drop now-absent IDs and report — mirroring the palette reconcile. Cleared
+>   on a new data load.
+> - **Reproducible.** The defined sets are recorded in the export/provenance artifact (export page).
+
+<!--
+MARK: 7th page 
+-->
+### The seventh page: Expression
+
+Renamed from "Expression heatmap": a surface for **exploring the expression of genes of interest**,
+which can take more than one form (not only a heatmap). Two tabs:
+
+#### Tab 1 — Single genes
+
+Explore the expression of **one feature at a time**, comparing it across groups of samples. The
+plots are shown **together as a single layered overlay** (back→front: violin → boxplot → dots),
+rather than as separate sub-tabs.
+
+Customizable parts of the plot:
+* **x-axis** — a grouping variable from sample metadata. Default = the (first) variable in the
+  `dds` design; changeable to any other discrete metadata column.
+* **y-axis** — expression value. Default = **log-normalized counts when size factors exist**,
+  otherwise fall back in order **TPM → FPKM → CPM → logcounts → counts**.
+* **Group / Colour by** — almost the same as the x-axis setting, but **independent**: useful for
+  complex designs (e.g. x = condition while colour = biological replicate).
+* **Transformation + pseudocount** — None / log2 / log10 (as on the PCA page); a pseudocount field
+  appears when a log is chosen.
+* **Plot elements** — a toggle per layer (back→front):
+  * **violin** (`ggplot2::geom_violin()`),
+  * **boxplot** (`ggplot2::geom_boxplot()`, always narrower than the violin),
+  * **dots** (`ggbeeswarm::geom_quasirandom()`, degrading to `ggplot2::geom_jitter()` when the
+    package is absent).
+  * **Sample guards** (`N` = the maximum samples-per-group within the current plot; two thresholds
+    `G1` < `G2`, configurable):
+    * *Dots* default **ON when `N ≤ G1`**, OFF otherwise; **never allowed ON when `N ≥ G2`** (so a
+      huge group never floods the panel with points).
+    * *Violin / boxplot*: when **all** plotted groups have `N < G1`, hide them (dots alone are
+      sufficient and less misleading for tiny groups); show them by default when dots are off.
+* **Miscellaneous** — e.g. legend position.
+
+> **Reviewed:**
+> - This tab **subsumes the single-gene box/violin plot** the original design attached to the PCA
+>   multi-panel (fourth page, option (b)); that mixed panel is dropped. PCA keeps colour-by-gene.
+> - Reuses the shared plot machinery: the ggplot↔plotly engine, the deferred render gate, the
+>   "Showing:" sample-subset control, and the shared colour/annotation resolver for Colour by.
+> - *Deferred (wishlist):* facet by a second variable; a mean±error summary overlay.
+
+#### Tab 2 — Gene sets
+
+Check the expression of **multiple genes together**, for a named set chosen from the Gene Sets page.
+The plot is a gene-expression **heatmap**.
+
 Default value for expression is log10(TPM + 0.01). If TPM is not specified, call back to log10(CPM + 0.01) instead. 
 Heatmap top annotation can indicate value in sample metadata (default: values in column used as design for `dds`)
 
@@ -229,15 +307,16 @@ Additional subpanel can be added as a space to change the color mapping of heatm
 > - **Row (gene) names hidden by default** (heatmaps usually carry many genes); let the user mark genes of interest, labelled via `ComplexHeatmap::anno_mark()` (leader lines) so "where is my gene" works without thousands of labels.
 > - **Column (sample) names** are user-toggleable and **auto-hidden when > 30 samples** (default, configurable).
 > - Report any imported genes-of-interest that weren't found. Default gene set = DEGs, falling back to top-variable genes when no DE has been run. Export via explicit device capture (`png()/pdf()` + `draw()`), not `ggsave()`.
+> - The advanced/shared heatmap controllers (shared with the QC correlation heatmap; row k-means etc.) are a later visualization-enhancements phase; v1 ships the basic toggles.
 
 <!--
-MARK: 6th page 
+MARK: 8th page 
 -->
-### The seventh page: Data export
+### The eighth page: Data export
 
 This is for exporting the dds object, DESeq2 result tables, and plots.
 
-> **Reviewed:** also export a **reproducibility artifact** — a runnable R script and/or Quarto/R Markdown report — generated from the action log (see state model). It captures the loaded data, filters, design, thresholds, and package versions, doubling as the provenance trail and the publishable record. Result tables export to XLSX.
+> **Reviewed:** also export a **reproducibility artifact** — a runnable R script and/or Quarto/R Markdown report — generated from the action log (see state model). It captures the loaded data, filters, design, thresholds, **defined gene sets**, and package versions, doubling as the provenance trail and the publishable record. Result tables export to XLSX.
 
 ***
 ## State management & reproducibility

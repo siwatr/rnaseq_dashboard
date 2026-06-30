@@ -93,9 +93,10 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   **register-on-visible** observe. Plus an **"Edit palette" button** on non-custom continuous palettes:
   extracts the ramp to 5 editable Custom-ramp anchors (current `reverse` baked into the order, then
   zeroed — gradient unchanged). Robustness: `dom_levels()` is `other`-item-aware. [PR #TBD]
-- **P3g-d ⬅️ next** Palette **factor management** — coerce a `colData`/`rowData` column to factor + reorder its
-  levels (drives both plot order and the palette mapping). (The legacy Themer gallery can be retired —
-  its Heatmap sub-tab is already superseded by the Preview tab.)
+- **P3g-d → moved to Phase 8** Palette **factor management** — coerce a `colData`/`rowData` column to factor +
+  reorder its levels (drives both plot order and the palette mapping). (The legacy Themer gallery can be
+  retired — its Heatmap sub-tab is already superseded by the Preview tab.) **Folded into Phase 8
+  (Visualization enhancements)** so the path to DE is shortest; it is no longer the immediate next item.
 
 ## Phase 4 — Dimensionality reduction (PCA) (sub-PR'd)
 - **P4-pre ✅** Extracted the shared plot engine (`R/mod_plot_engine.R`): the ggplot↔plotly
@@ -123,8 +124,12 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   guard; legend-position select). Pure helpers `resolve_feature()`/`suggest_features()`/
   `feature_search_choices()`/`expr_transform()` + `lookup_feature(case_insensitive=)`. QC metrics
   share the `derived` cache; gene-colour guards a stale assay name. [PR #24]
-- **P4b** multi-panel (1/2/4 layouts), embedding computed once, aesthetics per panel.
-- **P4c (later)** t-SNE/UMAP, hard-gated by sample count (~≥30); Rtsne/uwot optional Suggests.
+- **P4b → moved to Phase 8** multi-panel (1/2/4 layouts), **ReduceDim panels only**, embedding computed
+  once, aesthetics per panel. Real value: same embedding **side-by-side with different colour-by** (e.g.
+  condition vs. biological replicate). Deferred for the complex multi-panel UI, not for lack of merit.
+  (The original "mixed gene box/violin panel" idea is **dropped** — superseded by Phase 7 Expression >
+  Single genes.)
+- **P4c → moved to Phase 8** t-SNE/UMAP, hard-gated by sample count (~≥30); Rtsne/uwot optional Suggests.
 - **P4-removal ✅ done** Promoted the removal-pool + sample-flag state from `mod_qc.R` into shared
   `state` (`samp_pool` + `samp_flags`; `mod_qc` proxies the pool to state and mirrors the computed
   flags). PCA exposes **"Suggested removal"** / **"In removal pool"** under the colour-by + shape-by
@@ -185,46 +190,91 @@ n_top · Render/auto, open) · **Appearance** (colour/shape + an always-visible 
   **legend-position** `selectInput` (right [default]/left/top/bottom/none → `theme(legend.position=)`,
   overriding `.plot_theme`'s bottom for PCA).
 
-## Phase 5 — Differential expression + heatmap ⬜
+## Phase 5 — Differential expression ⬅️ next ⬜
+DE statistics + DEG plots (the heatmap split out to Phase 7).
 - Guided design builder (reference level + full-rank check) + contrast picker; multiple
   stored contrasts; `DESeq2::DESeq()` + `lfcShrink`. Dual LFC columns
   (`log2FoldChange`(_shrunk)) + `sig`/`DEG`(_shrunk); shrinkage toggle = column selection.
-- MA / volcano / direct-comparison plots with axis clamping (triangle markers).
-- Expression heatmap (`ComplexHeatmap`; default per-gene z-score; `anno_mark` for genes of
-  interest; column names auto-hidden > 30 samples).
-- **ComplexHeatmap plot-controls PR** — the heatmap controllers (annotation/colour/clustering
-  options) for the DE expression heatmap and the QC sample-correlation heatmap get a dedicated PR
-  here, so we can factor which control sub-modules are **shared** vs **QC-only** (the P3f engine
-  toggle deliberately left both heatmaps static — they are not ggplot).
+- MA / volcano / direct-comparison plots with axis clamping (triangle markers); colour by
+  `DEG` (default) via the shared `aes_helpers` resolver.
 - **Create the `de-analysis` skill** (guided design/contrast/shrinkage, dual-LFC schema,
   MA/volcano conventions) as part of this phase, so it matches the real DESeq2 implementation.
 
-## Phase 6 — Export & reproducibility ⬜
+## Phase 6 — Gene Sets ⬜
+A dedicated page (between DE and Expression) managing **named gene sets of interest** — the
+resource DE *seeds* and the Expression page *consumes*. Sources (all opt-in, nothing auto-included):
+- **Paste names/IDs** (textarea, resolved via `lookup_feature()` against a chosen rowData field;
+  unmatched genes reported), **upload file** (CSV/TXT), **add from DE results** (a stored contrast's
+  DEGs, select/Add-all), **add from top-variable genes** (`top_variable_features()`).
+- State: new **`state$gene_sets`** — named list of canonical feature IDs (rownames); a session/UI
+  field (no `data_version` bump), cleared on load, **reconciled** against current features on data
+  change (drop + report, mirroring `reconcile_palette()` → a `reconcile_gene_sets()` helper).
+- Recorded in the reproducibility export (Phase 9).
+
+## Phase 7 — Expression ⬜
+Renamed from "Heatmap": a gene-expression **browsing surface** (more than a heatmap). A
+`navset_card_tab` with two tabs.
+- **Single genes** — one feature at a time; a layered overlay (back→front: violin → boxplot →
+  dots) reusing the shared plot machinery (`dual_plot` engine, deferred render, `mod_plot_subset`
+  "Showing:", `aes_helpers` colour). Controls: feature search (reuse the PCA gene block); x-axis =
+  a metadata grouping var (default first design var; `group_field_choices()`, colData-only); y-axis
+  assay (default log-norm-counts when size factors exist, else TPM→FPKM→CPM→logcounts→counts via a
+  new `expr_default_assay()`); group/colour-by (independent, `aes_resolve()`); transform+pseudocount
+  (`expr_transform()`); plot-element toggles (`geom_violin`/`geom_boxplot`/`ggbeeswarm::geom_quasirandom`
+  with `geom_jitter` fallback). **Sample guards** (`N` = max samples/group; `G1`/`G2` as `option()`s,
+  proposed 10/50): dots default ON when `N ≤ G1`, never allowed when `N ≥ G2`; violin/box hidden when
+  all groups `N < G1`. (Subsumes the single-gene box/violin panel the old design attached to the PCA
+  multi-panel; *deferred to wishlist:* facet-by-2nd-variable, mean±error overlay.)
+- **Gene sets** — a `ComplexHeatmap` over a named set from Phase 6: default per-gene z-score (toggle
+  raw `log10(TPM/CPM + 0.01)`); row names hidden + `anno_mark()` for genes of interest; column names
+  auto-hidden > 30 samples; top annotation via `aes_annotation()` (default = design column). Default
+  set when none chosen = DEGs (fallback top-variable). **Basic controls in v1**; the shared
+  heatmap-controller refactor + advanced options (row k-means) are Phase 8.
+
+## Phase 8 — Visualization enhancements ⬜
+The gathered deferred plot/UX items (no home in the build order until now):
+- **P3g-d** Palette factor management — coerce a `colData`/`rowData` column to factor + reorder its
+  levels (drives plot order + the palette mapping). Retire the legacy Themer gallery.
+- **P4b** multi-panel PCA — ReduceDim panels only (1/2/4 layouts; embedding computed once, aesthetics
+  per panel). Same embedding side-by-side with different colour-by (condition vs. biological replicate);
+  deferred for the complex multi-panel UI.
+- **P4c** t-SNE/UMAP — sample-count-gated (~≥30); Rtsne/uwot optional Suggests.
+- **ComplexHeatmap shared plot-controls PR** — factor the heatmap controllers (annotation/colour/
+  clustering) **shared** vs **QC-only** across the QC sample-correlation heatmap and the Phase 7
+  Expression heatmap; advanced options (row k-means). (The P3f engine toggle left both heatmaps
+  static — they are not ggplot.)
+- Relevant **wishlist** items — full light/dark theme + plotly theming (post-DE), promote the
+  "Showing:" subset to app-state, two-sided spike highlight, within-group-corr auto-flag tuning.
+
+## Phase 9 — Export & reproducibility ⬜
 Fill in the Export page (shell since P1; currently downloads the processed `dds` only):
 - **Reproducibility R script / Quarto report** generated from the `history` action log (loaded data,
-  edits, filters, design, thresholds, `sessioninfo`) — the provenance trail + publishable record.
+  edits, filters, design, thresholds, gene sets, `sessioninfo`) — the provenance trail + publishable record.
 - **Plot export** via explicit device capture (`png()`/`pdf()` + `draw()`/`print()`), not `ggsave()`.
 - **DE result tables → XLSX** (`writexl`); processed `dds` export (already works).
 
-## Phase 7 — single-cell (later, lowest priority) ⬜
+## Phase 10 — single-cell (later, lowest priority) ⬜
 - SCE ingestion, per-cell QC (`scran`/`scater`), pseudobulk aggregation
   (`scuttle::aggregateAcrossCells`), warned per-cell DESeq2 (< ~1k cells), t-SNE/UMAP.
 
 ---
 
 ## Deferred / wishlist (revisit when relevant)
-- **Full bright/dark theme customization (post-P5)** — an (almost) fully customized bslib light/dark
-  theme (brand colours, typography, component styling) coordinated with `thematic` and a `plotly`
-  layout theme so interactive plots match the app. Plan after the DESeq2 phase (P5). This is also
-  when P3f's plotly figures get themed (currently `ggplotly` does not inherit `thematic` — accepted).
-- **Two-sided spike highlight on the General QC % spike-in plot** — the "Suggested removal" colour-by
-  maps `pct_spike` to the over-spiked side only; an under-spiked sample shows as
+> Several of these are now **scheduled in Phase 8 (Visualization enhancements)** — see that phase
+> for the theme/plotly-theming, "Showing:"-subset promotion, two-sided spike highlight, and
+> within-group-corr tuning. They remain listed here for context until built.
+- **Full bright/dark theme customization (post-P5 → Phase 8)** — an (almost) fully customized bslib
+  light/dark theme (brand colours, typography, component styling) coordinated with `thematic` and a
+  `plotly` layout theme so interactive plots match the app. This is also when P3f's plotly figures get
+  themed (currently `ggplotly` does not inherit `thematic` — accepted).
+- **Two-sided spike highlight on the General QC % spike-in plot (→ Phase 8)** — the "Suggested removal"
+  colour-by maps `pct_spike` to the over-spiked side only; an under-spiked sample shows as
   "suggested (other)". Symmetrise if users ask.
-- **Within-group-correlation auto-flag tuning** (threshold/z-score UX beyond v1).
+- **Within-group-correlation auto-flag tuning (→ Phase 8)** (threshold/z-score UX beyond v1).
 - **Advanced filter builder** for metadata tables (rows of criteria + AND/OR gate) — deferred
   in P2; built-in per-column DT filters cover AND-across-columns; revisit if OR is needed.
-- **Global "Showing:" subset** promoted to an app-state field once P4 adds more sample plots
-  (currently QC-page-local via `mod_plot_subset`).
+- **Global "Showing:" subset (→ Phase 8)** promoted to an app-state field now that more sample plots
+  exist (PCA; soon the Expression single-gene plot) — currently QC-page-local via `mod_plot_subset`.
 - **Undo/Reset depth** (`.undo_depth = 5`) — revisit if large/single-cell data makes the
   snapshot stack heavy.
 
