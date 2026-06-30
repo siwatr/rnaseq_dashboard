@@ -985,11 +985,47 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       hit <- intersect(dv, cd_cols)
       if (length(hit)) hit else utils::head(cd_cols, 1)
     }
+    # Per-sample QC metrics offered as continuous heatmap-annotation tracks.
+    .cor_anno_qc_labels <- c(library_size = "Library size", detected = "Detected features",
+                             pct_mito = "% mitochondrial", pct_spike = "% spike-in")
+    # Grouped annotation choices (multi-select): same "This session" / "Data
+    # metadata" layout as the group/colour-by selectors (no "(none)" -> a blank
+    # multi-select already means no annotation).
+    cor_anno_choices <- function() {
+      cols <- colnames(SummarizedExperiment::colData(state$working))
+      session <- c(.session_removal_items,
+                   stats::setNames(paste0("__qc__", names(.cor_anno_qc_labels)),
+                                   unname(.cor_anno_qc_labels)))
+      group_field_choices(cols, session, none = FALSE)
+    }
+    # Annotation track names for the session items (distinct from their level
+    # labels, e.g. the pool track "Removal pool" holds Kept / In removal pool).
+    .cor_anno_track <- c("__removal__" = "Suggested removal", "__pool__" = "Removal pool")
+    # Build one annotation column (name + per-sample values) for a chosen field:
+    # a colData column, a "This session" removal item, or a QC metric.
+    .cor_anno_column <- function(value, samples, cd, qm) {
+      if (value %in% c("__removal__", "__pool__"))
+        return(list(name = unname(.cor_anno_track[value]),
+                    values = .session_group_values(value, samples)))
+      if (startsWith(value, "__qc__")) {
+        m <- sub("^__qc__", "", value)
+        return(list(name = unname(.cor_anno_qc_labels[m]), values = as.numeric(qm[samples, m])))
+      }
+      list(name = value, values = cd[samples, value])     # colData column
+    }
+    # Fixed colours for the session annotation columns (keyed by their track name),
+    # merged into the colData palette config at draw so colours stay stable.
+    .cor_anno_session_config <- function(samples) {
+      stats::setNames(
+        list(list(colors = group_colours("__removal__",
+                    levels(.session_group_values("__removal__", samples))), name = "Okabe-Ito"),
+             list(colors = c(Kept = "#9aa0a6", "In removal pool" = "#D62728"), name = "Okabe-Ito")),
+        unname(.cor_anno_track[c("__removal__", "__pool__")]))
+    }
     output$cor_anno_ui <- renderUI({
       req(state$working)
-      cols <- colnames(SummarizedExperiment::colData(state$working))
-      selectizeInput(ns("cor_anno"), "Annotate by (one or more)", choices = cols,
-                     selected = design_cols(), multiple = TRUE)
+      selectizeInput(ns("cor_anno"), "Annotate by (one or more)",
+                     choices = cor_anno_choices(), selected = design_cols(), multiple = TRUE)
     })
     output$cor_auto_ui <- auto_box("cor_auto")
     observeEvent(input$cor_clear_anno, {
@@ -1006,13 +1042,24 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                                         qc_sample_correlation(state$working, method = method))
                          })
       cd <- as.data.frame(SummarizedExperiment::colData(state$working))
-      cols <- intersect(input$cor_anno, colnames(cd))
-      anno_df <- if (!length(cols)) NULL else cd[, cols, drop = FALSE]
+      samples <- colnames(state$working)
+      sel <- intersect(input$cor_anno,
+                       c(colnames(cd), "__removal__", "__pool__",
+                         paste0("__qc__", names(.cor_anno_qc_labels))))
+      anno_df <- if (!length(sel)) NULL else {
+        qm <- qc_tbl()
+        built <- lapply(sel, .cor_anno_column, samples = samples, cd = cd, qm = qm)
+        data.frame(stats::setNames(lapply(built, `[[`, "values"),
+                                   vapply(built, `[[`, "", "name")),
+                   row.names = samples, check.names = FALSE, stringsAsFactors = FALSE)
+      }
       list(cm = cm, anno_df = anno_df, n = ncol(state$working), method = method,
            show = showing_samples())
     })
     cor_shown <- deferred("cor_auto", "cor_render", cor_spec,
-      sig = reactive(list(input$cor_method, input$cor_anno, showing_samples(), state$data_version)))
+      sig = reactive(list(input$cor_method, input$cor_anno, showing_samples(), state$data_version,
+                          if (any(c("__removal__", "__pool__") %in% input$cor_anno))
+                            list(state$samp_pool, state$samp_flags) else NULL)))
     output$cor_stale <- stale_note(cor_shown)
     output$cor_plot <- renderPlot({
       validate(need(!is.null(cor_shown$value()), "Click Render to draw the correlation heatmap."))
@@ -1024,9 +1071,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
                     "Need at least two samples in the current 'Showing' selection."))
       cm <- s$cm[show, show, drop = FALSE]
       anno <- if (is.null(s$anno_df)) NULL else s$anno_df[show, , drop = FALSE]
+      # Merge fixed colours for the session annotation tracks into the colData
+      # palette config (colData colours stay live from the Palette page).
+      anno_cfg <- c(state$palette$colData, .cor_anno_session_config(colnames(state$working)))
       ComplexHeatmap::draw(.qc_correlation_heatmap(
         cm, anno, dark_theme = dark(), n_samples = length(show), method = s$method,
-        palette_config = state$palette$colData, cor_config = state$palette$other$correlation))
+        palette_config = anno_cfg, cor_config = state$palette$other$correlation))
     })
 
     # --- Sample Correlation: Within-group -----------------------------------

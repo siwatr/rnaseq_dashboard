@@ -261,6 +261,37 @@ test_that("RLE/density/spike colour selectors group by the removal pool", {
   })
 })
 
+test_that("correlation heatmap annotation offers grouped session items + QC metrics (mixed types)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_qc_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 70, n_per_group = 3,
+                                                      n_spike = 4, seed = 17)), source = "demo")
+    session$flushReact()
+    samp_pool(colnames(state$working)[1])               # stage one sample in the pool
+    html <- as.character(output$cor_anno_ui$html)
+    expect_match(html, "This session")                  # grouped optgroups
+    expect_match(html, "__removal__", fixed = TRUE)
+    expect_match(html, "__qc__library_size", fixed = TRUE)
+    # A mix of colData + session items + a QC metric builds the annotation frame.
+    session$setInputs(cor_method = "spearman", cor_auto = FALSE, cor_render = 1,
+                      cor_anno = c("condition", "__removal__", "__pool__", "__qc__library_size"))
+    session$flushReact()
+    adf <- cor_shown$value()$anno_df
+    expect_true(all(c("condition", "Suggested removal", "Removal pool", "Library size")
+                    %in% colnames(adf)))
+    expect_s3_class(adf[["Removal pool"]], "factor")
+    expect_true(is.numeric(adf[["Library size"]]))      # continuous track
+    expect_equal(as.character(adf[colnames(state$working)[1], "Removal pool"]), "In removal pool")
+    # Colours resolve: fixed map for the pool track, ramp/function for the metric.
+    cfg <- c(state$palette$colData, .cor_anno_session_config(colnames(state$working)))
+    cols <- qc_annotation_colors(adf, cfg)
+    expect_true("In removal pool" %in% names(cols[["Removal pool"]]))
+    skip_if_not_installed("circlize")
+    expect_true(is.function(cols[["Library size"]]))    # colorRamp2 for numeric
+  })
+})
+
 test_that("sample pool + flags are promoted to shared state for other pages", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
