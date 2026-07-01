@@ -93,8 +93,10 @@ test_that("de_shrink returns an aligned vector + method attr; apeglm/ashr popula
     expect_length(sh, nrow(fit))
     expect_true(any(is.finite(sh)))
     expect_true(attr(sh, "method") %in% c("apeglm", "ashr", "normal"))
+    expect_length(attr(sh, "se"), nrow(fit))          # shrunk posterior SD carried alongside
     df <- de_results(fit, c("condition", "treated", "control"), shrink_type = "apeglm")
     expect_false(is.null(attr(df, "shrink_method")))
+    expect_true("lfcSE_shrunk" %in% names(df))         # matching SE for the shrunk LFC
   }
 })
 

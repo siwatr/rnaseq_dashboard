@@ -15,7 +15,7 @@ de_results(fit, contrast, shrink_type = c("apeglm", "ashr", "none"))
 }
 \value{
 A \code{data.frame} (rownames = feature ids) with the DESeq2 result columns
-plus \code{log2FoldChange_shrunk}.
+plus \code{log2FoldChange_shrunk} and its matching \code{lfcSE_shrunk}.
 }
 \description{
 \code{DESeq2::results()} for the standard \code{log2FoldChange} + shared \code{padj}, plus a

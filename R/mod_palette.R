@@ -54,8 +54,9 @@
 # Preview swatch for a palette. `discrete` -> equal-width solid blocks (no
 # interpolation); otherwise a smooth gradient ramp. `name` is the resolvable
 # palette name; the visible label is its clean form. Static / pure.
-.pal_ref_swatch <- function(name, discrete) {
-  cols <- palette_colors(name, if (discrete) 8L else 9L)
+.pal_ref_swatch <- function(name, discrete, n = NULL) {
+  if (is.null(n)) n <- if (discrete) 8L else 9L
+  cols <- palette_colors(name, n)
   if (!length(cols)) return(NULL)
   bar <- if (discrete) {
     tags$div(class = "d-flex",
@@ -82,8 +83,9 @@
 .pal_reference_ui <- function(ns) {
   panel <- function(type) {
     nm <- palette_names(type); disc <- .pal_type_discrete(type)
+    n <- if (identical(type, "DEG palette")) 3L else NULL   # show the 3 semantic swatches, not 8
     bslib::accordion_panel(type,
-      if (length(nm)) lapply(nm, .pal_ref_swatch, discrete = disc)
+      if (length(nm)) lapply(nm, .pal_ref_swatch, discrete = disc, n = n)
       else tags$p(class = "text-muted small", "Install the source package to preview these."))
   }
   # Custom isn't a real preset; DEG palette is item-scoped (not in palette_type_names)

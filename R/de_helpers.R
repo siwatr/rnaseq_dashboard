@@ -243,7 +243,11 @@ de_shrink <- function(fit, contrast, type = c("apeglm", "ashr", "none")) {
     sh <- try_shrink(coef = coef_name, type = "normal"); if (!is.null(sh)) used <- "normal"
   }
   if (is.null(sh)) return(structure(na_vec, method = "none"))
-  structure(as.numeric(sh$log2FoldChange)[match(ids, rownames(sh))], method = used)
+  idx <- match(ids, rownames(sh))
+  # Carry the shrunk posterior SD too, so the UI never pairs a shrunk LFC with the
+  # unshrunk SE (apeglm/ashr return the posterior SD as `lfcSE`).
+  se <- if ("lfcSE" %in% names(sh)) as.numeric(sh$lfcSE)[idx] else na_vec
+  structure(as.numeric(sh$log2FoldChange)[idx], method = used, se = se)
 }
 
 #' A results table carrying both LFC variants
@@ -255,13 +259,14 @@ de_shrink <- function(fit, contrast, type = c("apeglm", "ashr", "none")) {
 #' @param contrast `c(variable, test, control)`.
 #' @param shrink_type `"apeglm"` (default), `"ashr"`, or `"none"`.
 #' @return A `data.frame` (rownames = feature ids) with the DESeq2 result columns
-#'   plus `log2FoldChange_shrunk`.
+#'   plus `log2FoldChange_shrunk` and its matching `lfcSE_shrunk`.
 #' @export
 de_results <- function(fit, contrast, shrink_type = c("apeglm", "ashr", "none")) {
   shrink_type <- match.arg(shrink_type)
   df <- as.data.frame(DESeq2::results(fit, contrast = contrast))
   sh <- de_shrink(fit, contrast, shrink_type)
   df$log2FoldChange_shrunk <- as.numeric(sh)
+  df$lfcSE_shrunk <- attr(sh, "se") %||% rep(NA_real_, nrow(df))
   attr(df, "shrink_method") <- attr(sh, "method")   # what actually ran (for the UI label)
   df
 }

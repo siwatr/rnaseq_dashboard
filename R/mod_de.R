@@ -520,13 +520,17 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     # --- deferred classified results (the DATA; display aesthetics stay live) ---
     de_spec <- reactive({
-      res <- active_raw()
-      validate(need(!is.null(res),
-                    "No results for this contrast - run DESeq2 on the Design & Contrasts tab."))
+      res <- req(active_raw())
       de_classify_table(res, input$padj %||% 0.05, input$lfc %||% log2(2))
     })
+    # The sig includes a results-identity token (the fit stamp + shrink method) so a
+    # re-fit / re-extraction of the SAME contrast marks the plot stale even though
+    # extraction never bumps data_version (auto-render off would otherwise show old
+    # values). Display aesthetics stay OUT of the sig (cheap live re-plots).
     de_shown <- deferred("plot_auto", "plot_render", de_spec,
-      sig = reactive(list((state$de %||% list())$active, input$padj, input$lfc, state$data_version)))
+      sig = reactive(list((state$de %||% list())$active, input$padj, input$lfc,
+                          state$data_version, (state$de %||% list())$stamp,
+                          (state$de %||% list())$shrink)))
     output$de_plot_stale <- stale_note(de_shown)
 
     # Field-based axis clamps (a limit follows its field across plot types).
@@ -675,9 +679,10 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
       fn <- paste0(feature_type(), "_name")
       out <- data.frame(id = rownames(d), stringsAsFactors = FALSE)
       if (fn %in% colnames(rd)) out[[fn]] <- as.character(rd[rownames(d), fn])
+      se_col <- if (shr && "lfcSE_shrunk" %in% names(d)) "lfcSE_shrunk" else "lfcSE"
       out$baseMean  <- round(d$baseMean, 1)
       out[[lfc_col]] <- round(d[[lfc_col]], 3)
-      out$lfcSE     <- round(d$lfcSE, 3)
+      out$lfcSE     <- round(d[[se_col]], 3)   # matches the chosen LFC (shrunk SE when shrunk)
       out$pvalue    <- signif(d$pvalue, 3)
       out$padj      <- signif(d$padj, 3)
       out$DEG       <- as.character(d[[deg_col]])
