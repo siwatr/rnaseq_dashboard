@@ -7,6 +7,8 @@
 de_direct_gg(
   mean_df,
   value_label = "mean",
+  control_label = "control",
+  test_label = "test",
   colour = NULL,
   x_range = NULL,
   y_range = NULL,
@@ -23,6 +25,9 @@ de_direct_gg(
 
 \item{value_label}{Scale/assay shown in the axis labels (e.g. \code{"logcounts"}),
 so the y=x guide isn't read as a linear comparison when the assay is log-scale.}
+
+\item{control_label, test_label}{The contrast's actual level names, shown on the
+x / y axes (default \code{"control"} / \code{"test"}).}
 
 \item{colour, x_range, y_range, labels, point_size, point_alpha, dark, interactive}{As in \code{\link[=de_ma_gg]{de_ma_gg()}}.}
 

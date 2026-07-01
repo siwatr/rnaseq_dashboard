@@ -493,18 +493,22 @@ de_volcano_gg <- function(df, lfc_col = "log2FoldChange", colour = NULL,
 #' @param mean_df A `data.frame(id, control, test)` (from [de_group_means()]).
 #' @param value_label Scale/assay shown in the axis labels (e.g. `"logcounts"`),
 #'   so the y=x guide isn't read as a linear comparison when the assay is log-scale.
+#' @param control_label,test_label The contrast's actual level names, shown on the
+#'   x / y axes (default `"control"` / `"test"`).
 #' @param colour,x_range,y_range,labels,point_size,point_alpha,dark,interactive
 #'   As in [de_ma_gg()].
 #' @param fixed_ratio Square the panel with a 1:1 aspect (`coord_fixed`).
 #' @return A ggplot object.
 #' @export
-de_direct_gg <- function(mean_df, value_label = "mean", colour = NULL,
+de_direct_gg <- function(mean_df, value_label = "mean",
+                         control_label = "control", test_label = "test", colour = NULL,
                          x_range = NULL, y_range = NULL, labels = NULL,
                          point_size = 1.4, point_alpha = 0.85, dark = FALSE,
                          fixed_ratio = FALSE, interactive = FALSE) {
   .de_require(mean_df, c("control", "test"))
   d <- data.frame(id = mean_df$id, x = mean_df$control, y = mean_df$test)
-  .de_scatter(d, sprintf("control (%s)", value_label), sprintf("test (%s)", value_label),
+  .de_scatter(d, sprintf("%s (%s)", control_label, value_label),
+              sprintf("%s (%s)", test_label, value_label),
               colour, x_range, y_range, labels, point_size, point_alpha,
               dark = dark, fixed_ratio = fixed_ratio, interactive = interactive) +
     ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed",

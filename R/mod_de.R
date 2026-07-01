@@ -185,10 +185,10 @@
         tags$div(class = "d-flex align-items-center justify-content-between flex-wrap gap-2",
           tags$h4("DE plot", class = "fs-6 mb-0"),
           .de_plot_type_control(ns("plot_type")))),
-      # Render controls live above the plot (not buried in the sidebar accordion).
-      tags$div(class = "d-flex align-items-center gap-3 flex-wrap mb-2",
-        tags$div(class = "mt-2 mb-0",
-          checkboxInput(ns("plot_auto"), "Auto-render", value = TRUE)),
+      uiOutput(ns("plots_deg_summary")),
+      # Render controls above the plot; button on its own line under the toggle.
+      tags$div(class = "mb-2",
+        checkboxInput(ns("plot_auto"), "Auto-render", value = TRUE),
         actionButton(ns("plot_render"), "Render", icon = icon("play"),
                      class = "btn-sm btn-primary")),
       uiOutput(ns("de_plot_stale")),
@@ -207,6 +207,8 @@
       bslib::input_switch(ns("sig_only"), "Significant only", value = FALSE)),
     bslib::card(
       bslib::card_header(tags$h4("DE results", class = "fs-6 mb-0")),
+      uiOutput(ns("table_deg_summary")),
+      tags$h5("DESeq2 Results", class = "fs-6 mt-1"),
       DT::DTOutput(ns("de_table")))
   )
 }
@@ -572,6 +574,45 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
       (state$de$results %||% list())[[a]]
     })
 
+    # --- DEG stats for the active contrast (title/subtitle + summary tables) ---
+    # down/up/no_change counts from the chosen DEG column (shrunk toggle).
+    deg_counts <- function(d) {
+      col <- if (isTRUE(thr$shrunk)) "DEG_shrunk" else "DEG"
+      v <- d[[col]]
+      list(down = sum(v == "down", na.rm = TRUE),
+           up   = sum(v == "up", na.rm = TRUE),
+           nc   = sum(v == "no_change", na.rm = TRUE))
+    }
+    # The shrinkage method actually shown: the extraction method when viewing shrunk
+    # LFC, else "None" (standard LFC is unshrunk). Title-cased "None".
+    active_method <- reactive({
+      if (!isTRUE(thr$shrunk)) return("None")
+      m <- ((state$de %||% list())$methods %||% list())[[(state$de %||% list())$active]]
+      if (is.null(m) || identical(m, "none")) "None" else m
+    })
+    # A compact one-row DEG summary table for the active contrast (auto-updating).
+    # Shown above both the plot and the results table for visual consistency.
+    deg_summary_tags <- function() {
+      res <- active_raw()
+      if (is.null(res)) {
+        return(tags$p(class = "text-muted small mb-2", "No results for the selected contrast."))
+      }
+      d <- de_classify_table(res, thr$padj %||% 0.05, thr$lfc %||% log2(2))
+      cnt <- deg_counts(d)
+      cell <- function(x) tags$td(class = "text-end", x)
+      tags$table(class = "table table-sm mb-2 w-auto",
+        tags$thead(tags$tr(
+          tags$th("Contrast"), tags$th(class = "text-end", "Down"),
+          tags$th(class = "text-end", "Up"), tags$th(class = "text-end", "No change"),
+          tags$th(class = "text-end", "Total"), tags$th("Shrinkage"))),
+        tags$tbody(tags$tr(
+          tags$td((state$de %||% list())$active), cell(cnt$down), cell(cnt$up),
+          cell(cnt$nc), cell(cnt$down + cnt$up),
+          tags$td(class = "text-muted small", active_method()))))
+    }
+    output$plots_deg_summary <- renderUI(deg_summary_tags())
+    output$table_deg_summary <- renderUI(deg_summary_tags())
+
     # DEG palette (from the Palette page's Other -> DEG; NULL -> Pink-Blue default).
     deg_colors <- reactive({
       cfg <- (state$palette$other %||% list())$DEG
@@ -710,14 +751,22 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
                         point_size = ps, point_alpha = pa, dark = dark(),
                         interactive = interactive),
         "Direct comparison" = {
-          gm <- direct_means()
+          gm <- direct_means(); s <- active_spec()
           de_direct_gg(gm, value_label = direct_value()$label,
+                       control_label = s$control %||% "control",
+                       test_label = s$test %||% "test",
                        colour = de_colour_for(d, gm$id),
                        x_range = rg$expr, y_range = rg$expr, labels = labs,
                        point_size = ps, point_alpha = pa, dark = dark(),
                        fixed_ratio = isTRUE(input$fixed_ratio), interactive = interactive)
         })
+      # Embed the contrast + DEG stats in the plot itself (for figure export).
+      s <- active_spec(); cnt <- deg_counts(d)
+      ttl <- if (!is.null(s)) sprintf("%s: %s vs %s", s$var, s$test, s$control) else NULL
+      sub <- sprintf("DEG: %d Down | %d Up | %d No Change\n(LFC Shrinkage: %s)",
+                     cnt$down, cnt$up, cnt$nc, active_method())
       gg + .plot_theme(dark()) +
+        ggplot2::labs(title = ttl, subtitle = sub) +
         ggplot2::theme(legend.position = input$legend_pos %||% "right")
     }
     dual_plot("de_plot", build_de_gg,

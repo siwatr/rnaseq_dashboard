@@ -116,7 +116,15 @@ test_that("mod_de: DE Plots build for MA/volcano/direct + table renders + view s
                       plot_type = "MA")
     session$flushReact()
     expect_false(is.null(de_shown$value()))                  # auto-rendered classified df
-    expect_s3_class(build_de_gg(FALSE), "ggplot")            # MA
+    gg <- build_de_gg(FALSE)
+    expect_s3_class(gg, "ggplot")                            # MA
+    # DEG stats embedded in the plot title/subtitle (for figure export)
+    expect_match(gg$labels$title, "condition: treated vs control")
+    expect_match(gg$labels$subtitle, "DEG:.*No Change")
+    expect_match(gg$labels$subtitle, "LFC Shrinkage: None")  # shrink = none here
+    # the per-contrast DEG summary tables render above plot + table
+    expect_error(output$plots_deg_summary, NA)
+    expect_error(output$table_deg_summary, NA)
     session$setInputs(plot_type = "Volcano"); session$flushReact()
     expect_s3_class(build_de_gg(FALSE), "ggplot")
     session$setInputs(plot_type = "Direct comparison"); session$flushReact()

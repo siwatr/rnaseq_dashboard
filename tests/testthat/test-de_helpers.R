@@ -209,6 +209,13 @@ test_that("de_direct_gg fixed_ratio squares the panel via coord_fixed", {
   expect_null(q$coordinates$ratio)                     # plain cartesian
 })
 
+test_that("de_direct_gg labels the axes with the contrast level names", {
+  means <- data.frame(id = c("g1", "g2"), control = c(1, 2), test = c(3, 4))
+  p <- de_direct_gg(means, value_label = "logcounts", control_label = "wt", test_label = "ko")
+  expect_equal(p$labels$x, "wt (logcounts)")
+  expect_equal(p$labels$y, "ko (logcounts)")
+})
+
 test_that("DEG points draw no_change first so up/down land on top", {
   df <- data.frame(baseMean = c(10, 20, 30), log2FoldChange = c(3, -3, 0.1),
                    padj = c(0.001, 0.001, 0.5), row.names = c("g1", "g2", "g3"))
