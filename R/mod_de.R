@@ -1,44 +1,88 @@
-# Page 5: Differential expression. A navset_card_tab of Design & Contrasts (this
-# PR, P5b) / DE Plots / Results Table (P5c). The design is committed to the dds via
-# the shared mod_design_builder (synced with the Input/Design tab); contrasts are
-# stored in state$de and the fit is cached via state_derive keyed on
-# (data_version, design_version). See the shiny-de-analysis skill.
+# Page 5: Differential expression. A navset_card_tab of Design & Contrasts (P5b) /
+# DE Plots / Results Table (P5c). The design is committed to the dds via the shared
+# mod_design_builder (synced with the Input/Design tab). The DESeq2 FIT and the
+# per-contrast RESULT EXTRACTION are separate: Run DESeq2 fits (contrast-free);
+# extraction is reactive (Auto-update) or on demand, cached per contrast. Contrast
+# specs live in state$de and carry a validity tier (extractable/not_in_design/
+# invalid). See the shiny-de-analysis skill.
+
+# Badge classes + tips for the three contrast-validity tiers.
+.de_tier_class <- c(extractable = "text-bg-primary",
+                    not_in_design = "text-bg-warning",
+                    invalid = "text-bg-danger")
+.de_tier_tip <- c(
+  extractable   = "In the current design - produces results.",
+  not_in_design = "Factor is valid but not in the current design - add it to the design to extract (kept for later).",
+  invalid       = "Factor or a level no longer exists in the data - kept, and recoverable if you restore it.")
+
+# A small colour legend for the contrast badges.
+.de_legend <- function() {
+  item <- function(cls, txt) tags$span(class = "d-inline-flex align-items-center me-2",
+    tags$span(class = paste("badge rounded-pill me-1", cls), " "), txt)
+  tags$div(class = "small text-muted mt-2",
+    item("text-bg-primary", "in design"),
+    item("text-bg-warning", "not in design"),
+    item("text-bg-danger", "invalid"))
+}
 
 # --- Design & Contrasts tab UI ---------------------------------------------
 .de_design_ui <- function(ns) {
   bslib::layout_sidebar(
     sidebar = bslib::sidebar(
-      title = "Design & fit", width = 340,
+      title = "Design & fit", width = 360,
       mod_design_builder_ui(ns("design")),
       tags$hr(),
-      selectInput(ns("shrink"), "LFC shrinkage",
-                  c("apeglm (needs coefficient)" = "apeglm",
-                    "ashr" = "ashr", "none" = "none"), selected = "apeglm"),
+      tags$div(class = "fw-semibold mb-2", "Differential expression fit"),
       bslib::tooltip(
-        actionButton(ns("run"), "Run DESeq2", class = "btn-primary"),
-        "Fits DESeq2 on the current design and extracts every stored contrast. Re-run after a data or design change."),
+        selectInput(ns("shrink"), "LFC shrinkage",
+                    c("apeglm (recommended)" = "apeglm", "ashr" = "ashr", "none" = "none"),
+                    selected = "apeglm"),
+        "Shrinks noisy log2 fold-changes toward zero for low-count genes. apeglm (recommended) is stable but needs the contrast as a model coefficient (control = reference level); ashr works for any contrast; none = raw LFCs."),
+      bslib::tooltip(
+        bslib::input_switch(ns("auto_update"), "Auto-update results", value = TRUE),
+        "On: results refresh automatically as you add/remove contrasts (no re-fit needed). Off: use the Update results button."),
+      uiOutput(ns("update_btn")),
+      tags$div(class = "d-grid mt-3",
+        bslib::tooltip(
+          actionButton(ns("run"), "Run DESeq2", class = "btn fw-semibold",
+                       style = "background-color:#8b58db;border-color:#8b58db;color:#fff;"),
+          "Fits DESeq2 on the current design (this can take a while). Re-run after a data or design change.")),
       uiOutput(ns("run_note"))
     ),
     bslib::card(
       bslib::card_header(tags$h4("Contrasts", class = "fs-6 mb-0")),
+
+      ## Row 1 -- Add contrast
+      tags$h5("Add contrast", class = "fs-6"),
       tags$p(class = "text-muted small",
-             "A contrast compares a test level against a control (reference) level of a factor."),
+             "A contrast compares a test level against a control (reference) level of a design factor."),
       bslib::layout_columns(
-        col_widths = c(4, 3, 3, 2),
+        col_widths = c(4, 4, 4),
         selectInput(ns("c_var"), "Factor", choices = NULL),
         selectInput(ns("c_test"), "Test", choices = NULL),
-        selectInput(ns("c_control"), "Control", choices = NULL),
-        tags$div(class = "d-flex align-items-end",
-                 actionButton(ns("c_add"), "Add", class = "btn-secondary btn-sm w-100"))
+        selectInput(ns("c_control"), "Control", choices = NULL)
       ),
-      uiOutput(ns("contrast_list")),
+      actionButton(ns("c_add"), "Add contrast", class = "btn-secondary btn-sm"),
+      tags$hr(),
+
+      ## Row 2 -- Defined contrasts + Remove
       bslib::layout_columns(
-        col_widths = c(8, 4),
-        selectInput(ns("active"), "Active contrast", choices = NULL),
-        tags$div(class = "d-flex align-items-end",
-                 actionButton(ns("remove_active"), "Remove",
-                              class = "btn-outline-danger btn-sm w-100"))
+        col_widths = c(7, 5),
+        tags$div(
+          tags$h5("Defined contrasts", class = "fs-6"),
+          uiOutput(ns("contrast_list"))),
+        tags$div(
+          tags$h5("Remove contrasts", class = "fs-6"),
+          selectizeInput(ns("remove_multi"), NULL, choices = NULL, multiple = TRUE,
+                         options = list(placeholder = "select contrasts to remove")),
+          tags$div(class = "d-flex gap-2 flex-wrap",
+            actionButton(ns("remove_sel"), "Remove selected", class = "btn-outline-secondary btn-sm"),
+            actionButton(ns("remove_invalid"), "Remove invalid", class = "btn-outline-danger btn-sm"),
+            actionButton(ns("remove_all"), "Remove all", class = "btn-outline-danger btn-sm")))
       ),
+      tags$hr(),
+
+      ## Row 3 -- DEG summary
       uiOutput(ns("summary"))
     )
   )
@@ -76,10 +120,46 @@ mod_de_server <- function(id, state) {
     # The shared design builder (synced with the Input/Design tab via state).
     design_status <- mod_design_builder_server("design", state)
 
-    # --- contrast pickers -------------------------------------------------
-    # A contrast can only be on a factor that is IN the model (else DESeq2::results
-    # errors), so restrict the Factor to the discrete design terms; preserve the
-    # user's selection across unrelated data edits when it's still valid.
+    # The fitted DESeqDataSet lives in the derived env (non-reactive) under a
+    # stamp; extraction reads it without triggering a re-fit. NULL if no current fit.
+    current_fit <- function() {
+      if (!exists("de_fit", envir = state$derived, inherits = FALSE)) return(NULL)
+      ent <- get("de_fit", envir = state$derived)
+      cur <- list(dv = state$data_version, desv = state$design_version %||% 0L)
+      if (!identical(ent$stamp, cur)) return(NULL)
+      ent$value
+    }
+
+    # Extract results for every EXTRACTABLE contrast not already cached; prune
+    # results whose contrast is gone / no longer extractable. Cheap + idempotent,
+    # so it never loops (never re-triggers its own dependencies).
+    do_extract <- function() {
+      fit <- current_fit(); if (is.null(fit)) return(invisible())
+      dds <- state$working; if (is.null(dds)) return(invisible())
+      de <- state$de %||% list()
+      shrink <- de$shrink %||% "apeglm"
+      specs <- de$contrasts %||% list()
+      results <- de$results %||% list(); methods <- de$methods %||% list()
+      extractable <- Filter(function(s) de_contrast_validity(dds, s) == "extractable", specs)
+      ex_labels <- vapply(extractable, function(s) s$label, character(1))
+      for (s in extractable) {
+        if (!is.null(results[[s$label]])) next
+        df <- de_results(fit, c(s$var, s$test, s$control), shrink_type = shrink)
+        results[[s$label]] <- df
+        methods[[s$label]] <- attr(df, "shrink_method") %||% "none"
+      }
+      results <- results[intersect(names(results), ex_labels)]
+      methods <- methods[intersect(names(methods), ex_labels)]
+      de$results <- results; de$methods <- methods
+      if (is.null(de$active) || !(de$active %in% names(results))) {
+        de$active <- if (length(results)) names(results)[1] else NULL
+      }
+      state$de <- de
+    }
+    auto_on <- function() isTRUE(input$auto_update %||% TRUE)
+    maybe_extract <- function() if (auto_on()) do_extract()
+
+    # --- contrast pickers (reactive to data + design + factor) ------------
     observeEvent(list(state$data_version, state$design_version), {
       dds <- state$working
       if (is.null(dds)) return()
@@ -89,15 +169,19 @@ mod_de_server <- function(id, state) {
       updateSelectInput(session, "c_var", choices = dv, selected = sel)
     }, ignoreNULL = FALSE)
 
-    observeEvent(input$c_var, {
+    # Levels refresh on factor OR data/design change (a dataset switch or a value
+    # relabel keeps c_var == "condition" but changes its levels).
+    observeEvent(list(input$c_var, state$data_version, state$design_version), {
       dds <- state$working
       if (is.null(dds) || is.null(input$c_var) || !nzchar(input$c_var)) return()
       lv <- de_contrast_levels(dds, input$c_var)
-      if (length(lv) < 2) return()
-      updateSelectInput(session, "c_test", choices = lv, selected = lv[length(lv)])
-      updateSelectInput(session, "c_control", choices = lv, selected = lv[1])
+      test_sel <- if (isTRUE(input$c_test %in% lv)) input$c_test else if (length(lv)) lv[length(lv)] else NULL
+      ctrl_sel <- if (isTRUE(input$c_control %in% lv)) input$c_control else if (length(lv)) lv[1] else NULL
+      updateSelectInput(session, "c_test", choices = lv, selected = test_sel)
+      updateSelectInput(session, "c_control", choices = lv, selected = ctrl_sel)
     })
 
+    # --- add / remove contrasts -------------------------------------------
     observeEvent(input$c_add, {
       req(input$c_var, input$c_test, input$c_control)
       if (identical(input$c_test, input$c_control)) {
@@ -112,83 +196,84 @@ mod_de_server <- function(id, state) {
                         list(list(var = input$c_var, test = input$c_test,
                                   control = input$c_control, label = label)))
       state$de <- de
+      maybe_extract()
     })
 
-    observeEvent(input$remove_active, {
-      label <- input$active
-      if (is.null(label) || !nzchar(label)) return()
+    drop_labels <- function(labels) {
       de <- state$de %||% list()
-      keep <- .de_labels(state) != label
+      keep <- !(.de_labels(state) %in% labels)
       de$contrasts <- (de$contrasts %||% list())[keep]
-      de$results <- de$results[setdiff(names(de$results %||% list()), label)]
-      if (identical(de$active, label)) {
+      de$results <- de$results[setdiff(names(de$results %||% list()), labels)]
+      de$methods <- de$methods[setdiff(names(de$methods %||% list()), labels)]
+      if (!is.null(de$active) && de$active %in% labels) {
         de$active <- if (length(de$results)) names(de$results)[1] else NULL
       }
       state$de <- de
+    }
+    observeEvent(input$remove_sel, {
+      if (length(input$remove_multi)) drop_labels(input$remove_multi)
+    })
+    observeEvent(input$remove_all, {
+      de <- state$de %||% list()
+      de$contrasts <- list(); de$results <- list(); de$methods <- list(); de$active <- NULL
+      state$de <- de
+    })
+    observeEvent(input$remove_invalid, {
+      dds <- state$working; if (is.null(dds)) return()
+      specs <- (state$de %||% list())$contrasts %||% list()
+      bad <- vapply(specs, function(s) de_contrast_validity(dds, s) == "invalid", logical(1))
+      if (any(bad)) drop_labels(vapply(specs[bad], function(s) s$label, character(1)))
     })
 
-    # Keep the active-contrast selector in sync with the stored list.
+    # Keep the Remove multi-select choices synced with the stored contrasts.
     observeEvent(.de_labels(state), {
-      labs <- .de_labels(state)
-      sel <- (state$de %||% list())$active %||% (if (length(labs)) labs[1] else NULL)
-      updateSelectInput(session, "active", choices = labs, selected = sel)
+      updateSelectizeInput(session, "remove_multi", choices = .de_labels(state), server = FALSE)
     }, ignoreNULL = FALSE)
-    observeEvent(input$active, {
-      if (is.null(input$active) || !nzchar(input$active)) return()
-      de <- state$de %||% list(); de$active <- input$active; state$de <- de
-    })
+
+    # Notify (keep, don't auto-remove) when a data/design change leaves contrasts
+    # non-extractable. Load resets state$de, so no false alarm on load.
+    observeEvent(list(state$data_version, state$design_version), {
+      dds <- state$working; if (is.null(dds)) return()
+      specs <- (state$de %||% list())$contrasts %||% list()
+      if (!length(specs)) return()
+      nbad <- sum(vapply(specs, function(s) de_contrast_validity(dds, s) != "extractable", logical(1)))
+      if (nbad > 0) {
+        showNotification(sprintf(
+          "%d contrast(s) are not extractable under the current design/data (kept - see the Contrasts card; remove them there if you don't need them).", nbad),
+          type = "warning", duration = 6)
+      }
+    }, ignoreInit = TRUE)
 
     output$contrast_list <- renderUI({
+      dds <- state$working
       specs <- (state$de %||% list())$contrasts %||% list()
-      if (!length(specs)) return(tags$p(class = "text-muted small", "No contrasts added yet."))
-      tags$div(class = "d-flex flex-wrap gap-1 mb-2",
-        lapply(specs, function(s)
-          tags$span(class = "badge rounded-pill text-bg-secondary", s$label)))
+      if (!length(specs)) return(tags$p(class = "text-muted small", "No active contrast."))
+      badges <- lapply(specs, function(s) {
+        v <- if (is.null(dds)) "invalid" else de_contrast_validity(dds, s)
+        bslib::tooltip(
+          tags$span(class = paste("badge rounded-pill me-1 mb-1", .de_tier_class[[v]]),
+                    style = "font-size:0.8rem;", s$label),
+          .de_tier_tip[[v]])
+      })
+      tagList(tags$div(class = "d-flex flex-wrap", badges), .de_legend())
     })
 
-    # --- run DESeq2 -------------------------------------------------------
+    # --- run DESeq2 (fit only) --------------------------------------------
     observeEvent(input$run, {
       dds <- state$working
       if (is.null(dds)) { showNotification("Load a dataset first.", type = "error"); return() }
       if (!isTRUE(design_status()$ok)) {
         showNotification("Set a valid (full-rank) design first (Apply design).", type = "error"); return()
       }
-      specs <- (state$de %||% list())$contrasts %||% list()
-      if (!length(specs)) { showNotification("Add at least one contrast.", type = "error"); return() }
       shrink <- input$shrink %||% "apeglm"
-      # Only contrasts whose factor is in the model and whose levels still exist
-      # can be extracted; a stale spec (factor dropped from the design, or a level
-      # removed by a later edit) is skipped + reported rather than sinking the batch.
-      dv <- intersect(tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0)),
-                      de_design_factors(dds))
-      valid <- vapply(specs, function(s)
-        s$var %in% dv && all(c(s$test, s$control) %in% de_contrast_levels(dds, s$var)),
-        logical(1))
-      if (!any(valid)) {
-        showNotification("No stored contrast is valid for the current design.", type = "error")
-        return()
-      }
       ok <- tryCatch({
-        shiny::withProgress(message = "Running DESeq2", value = 0.2, {
-          # data_version is carried by state_derive's version stamp; only the
-          # design_version needs to be an explicit param (state_derive has no
-          # concept of it) so the fit refits on a design-only change.
-          fit <- state_derive(state, "de_fit",
-            params = list(desv = state$design_version %||% 0L),
-            expr = function() de_run(dds))
-          shiny::incProgress(0.5, message = "Extracting contrasts")
-          results <- list(); methods <- list()
-          for (s in specs[valid]) {
-            df <- de_results(fit, c(s$var, s$test, s$control), shrink_type = shrink)
-            results[[s$label]] <- df
-            methods[[s$label]] <- attr(df, "shrink_method") %||% "none"
-          }
+        shiny::withProgress(message = "Running DESeq2", value = 0.4, {
+          fit <- de_run(dds)
+          stamp <- list(dv = state$data_version, desv = state$design_version %||% 0L)
+          assign("de_fit", list(value = fit, stamp = stamp), envir = state$derived)
           de <- state$de %||% list()
-          de$results <- results
-          de$methods <- methods
-          de$active  <- if (!is.null(de$active) && de$active %in% names(results)) de$active else names(results)[1]
-          de$shrink  <- shrink
-          de$stamp   <- list(dv = state$data_version, desv = state$design_version %||% 0L)
+          de$stamp <- stamp; de$shrink <- shrink
+          de$results <- list(); de$methods <- list()   # fresh fit -> re-extract
           state$de <- de
         })
         TRUE
@@ -197,12 +282,27 @@ mod_de_server <- function(id, state) {
                          type = "error", duration = NULL); FALSE
       })
       if (ok) {
-        n_skip <- sum(!valid)
-        showNotification(
-          if (n_skip) sprintf("DE run complete (%d contrast(s) skipped as invalid for the current design).", n_skip)
-          else "DE run complete.",
-          type = if (n_skip) "warning" else "message", duration = 4)
+        do_extract()                                    # always extract after a fresh fit
+        showNotification("DESeq2 fit complete.", type = "message", duration = 3)
       }
+    })
+
+    # Shrinkage change re-extracts (it changes the shrunk LFC) against a current fit.
+    observeEvent(input$shrink, {
+      de <- state$de %||% list()
+      if (identical(de$shrink, input$shrink)) return()
+      de$shrink <- input$shrink; de$results <- list(); de$methods <- list()
+      state$de <- de
+      maybe_extract()
+    }, ignoreInit = TRUE)
+
+    # Flipping Auto-update on catches results up.
+    observeEvent(input$auto_update, if (auto_on()) do_extract(), ignoreInit = TRUE)
+    observeEvent(input$update_results, do_extract())
+
+    output$update_btn <- renderUI({
+      if (auto_on()) return(NULL)
+      actionButton(session$ns("update_results"), "Update results", class = "btn-outline-primary btn-sm mt-1")
     })
 
     output$run_note <- renderUI({
@@ -210,14 +310,18 @@ mod_de_server <- function(id, state) {
       if (identical(st, "none")) return(NULL)
       if (identical(st, "stale"))
         tags$div(class = "text-warning small mt-2",
-                 "Results are stale (data/design changed) - re-run.")
+                 icon("triangle-exclamation"), " Re-run DESeq2 needed (data or design changed).")
       else tags$div(class = "text-success small mt-2", "Results are current.")
     })
 
-    # --- per-contrast DEG summary (default thresholds; P5c makes them adjustable) ---
+    # --- per-contrast DEG summary -----------------------------------------
     output$summary <- renderUI({
       res <- (state$de %||% list())$results %||% list()
-      if (!length(res)) return(NULL)
+      if (!length(res)) {
+        msg <- if (!is.null(current_fit())) "Add a contrast to extract results."
+               else "Run DESeq2 to see the DEG summary."
+        return(tags$p(class = "text-muted small", msg))
+      }
       methods <- (state$de %||% list())$methods %||% list()
       rows <- lapply(names(res), function(lab) {
         s <- de_summary(de_classify_table(res[[lab]]))
@@ -228,7 +332,7 @@ mod_de_server <- function(id, state) {
           tags$td(class = "text-end", s[["total"]]),
           tags$td(class = "text-muted small", methods[[lab]] %||% ""))
       })
-      tags$div(class = "mt-3",
+      tags$div(
         tags$h5("DEG summary", class = "fs-6"),
         tags$table(class = "table table-sm",
           tags$thead(tags$tr(tags$th("Contrast"), tags$th(class = "text-end", "Up"),

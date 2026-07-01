@@ -109,6 +109,30 @@ test_that("de_group_means guards empty / unknown groups", {
   expect_error(de_group_means(dds, "logcounts", "NOPE", trt), "Unknown sample")
 })
 
+test_that("de_contrast_validity classifies extractable / not_in_design / invalid", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 1)  # design ~ condition
+  expect_equal(de_contrast_validity(dds, list(var = "condition", test = "treated", control = "control")),
+               "extractable")
+  expect_equal(de_contrast_validity(dds, list(var = "bio_rep", test = "1", control = "2")),
+               "not_in_design")                                   # valid column, not a design term
+  expect_equal(de_contrast_validity(dds, list(var = "condition", test = "ghost", control = "control")),
+               "invalid")                                        # level gone
+  expect_equal(de_contrast_validity(dds, list(var = "nope", test = "a", control = "b")),
+               "invalid")                                        # column gone
+})
+
+test_that("de_run drops empty design-factor levels (avoids false rank deficiency)", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 40, n_per_group = 4, n_spike = 0, seed = 2)
+  cd <- SummarizedExperiment::colData(dds)
+  levels(cd$condition) <- c(levels(cd$condition), "empty")       # an unused (0-sample) level
+  SummarizedExperiment::colData(dds) <- cd
+  fit <- de_run(dds)                                             # would be rank-deficient without droplevels
+  expect_s4_class(fit, "DESeqDataSet")
+  expect_false("empty" %in% levels(SummarizedExperiment::colData(fit)$condition))
+})
+
 # --- size-factor edge case (poscounts fallback) ----------------------------
 
 test_that("estimate_size_factors_endogenous falls back to poscounts on sparse data", {

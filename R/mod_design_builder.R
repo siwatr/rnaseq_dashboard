@@ -16,7 +16,9 @@ mod_design_builder_ui <- function(id, title = NULL) {
                    options = list(placeholder = "none")),
     uiOutput(ns("reflevels")),
     tags$div(class = "mt-2 mb-1 small text-muted", "Model formula"),
-    tags$pre(class = "small mb-2", textOutput(ns("formula"), inline = TRUE)),
+    tags$div(class = "font-monospace small mb-2 p-2 rounded text-start",
+             style = "background-color: var(--bs-secondary-bg); overflow-x: auto;",
+             textOutput(ns("formula"), inline = TRUE)),
     uiOutput(ns("rank_badge")),
     actionButton(ns("apply"), "Apply design", class = "btn-primary btn-sm mt-2")
   )
@@ -98,7 +100,9 @@ mod_design_builder_server <- function(id, state) {
     output$rank_badge <- renderUI({
       rk <- rank_now()
       if (isTRUE(rk$ok)) {
-        tags$span(class = "badge rounded-pill text-bg-success", "design is full rank")
+        bslib::tooltip(
+          tags$span(class = "badge rounded-pill text-bg-success", "design is full rank"),
+          "The model can estimate every coefficient independently. If it were not full rank, two terms would be confounded/collinear - drop a covariate or add replication.")
       } else {
         tags$div(class = "text-danger small", rk$msg %||% "Design is not full rank.")
       }

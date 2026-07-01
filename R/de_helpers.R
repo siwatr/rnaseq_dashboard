@@ -146,19 +146,66 @@ de_coef_name <- function(contrast) {
 
 # --- fitting + results ------------------------------------------------------
 
+# Drop unused levels of the design factors before fitting. Critical: a metadata
+# relabel can leave an EMPTY factor level (an all-zero model-matrix column ->
+# rank-deficient), so `DESeq()` fails "full model matrix is less than full rank"
+# even though the design-builder badge (which droplevels) reports full rank. This
+# keeps the fit and the badge in agreement; also rejects NA-in-design early with a
+# clear message rather than DESeq2's opaque one.
+.de_droplevels_design <- function(dds) {
+  vars <- tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0))
+  cd <- SummarizedExperiment::colData(dds)
+  for (v in intersect(vars, colnames(cd))) {
+    x <- cd[[v]]
+    if (is.factor(x) || is.character(x)) {
+      if (anyNA(x)) {
+        stop("Design factor '", v, "' has missing values; fix the metadata before running DE.",
+             call. = FALSE)
+      }
+      cd[[v]] <- droplevels(if (is.factor(x)) x else factor(x))
+    }
+  }
+  SummarizedExperiment::colData(dds) <- cd
+  dds
+}
+
 #' Run DESeq2 with a robust size-factor step
 #'
-#' Ensures size factors exist (via [estimate_size_factors_endogenous()], which
-#' falls back to the positive-counts estimator on sparse data) before fitting, so
-#' `DESeq()` reuses them rather than tripping the median-of-ratios failure.
+#' Drops unused design-factor levels (so the fit agrees with [de_full_rank()] and
+#' an empty level doesn't trip "full model matrix is less than full rank"), then
+#' ensures size factors exist (via [estimate_size_factors_endogenous()], which
+#' falls back to the positive-counts estimator on sparse data) before fitting.
 #' @param dds A `DESeqDataSet` (design already set).
 #' @param quiet Passed to `DESeq2::DESeq()`.
 #' @return The fitted `DESeqDataSet`.
 #' @export
 de_run <- function(dds, quiet = TRUE) {
+  dds <- .de_droplevels_design(dds)
   sf <- tryCatch(DESeq2::sizeFactors(dds), error = function(e) NULL)
   if (is.null(sf)) dds <- estimate_size_factors_endogenous(dds)
   DESeq2::DESeq(dds, quiet = quiet)
+}
+
+#' Validity of a stored contrast against the current dds
+#'
+#' Distinguishes three states so the UI can label + decide extraction:
+#' `"extractable"` (factor is in the design and both levels exist -> can produce
+#' results now), `"not_in_design"` (factor + levels exist but the factor isn't a
+#' current design term -> kept; add it to the design to extract), and `"invalid"`
+#' (the factor column or a level no longer exists in the data -> kept unless
+#' removed; recoverable if restored).
+#' @param dds A `DESeqDataSet`.
+#' @param spec A contrast spec `list(var, test, control, ...)`.
+#' @return One of `"extractable"`, `"not_in_design"`, `"invalid"`.
+#' @export
+de_contrast_validity <- function(dds, spec) {
+  cd <- SummarizedExperiment::colData(dds)
+  if (is.null(spec$var) || is.null(cd[[spec$var]])) return("invalid")
+  lv <- de_contrast_levels(dds, spec$var)
+  if (!all(c(spec$test, spec$control) %in% lv)) return("invalid")
+  design_vars <- tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0))
+  if (!(spec$var %in% design_vars)) return("not_in_design")
+  "extractable"
 }
 
 #' Shrunken log2 fold-changes for a contrast (apeglm -> ashr -> normal fallback)
