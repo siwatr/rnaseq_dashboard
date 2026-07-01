@@ -15,7 +15,8 @@ de_run(dds, quiet = TRUE)
 The fitted \code{DESeqDataSet}.
 }
 \description{
-Ensures size factors exist (via \code{\link[=estimate_size_factors_endogenous]{estimate_size_factors_endogenous()}}, which
-falls back to the positive-counts estimator on sparse data) before fitting, so
-\code{DESeq()} reuses them rather than tripping the median-of-ratios failure.
+Drops unused design-factor levels (so the fit agrees with \code{\link[=de_full_rank]{de_full_rank()}} and
+an empty level doesn't trip "full model matrix is less than full rank"), then
+ensures size factors exist (via \code{\link[=estimate_size_factors_endogenous]{estimate_size_factors_endogenous()}}, which
+falls back to the positive-counts estimator on sparse data) before fitting.
 }
