@@ -81,8 +81,8 @@
                          options = list(placeholder = "select contrasts to remove")),
           tags$div(class = "d-flex gap-2 flex-wrap",
             actionButton(ns("remove_sel"), "Remove selected", class = "btn-secondary btn-sm"),
-            actionButton(ns("remove_invalid"), "Remove invalid", class = "btn-danger btn-sm"),
-            actionButton(ns("remove_all"), "Remove all", class = "btn-danger btn-sm")))
+            actionButton(ns("remove_invalid"), "Remove invalid", class = "btn-danger btn-sm", style = "color:#fff;"),
+            actionButton(ns("remove_all"), "Remove all", class = "btn-danger btn-sm", style = "color:#fff;")))
       ),
       tags$hr(),
 
