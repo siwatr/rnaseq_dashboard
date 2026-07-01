@@ -151,17 +151,23 @@ progress indicators, reproducibility export, mock-`dds` fixtures) are threaded t
   Still-open follow-ups it sets up: **promote the "Showing" subset to app-state** so other plot
   pages reuse it; and P4b/P5 plot pages can now reuse the session removal aesthetics.
 
-## Phase 5 — Differential expression ⬅️ next ⬜
-DE statistics + DEG plots (the heatmap split out to Phase 7).
-- Guided design builder (reference level + full-rank check) + contrast picker; multiple
-  stored contrasts; `DESeq2::DESeq()` + `lfcShrink`. Dual LFC columns
-  (`log2FoldChange`(_shrunk)) + `sig`/`DEG`(_shrunk); shrinkage toggle = column selection.
-- MA / volcano / direct-comparison plots with axis clamping (triangle markers); colour by
-  `DEG` (default) via the shared `aes_helpers` resolver.
-- **Create the `de-analysis` skill** (guided design/contrast/shrinkage, dual-LFC schema,
-  MA/volcano conventions) as part of this phase, so it matches the real DESeq2 implementation.
+## Phase 5 — Differential expression ✅
+DE statistics + DEG plots (the heatmap split out to Phase 7). Sub-PR'd P5a→P5c.
+- **P5a ✅** pure engine `de_helpers.R` — `classify`/dual-LFC schema, `de_full_rank`/`de_relevel`/
+  contrast levels, `de_run`/`de_results`/`de_shrink` (apeglm→ashr→normal fallback), MA/volcano/direct
+  builders + `de_clamp`/`de_colour_resolve`; hardened `estimate_size_factors_endogenous` (poscounts
+  fallback); `apeglm`/`ashr`/`ggrepel` Suggests; the **`shiny-de-analysis` skill**. [PR #32]
+- **P5b/P5b-2 ✅** shared `mod_design_builder` (in the Dataset **Design** sub-tab + the DE tab);
+  **design-scoped** `state_set_design` (bumps `design_version`, not `data_version`); the DE Design &
+  Contrasts tab — contrast picker with 3 validity tiers, **Run = fit only** (stored in `derived` under
+  a stamp) + **reactive/auto per-contrast extraction** (cached in `state$de`); status-bar DE badge.
+  [PR #33, #34]
+- **P5c ✅** DE Plots (segmented MA/volcano/direct on the `dual_plot` engine; deferred sig = data-only;
+  local per-feature colour via `de_colour_resolve` + the curated Palette **`other/DEG`** set;
+  field-based axis limits → triangles; 1:1 Direct toggle; ggrepel labels) + Results Table (`dt_table`
+  DEG-coloured + significant-only) + a **shared "Contrast to view"** selector. [PR #TBD]
 
-## Phase 6 — Gene Sets ⬜
+## Phase 6 — Gene Sets ⬅️ next ⬜
 A dedicated page (between DE and Expression) managing **named gene sets of interest** — the
 resource DE *seeds* and the Expression page *consumes*. Sources (all opt-in, nothing auto-included):
 - **Paste names/IDs** (textarea, resolved via `lookup_feature()` against a chosen rowData field;
@@ -260,6 +266,10 @@ Fill in the Export page (shell since P1; currently downloads the processed `dds`
 | #28 | anno-refactor-B: generalize Palette "Other" (removal-pool + QC metrics customizable) |
 | #29 | anno-refactor-C: spike-in QC metrics as attributes + "Spike-in" optgroup |
 | #30 | docs: shared colour/annotation resolver convention (`shiny-plot-aesthetics` skill) |
+| #31 | docs: split DE/Expression phases, add Gene Sets page, gather deferred items |
+| #32 | P5a: DESeq2 DE engine (`de_helpers.R`) + size-factor hardening + `shiny-de-analysis` skill |
+| #33 | P5b: DE design/contrast builder + Dataset/Design tab + DESeq2 fit (design-scoped) |
+| #34 | P5b-2: DE contrast validity + reactive extraction + UI polish |
 
 **v0.1.0** released after #21 (end of P3).
 

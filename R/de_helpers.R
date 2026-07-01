@@ -315,8 +315,9 @@ de_clamp <- function(x, lo = NULL, hi = NULL) {
   list(value = v, clamped = clamped)
 }
 
-# Default DEG colours (overridden by the Palette other/DEG config at the call site).
-.de_deg_colors <- c(up = "#D62728", down = "#1F77B4", no_change = "#B0B0B0")
+# Default DEG colours (the "DEG: Pink-Blue" scheme; overridden by the Palette
+# other/DEG config at the call site).
+.de_deg_colors <- c(up = "#B54661", down = "#235675", no_change = "gray80")
 
 #' Resolve a per-feature colour aesthetic for a DE plot
 #'
@@ -351,7 +352,8 @@ de_colour_resolve <- function(df, key, colors = NULL) {
 # Shared scatter: clamp -> shape(triangle) for out-of-range, optional colour, an
 # optional ggrepel label layer, and a hover `text` aes only when interactive.
 .de_scatter <- function(d, xlab, ylab, colour = NULL, x_range = NULL, y_range = NULL,
-                        labels = NULL, point_size = 1.4, interactive = FALSE) {
+                        labels = NULL, point_size = 1.4, point_alpha = 0.85,
+                        interactive = FALSE) {
   cx <- de_clamp(d$x, x_range[1], x_range[2])
   cy <- de_clamp(d$y, y_range[1], y_range[2])
   d$x <- cx$value
@@ -372,7 +374,7 @@ de_colour_resolve <- function(df, key, colors = NULL) {
   hov <- if (interactive) ggplot2::aes(text = .data$text) else NULL
 
   p <- ggplot2::ggplot(d, base_map) +
-    ggplot2::geom_point(mapping = hov, size = point_size, alpha = 0.85) +
+    ggplot2::geom_point(mapping = hov, size = point_size, alpha = point_alpha) +
     ggplot2::scale_shape_manual(values = c("in range" = 16, "clamped" = 17),
                                 drop = FALSE, guide = "none") +
     ggplot2::labs(x = xlab, y = ylab, colour = if (has_col) colour$label else NULL)
@@ -403,11 +405,11 @@ de_colour_resolve <- function(df, key, colors = NULL) {
 #' @export
 de_ma_gg <- function(df, lfc_col = "log2FoldChange", colour = NULL,
                      x_range = NULL, y_range = NULL, labels = NULL,
-                     point_size = 1.4, interactive = FALSE) {
+                     point_size = 1.4, point_alpha = 0.85, interactive = FALSE) {
   .de_require(df, c("baseMean", lfc_col))
   d <- data.frame(id = rownames(df), x = log10(df$baseMean), y = df[[lfc_col]])
   .de_scatter(d, "log10(baseMean)", lfc_col, colour, x_range, y_range,
-              labels, point_size, interactive)
+              labels, point_size, point_alpha, interactive)
 }
 
 #' Volcano plot: x = (chosen) log2FoldChange, y = -log10(padj)
@@ -416,11 +418,11 @@ de_ma_gg <- function(df, lfc_col = "log2FoldChange", colour = NULL,
 #' @export
 de_volcano_gg <- function(df, lfc_col = "log2FoldChange", colour = NULL,
                           x_range = NULL, y_range = NULL, labels = NULL,
-                          point_size = 1.4, interactive = FALSE) {
+                          point_size = 1.4, point_alpha = 0.85, interactive = FALSE) {
   .de_require(df, c("padj", lfc_col))
   d <- data.frame(id = rownames(df), x = df[[lfc_col]], y = -log10(df$padj))
   .de_scatter(d, lfc_col, "-log10(padj)", colour, x_range, y_range,
-              labels, point_size, interactive)
+              labels, point_size, point_alpha, interactive)
 }
 
 #' Direct-comparison plot: x = control mean, y = test mean expression
@@ -431,12 +433,12 @@ de_volcano_gg <- function(df, lfc_col = "log2FoldChange", colour = NULL,
 #' @return A ggplot object.
 #' @export
 de_direct_gg <- function(mean_df, value_label = "mean", colour = NULL,
-                         x_range = NULL, y_range = NULL,
-                         labels = NULL, point_size = 1.4, interactive = FALSE) {
+                         x_range = NULL, y_range = NULL, labels = NULL,
+                         point_size = 1.4, point_alpha = 0.85, interactive = FALSE) {
   .de_require(mean_df, c("control", "test"))
   d <- data.frame(id = mean_df$id, x = mean_df$control, y = mean_df$test)
   .de_scatter(d, sprintf("control (%s)", value_label), sprintf("test (%s)", value_label),
-              colour, x_range, y_range, labels, point_size, interactive) +
+              colour, x_range, y_range, labels, point_size, point_alpha, interactive) +
     ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed",
                          colour = "grey60", linewidth = 0.3)
 }

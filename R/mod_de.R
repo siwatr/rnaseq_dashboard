@@ -97,8 +97,99 @@
   )
 }
 
-.de_placeholder <- function(text) {
-  bslib::card(bslib::card_body(tags$p(class = "text-muted", text)))
+# Segmented plot-type control (pills when shinyWidgets is present, else inline radios).
+.de_plot_type_control <- function(id) {
+  choices <- c("MA", "Volcano", "Direct comparison")
+  if (requireNamespace("shinyWidgets", quietly = TRUE)) {
+    shinyWidgets::radioGroupButtons(id, label = NULL, choices = choices,
+                                    selected = "MA", size = "sm", status = "primary")
+  } else {
+    radioButtons(id, label = NULL, choices = choices, selected = "MA", inline = TRUE)
+  }
+}
+
+# One field-based axis-limit control (min/max), labelled with the axis it drives.
+.de_clamp_field <- function(ns, prefix, label) {
+  tagList(
+    tags$div(class = "small text-muted mb-1", label),
+    bslib::layout_columns(
+      col_widths = c(6, 6),
+      numericInput(ns(paste0(prefix, "_min")), "min", value = NA),
+      numericInput(ns(paste0(prefix, "_max")), "max", value = NA)))
+}
+
+# --- DE Plots tab UI -------------------------------------------------------
+.de_plots_ui <- function(ns) {
+  pt <- ns("plot_type")
+  shows <- function(types) paste(sprintf("input['%s'] == '%s'", pt, types), collapse = " || ")
+  bslib::layout_sidebar(
+    sidebar = bslib::sidebar(
+      title = "Plot controls", width = 340,
+      bslib::accordion(
+        open = c("Contrast", "Appearance"),
+        bslib::accordion_panel("Contrast", icon = icon("code-compare"),
+          selectInput(ns("view_plots"), "Contrast to view", choices = NULL),
+          checkboxInput(ns("plot_auto"), "Auto-render", value = TRUE),
+          actionButton(ns("plot_render"), "Render", icon = icon("play"), class = "btn-sm btn-primary")),
+        bslib::accordion_panel("Thresholds", icon = icon("filter"),
+          numericInput(ns("padj"), "padj threshold", value = 0.05, min = 0, max = 1, step = 0.01),
+          numericInput(ns("lfc"), "abs(log2FC) threshold", value = log2(2), min = 0, step = 0.1),
+          bslib::input_switch(ns("use_shrunk"), "Use shrunk LFC", value = FALSE)),
+        bslib::accordion_panel("Appearance", icon = icon("palette"),
+          selectInput(ns("colour_by"), "Colour by",
+                      c("DEG status" = "DEG", "None" = "__none__",
+                        "log2FC" = "__lfc__", "baseMean" = "baseMean")),
+          sliderInput(ns("point_size"), "Point size", min = 0.25, max = 4, value = 1.4, step = 0.25),
+          sliderInput(ns("point_alpha"), "Point opacity", min = 0.1, max = 1, value = 0.85, step = 0.05),
+          selectInput(ns("legend_pos"), "Legend position",
+                      c(Right = "right", Left = "left", Top = "top", Bottom = "bottom", None = "none"),
+                      selected = "right"),
+          conditionalPanel(shows("Direct comparison"),
+            bslib::input_switch(ns("fixed_ratio"), "Fix 1:1 aspect ratio", value = FALSE))),
+        bslib::accordion_panel("Labels", icon = icon("tag"),
+          bslib::input_switch(ns("show_labels"), "Show gene labels", value = FALSE),
+          numericInput(ns("top_n"), "Label top N by padj", value = 0, min = 0, max = 100, step = 1),
+          textInput(ns("label_genes"), "Genes of interest",
+                    placeholder = "comma-separated, e.g. Gene1, Duxf3"),
+          uiOutput(ns("label_hint"))),
+        bslib::accordion_panel("Axis limits", icon = icon("up-right-and-down-left-from-center"),
+          tags$p(class = "small text-muted",
+                 "Blank = auto; out-of-range points draw as triangles. A limit is shared across plot types wherever its field recurs."),
+          conditionalPanel(shows(c("MA", "Volcano")),
+            .de_clamp_field(ns, "clamp_lfc", "log2FC (MA y-axis / Volcano x-axis)")),
+          conditionalPanel(shows("Volcano"),
+            .de_clamp_field(ns, "clamp_neglogp", "-log10(padj) (Volcano y-axis)")),
+          conditionalPanel(shows("MA"),
+            .de_clamp_field(ns, "clamp_bm", "log10(baseMean) (MA x-axis)")),
+          conditionalPanel(shows("Direct comparison"),
+            .de_clamp_field(ns, "clamp_expr", "expression (Direct x & y)")))
+      )
+    ),
+    bslib::card(
+      full_screen = TRUE,
+      bslib::card_header(
+        tags$div(class = "d-flex align-items-center justify-content-between flex-wrap gap-2",
+          tags$h4("DE plot", class = "fs-6 mb-0"),
+          .de_plot_type_control(ns("plot_type")))),
+      uiOutput(ns("de_plot_stale")),
+      .plot_dual(ns("de_plot_container"))
+    )
+  )
+}
+
+# --- Results Table tab UI --------------------------------------------------
+.de_table_ui <- function(ns) {
+  bslib::layout_sidebar(
+    fillable = FALSE,
+    sidebar = bslib::sidebar(
+      title = "Table", width = 300,
+      selectInput(ns("view_table"), "Contrast to view", choices = NULL),
+      bslib::input_switch(ns("sig_only"), "Significant only", value = FALSE),
+      uiOutput(ns("table_thresh_note"))),
+    bslib::card(
+      bslib::card_header(tags$h4("DE results", class = "fs-6 mb-0")),
+      DT::DTOutput(ns("de_table")))
+  )
 }
 
 mod_de_ui <- function(id) {
@@ -107,10 +198,8 @@ mod_de_ui <- function(id) {
     id = ns("tabs"),
     title = tags$h3("Differential expression", class = "fs-6"),
     bslib::nav_panel("Design & Contrasts", .de_design_ui(ns)),
-    bslib::nav_panel("DE Plots",
-                     .de_placeholder("MA / volcano / direct-comparison plots arrive in P5c.")),
-    bslib::nav_panel("Results Table",
-                     .de_placeholder("The results table arrives in P5c."))
+    bslib::nav_panel("DE Plots", .de_plots_ui(ns)),
+    bslib::nav_panel("Results Table", .de_table_ui(ns))
   )
 }
 
@@ -121,9 +210,10 @@ mod_de_ui <- function(id) {
 }
 
 #' @param state the shared app-state object (see [new_app_state()]).
+#' @param dark_mode reactive; `TRUE` in dark mode (drives plot contrast).
 #' @return Invisible `NULL`.
 #' @noRd
-mod_de_server <- function(id, state) {
+mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
   moduleServer(id, function(input, output, session) {
 
     # The shared design builder (synced with the Input/Design tab via state).
@@ -385,7 +475,217 @@ mod_de_server <- function(id, state) {
                              tags$th(class = "text-end", "Total"), tags$th("Shrinkage"))),
           tags$tbody(rows)),
         tags$p(class = "text-muted small",
-               "Counts at padj < 0.05 and |log2FC| >= 1 (standard LFC); adjustable thresholds arrive with the plots (P5c). apeglm shrinkage needs the control level to be the factor's reference; other contrasts fall back to ashr (see the Shrinkage column)."))
+               "Counts at padj < 0.05 and |log2FC| >= 1 (standard LFC); adjustable thresholds live on the DE Plots / Results Table tabs. apeglm shrinkage needs the control level to be the factor's reference; other contrasts fall back to ashr (see the Shrinkage column)."))
+    })
+
+    # ================= DE Plots + Results Table (P5c) =================
+    dark <- function() isTRUE(dark_mode())
+    eng <- plot_engine_server(input, output, session, state)
+    dual_plot <- eng$dual_plot; deferred <- eng$deferred; stale_note <- eng$stale_note
+    feature_type <- function() (state$meta %||% list())$feature_type %||% "feature"
+
+    # --- shared "Contrast to view" selector (synced across both tabs) -----
+    result_labels <- reactive(names((state$de %||% list())$results %||% list()))
+    observeEvent(list(result_labels(), (state$de %||% list())$active), {
+      labs <- result_labels()
+      a <- (state$de %||% list())$active
+      if (is.null(a) || !(a %in% labs)) a <- if (length(labs)) labs[1] else NULL
+      updateSelectInput(session, "view_plots", choices = labs, selected = a)
+      updateSelectInput(session, "view_table", choices = labs, selected = a)
+    }, ignoreNULL = FALSE)
+    set_active <- function(lab) {
+      if (is.null(lab) || !nzchar(lab)) return()
+      de <- state$de %||% list()
+      if (!identical(de$active, lab)) { de$active <- lab; state$de <- de }
+    }
+    observeEvent(input$view_plots, set_active(input$view_plots))
+    observeEvent(input$view_table, set_active(input$view_table))
+
+    active_spec <- reactive({
+      a <- (state$de %||% list())$active
+      Find(function(s) identical(s$label, a), (state$de %||% list())$contrasts %||% list())
+    })
+    active_raw <- reactive({
+      a <- (state$de %||% list())$active
+      if (is.null(a)) return(NULL)
+      (state$de$results %||% list())[[a]]
+    })
+
+    # DEG palette (from the Palette page's Other -> DEG; NULL -> Pink-Blue default).
+    deg_colors <- reactive({
+      cfg <- (state$palette$other %||% list())$DEG
+      palette_discrete(c("up", "down", "no_change"),
+                       cfg$colors, cfg$name %||% "DEG: Pink-Blue", cfg$custom)
+    })
+
+    # --- deferred classified results (the DATA; display aesthetics stay live) ---
+    de_spec <- reactive({
+      res <- active_raw()
+      validate(need(!is.null(res),
+                    "No results for this contrast - run DESeq2 on the Design & Contrasts tab."))
+      de_classify_table(res, input$padj %||% 0.05, input$lfc %||% log2(2))
+    })
+    de_shown <- deferred("plot_auto", "plot_render", de_spec,
+      sig = reactive(list((state$de %||% list())$active, input$padj, input$lfc, state$data_version)))
+    output$de_plot_stale <- stale_note(de_shown)
+
+    # Field-based axis clamps (a limit follows its field across plot types).
+    clamp_ranges <- reactive({
+      rng <- function(p) {
+        lo <- suppressWarnings(as.numeric(input[[paste0(p, "_min")]] %||% NA))
+        hi <- suppressWarnings(as.numeric(input[[paste0(p, "_max")]] %||% NA))
+        if (is.na(lo) && is.na(hi)) NULL else c(lo, hi)
+      }
+      list(lfc = rng("clamp_lfc"), neglogp = rng("clamp_neglogp"),
+           bm = rng("clamp_bm"), expr = rng("clamp_expr"))
+    })
+
+    # Direct-comparison group means (from the active contrast's control/test levels).
+    direct_assay <- reactive({
+      present <- SummarizedExperiment::assayNames(state$working)
+      if ("logcounts" %in% present) "logcounts" else if (length(present)) present[1] else "counts"
+    })
+    direct_means <- reactive({
+      s <- active_spec(); dds <- state$working; req(s, dds)
+      x <- SummarizedExperiment::colData(dds)[[s$var]]
+      ctrl <- colnames(dds)[!is.na(x) & x == s$control]
+      test <- colnames(dds)[!is.na(x) & x == s$test]
+      validate(need(length(ctrl) && length(test), "The contrast's groups are empty in the current data."))
+      de_group_means(dds, direct_assay(), ctrl, test)
+    })
+
+    # --- gene labels (top-N by padj + ad-hoc searched genes) --------------
+    label_values <- reactive({
+      rd <- SummarizedExperiment::rowData(state$working)
+      fn <- paste0(feature_type(), "_name")
+      if (fn %in% colnames(rd)) as.character(rd[[fn]]) else rownames(state$working)
+    })
+    display_names <- function(ids) {
+      rd <- SummarizedExperiment::rowData(state$working)
+      fn <- paste0(feature_type(), "_name")
+      if (fn %in% colnames(rd)) {
+        nm <- as.character(rd[ids, fn]); ifelse(is.na(nm) | !nzchar(nm), ids, nm)
+      } else ids
+    }
+    label_ids <- function(d) {
+      ids <- character(0)
+      n <- suppressWarnings(as.integer(input$top_n %||% 0)); if (is.na(n)) n <- 0L
+      if (n > 0L) ids <- rownames(d)[utils::head(order(d$padj, na.last = NA), n)]
+      q <- trimws(input$label_genes %||% "")
+      if (nzchar(q)) {
+        terms <- trimws(strsplit(q, "[,\n]+")[[1]]); terms <- terms[nzchar(terms)]
+        vals <- label_values(); rn <- rownames(state$working)
+        for (t in terms) {
+          rf <- resolve_feature(t, vals, rn, case_insensitive = TRUE)
+          if (!is.null(rf) && !is.na(rf$id)) ids <- c(ids, rf$id)
+        }
+      }
+      unique(intersect(ids, rownames(d)))
+    }
+    output$label_hint <- renderUI({
+      if (!isTRUE(input$show_labels) || is.null(state$working)) return(NULL)
+      q <- trimws(input$label_genes %||% ""); if (!nzchar(q)) return(NULL)
+      terms <- trimws(strsplit(q, "[,\n]+")[[1]]); terms <- terms[nzchar(terms)]
+      vals <- label_values(); rn <- rownames(state$working)
+      miss <- Filter(function(t) {
+        rf <- resolve_feature(t, vals, rn, case_insensitive = TRUE)
+        is.null(rf) || is.na(rf$id)
+      }, terms)
+      if (length(miss))
+        tags$div(class = "small text-primary", sprintf("Not found: %s", paste(miss, collapse = ", ")))
+    })
+
+    # --- the plot builder + dual_plot ------------------------------------
+    de_colour_for <- function(d, ids) {
+      ckey <- input$colour_by %||% "DEG"
+      if (identical(ckey, "__none__")) return(NULL)
+      d2 <- d[match(ids, rownames(d)), , drop = FALSE]
+      shr <- isTRUE(input$use_shrunk)
+      if (identical(ckey, "DEG")) {
+        de_colour_resolve(d2, if (shr) "DEG_shrunk" else "DEG", deg_colors())
+      } else if (identical(ckey, "__lfc__")) {
+        de_colour_resolve(d2, if (shr) "log2FoldChange_shrunk" else "log2FoldChange")
+      } else {
+        de_colour_resolve(d2, ckey)                 # baseMean
+      }
+    }
+    labels_df <- function(d, ptype, lfc_col) {
+      if (!isTRUE(input$show_labels)) return(NULL)
+      ids <- label_ids(d); if (!length(ids)) return(NULL)
+      sub <- d[ids, , drop = FALSE]
+      xy <- switch(ptype,
+        "MA"      = list(x = log10(sub$baseMean), y = sub[[lfc_col]]),
+        "Volcano" = list(x = sub[[lfc_col]], y = -log10(sub$padj)),
+        "Direct comparison" = {
+          gm <- direct_means(); m <- gm[match(ids, gm$id), ]; list(x = m$control, y = m$test)
+        })
+      data.frame(x = xy$x, y = xy$y, label = display_names(ids), stringsAsFactors = FALSE)
+    }
+    build_de_gg <- function(interactive) {
+      d <- de_shown$value()
+      validate(need(!is.null(d), "Click Render to draw the plot (or enable auto-render)."))
+      ptype <- input$plot_type %||% "MA"
+      shr <- isTRUE(input$use_shrunk)
+      lfc_col <- if (shr) "log2FoldChange_shrunk" else "log2FoldChange"
+      validate(need(lfc_col %in% names(d) && any(is.finite(d[[lfc_col]])),
+                    "Shrunk LFC is unavailable for this contrast - switch off 'Use shrunk LFC'."))
+      rg <- clamp_ranges()
+      ps <- input$point_size %||% 1.4; pa <- input$point_alpha %||% 0.85
+      labs <- labels_df(d, ptype, lfc_col)
+      gg <- switch(ptype,
+        "MA" = de_ma_gg(d, lfc_col, de_colour_for(d, rownames(d)),
+                        x_range = rg$bm, y_range = rg$lfc, labels = labs,
+                        point_size = ps, point_alpha = pa, interactive = interactive),
+        "Volcano" = de_volcano_gg(d, lfc_col, de_colour_for(d, rownames(d)),
+                        x_range = rg$lfc, y_range = rg$neglogp, labels = labs,
+                        point_size = ps, point_alpha = pa, interactive = interactive),
+        "Direct comparison" = {
+          gm <- direct_means()
+          de_direct_gg(gm, value_label = direct_assay(), colour = de_colour_for(d, gm$id),
+                       x_range = rg$expr, y_range = rg$expr, labels = labs,
+                       point_size = ps, point_alpha = pa, interactive = interactive)
+        })
+      gg <- gg + .plot_theme(dark()) +
+        ggplot2::theme(legend.position = input$legend_pos %||% "right")
+      if (identical(ptype, "Direct comparison") && isTRUE(input$fixed_ratio)) {
+        gg <- gg + ggplot2::coord_fixed(ratio = 1)
+      }
+      gg
+    }
+    dual_plot("de_plot", build_de_gg,
+              n_elements = reactive({ v <- de_shown$value(); if (is.null(v)) 0L else nrow(v) }),
+              height = "460px")
+
+    # --- Results Table ----------------------------------------------------
+    output$table_thresh_note <- renderUI({
+      tags$p(class = "small text-muted",
+        sprintf("padj < %s, |log2FC| >= %s, %s LFC (thresholds are set on the DE Plots tab).",
+                input$padj %||% 0.05, round(input$lfc %||% log2(2), 3),
+                if (isTRUE(input$use_shrunk)) "shrunk" else "standard"))
+    })
+    output$de_table <- DT::renderDT({
+      res <- active_raw()
+      validate(need(!is.null(res), "No results - run DESeq2 on the Design & Contrasts tab."))
+      shr <- isTRUE(input$use_shrunk)
+      d <- de_classify_table(res, input$padj %||% 0.05, input$lfc %||% log2(2))
+      lfc_col <- if (shr) "log2FoldChange_shrunk" else "log2FoldChange"
+      deg_col <- if (shr) "DEG_shrunk" else "DEG"
+      sig_col <- if (shr) "sig_shrunk" else "sig"
+      rd <- SummarizedExperiment::rowData(state$working)
+      fn <- paste0(feature_type(), "_name")
+      out <- data.frame(id = rownames(d), stringsAsFactors = FALSE)
+      if (fn %in% colnames(rd)) out[[fn]] <- as.character(rd[rownames(d), fn])
+      out$baseMean  <- round(d$baseMean, 1)
+      out[[lfc_col]] <- round(d[[lfc_col]], 3)
+      out$lfcSE     <- round(d$lfcSE, 3)
+      out$pvalue    <- signif(d$pvalue, 3)
+      out$padj      <- signif(d$padj, 3)
+      out$DEG       <- as.character(d[[deg_col]])
+      if (isTRUE(input$sig_only)) out <- out[which(d[[sig_col]]), , drop = FALSE]
+      cols <- deg_colors()
+      DT::formatStyle(dt_table(out), "DEG",
+        color = DT::styleEqual(names(cols), unname(cols)),
+        fontWeight = DT::styleEqual(c("up", "down"), c("bold", "bold"), default = NULL))
     })
 
     invisible(NULL)

@@ -3,7 +3,7 @@ name: shiny-de-analysis
 description: How the DESeq2 differential-expression page in this RNA-seq dashboard runs and plots DE. Covers the guided design/contrast builder (reference level + full-rank check), running DESeq2 + LFC shrinkage (apeglm/ashr/normal fallback), the dual-LFC sig/DEG(_shrunk) result schema, the size-factor edge cases (poscounts fallback), and the DE-plot conventions (MA / volcano / direct-comparison; per-feature colour resolved locally but configured via the Palette other/DEG slot; axis clamping -> triangle markers; layered structure for the P6 gene-set overlay; ggrepel labels). Engine implemented as pure helpers in R/de_helpers.R; the page is mod_de + the shared mod_design_builder. Use when building or changing the DE page, the shared design builder, or any DE plot/result logic. Pair with rnaseq-bioc (the statistical conventions), shiny-module, and shiny-plot-aesthetics.
 metadata:
   type: project
-  version: "0.1"
+  version: "1.0"
 ---
 
 # Differential expression (DESeq2) — the DE module
@@ -12,12 +12,12 @@ The DE page (`mod_de`) fits DESeq2, stores contrasts, and draws MA / volcano /
 direct-comparison plots + a results table. The **statistical rules live in
 `rnaseq-bioc`**; this skill covers **how the shiny app implements and plots them**
 via the pure helpers in [R/de_helpers.R](../../../R/de_helpers.R). Design is
-committed to the dds (shared with the Input **Design** tab via `mod_design_builder`);
-the fit + results are cached via `state_derive`.
-
-> Scaffold (P5a). The engine + these conventions land first; the module wiring
-> (P5b design/contrast builder + fit; P5c plots/table) fills in against this spec.
-> Finalize this skill at P5c once the UI reality is settled.
+committed to the dds (shared with the Input **Design** tab via `mod_design_builder`).
+The **fit** and the per-contrast **result extraction are separate**: Run DESeq2 fits
+(contrast-free), stored in the `derived` env under a `(data_version, design_version)`
+stamp; extraction is reactive (Auto-update) or on demand, cached per contrast in
+`state$de$results`. The page is a `navset_card_tab`: **Design & Contrasts** / **DE
+Plots** / **Results Table** (all wired; P5a–c complete).
 
 ## Design + contrast (guided, not free-text)
 
@@ -63,23 +63,40 @@ median-of-ratios on endogenous `controlGenes`. Known failure modes:
 - `DESeq()` estimates size factors internally when unset — so pre-setting robust ones (via the
   hardened helper, which `de_run()` calls) injects the poscounts fallback into the whole pipeline.
 
-## DE plots (per-feature; layered; customizable)
+## DE Plots + Results Table (the P5c tabs)
 
-- **Colour is per-feature, so it's resolved locally** — `de_colour_resolve(df, key, colors)` (the
-  shared `aes_helpers` resolver is per-*sample*). `key` = `"__none__"` / `"DEG"`/`"DEG_shrunk"`
-  (discrete) / a numeric DE column (continuous). **The colour config is still centralized:** the
-  DEG palette comes from the Palette **`other/DEG`** slot (P5c) — pass its colours in as `colors`.
-- **Axis clamping → triangles:** `de_clamp(x, lo, hi)` pulls out-of-range points to the limit and
-  flags them; the builders map the flag to **shape** (circle vs triangle), never dropping points.
-- **Builders:** `de_ma_gg()` (x = `log10(baseMean)`, y = LFC), `de_volcano_gg()` (x = LFC, y =
-  `-log10(padj)`), `de_direct_gg(mean_df)` (x = control mean, y = test mean; `de_group_means()`
-  computes the means + a y=x guide). Each takes `interactive` (adds a hover `text` aes for the
-  plotly path only) and an optional ggrepel `labels` frame — reuse the shared `dual_plot` engine.
+- **Plot engine:** the DE Plots tab reuses `plot_engine_server` (`dual_plot` / `deferred` /
+  `stale_note`, [R/mod_plot_engine.R]) exactly like PCA. A **segmented control** (MA | Volcano |
+  Direct) drives **one** deferred plot; `n_elements = nrow(results)` gates the plotly fallback.
+  **No `mod_plot_subset`** — DE plots are per-feature, not per-sample.
+- **Deferred sig = the DATA only** (contrast + padj + |LFC| + `data_version`); the spec is the
+  classified df (`de_classify_table`, carrying both `DEG`/`DEG_shrunk`). **Display aesthetics stay
+  live** (plot type, Use-shrunk, colour-by, labels, clamps, point/alpha/legend) — cheap re-plots,
+  never in the sig (the shiny-plot-aesthetics rule).
+- **Colour is per-feature, resolved locally** — `de_colour_resolve(df, key, colors)` (the shared
+  `aes_helpers` resolver is per-*sample*). `key` = `"__none__"` / `"DEG"`/`"DEG_shrunk"` / a numeric
+  DE column. **Config is centralized:** the DEG palette comes from the Palette **`other/DEG`** slot
+  — a curated **"DEG palette" set** (Pink-Blue default / Orange-Purple / Red-Blue / Coral-Teal),
+  offered *only* for the 3-level DEG item via `deg_palette_choices()`, resolved by a `"DEG:"` branch
+  in `palette_colors()` (kept out of `palette_type_names()` so other items never see it; still shown
+  in the Palette Preview). Read it with `palette_discrete(c("up","down","no_change"), cfg$colors,
+  cfg$name %||% "DEG: Pink-Blue", cfg$custom)`.
+- **Axis clamping → triangles, field-based:** clamp by *field* (log2FC / -log10(padj) /
+  log10(baseMean) / expression), not raw X/Y, so a limit follows its field across plot types (log2FC
+  is MA-y and volcano-x). `de_clamp` flags out-of-range points → **shape** (circle vs triangle),
+  never dropped. The Direct plot has a **1:1 aspect** toggle (`coord_fixed`) so its y=x guide reads true.
+- **Builders:** `de_ma_gg` / `de_volcano_gg` / `de_direct_gg(de_group_means(...))` — each takes
+  `interactive` (hover `text` aes for plotly only), `point_size`/`point_alpha`, and an optional
+  ggrepel `labels` frame (top-N by padj + ad-hoc searched genes via `resolve_feature`).
+- **Shared "Contrast to view" selector** across both tabs, synced via `state$de$active`
+  (equality-guarded, no loop). The **Results Table** is a `dt_table()` of the active contrast with
+  DEG `formatStyle`/`styleEqual` colouring (same `other/DEG` palette) + a significant-only filter; it
+  reads the same threshold inputs as the plots.
 - **Layered for the P6 gene-set overlay (channel separation):** reserve **shape** for the clamp
   (triangle), **fill/stroke** for gene-set DEG-membership (filled vs hollow "donut", `shape 21`
   `fill=NA`), **colour** for DEG-status-or-set. So the clamp and the donut never collide. The
   gene-set overlay itself (select a saved set to highlight) **depends on `state$gene_sets`
-  (Phase 6)** — P5 ships colour + labels (top-N + ad-hoc searched genes) and the layer structure.
+  (Phase 6)** — a P6 follow-on; P5's layered builders accept it without rework.
 
 ## Checklist
 
@@ -88,5 +105,8 @@ median-of-ratios on endogenous `controlGenes`. Known failure modes:
 - [ ] Results carry both `log2FoldChange(_shrunk)`; shrinkage toggle = column selection; thresholds re-derive sig/DEG (no refit).
 - [ ] `de_shrink` degrades apeglm → ashr → normal → NA via `requireNamespace()`.
 - [ ] Size factors go through the hardened endogenous estimator (poscounts fallback).
-- [ ] DE colour via `de_colour_resolve` (local), DEG palette from `other/DEG`; clamp = shape, never drop.
+- [ ] DE colour via `de_colour_resolve` (local), DEG palette from the curated `other/DEG` set; clamp = shape, never drop.
+- [ ] DE Plots deferred sig = data-only; display aesthetics (plot type / colour / labels / clamps) stay live.
+- [ ] Shared "Contrast to view" selector synced via `state$de$active` (equality-guarded, no loop).
+- [ ] Field-based axis limits (log2FC follows MA-y / volcano-x); Direct plot 1:1 toggle.
 - [ ] Plots are layered so the P6 gene-set overlay drops in without rework.

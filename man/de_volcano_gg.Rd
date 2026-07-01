@@ -12,6 +12,7 @@ de_volcano_gg(
   y_range = NULL,
   labels = NULL,
   point_size = 1.4,
+  point_alpha = 0.85,
   interactive = FALSE
 )
 }
