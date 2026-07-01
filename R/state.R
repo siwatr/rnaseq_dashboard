@@ -42,7 +42,20 @@ new_app_state <- function() {
     # data.frame (or NULL). Session UI state (like palette) - the QC page clears
     # the pool on data load; no data_version impact.
     samp_pool  = character(0),
-    samp_flags = NULL
+    samp_flags = NULL,
+    # Design-scoped version stamp: bumped by state_set_design() when the model
+    # formula / reference levels change, WITHOUT bumping data_version -- so the DE
+    # fit (which keys on it) recomputes while design-independent caches (PCA/VST/QC,
+    # keyed on data_version) survive. See state_set_design().
+    design_version = 0L,
+    # Differential-expression results owned by the DE page but held here so the
+    # status bar, the Gene Sets page (add-from-DEG), and the Expression page can
+    # read them. `contrasts` = list of stored specs; `results` = named list of
+    # result data.frames; `active` = the shown contrast; `stamp` = the
+    # (data_version, design_version) the fit ran under (staleness); `shrink` = the
+    # shrinkage method. Cleared on data load; marked stale (not cleared) on edits.
+    de = list(contrasts = list(), results = list(), active = NULL,
+              stamp = NULL, shrink = "apeglm")
   )
   # A plain environment so writing cache entries does not trigger reactivity
   # (avoids reactive-write-in-reactive churn); staleness is keyed on data_version.
@@ -95,6 +108,9 @@ state_load <- function(state, obj, source = "rds", meta = list()) {
   .clear_derived(state)
   state$history      <- list()
   state$n_edits      <- 0L
+  state$design_version <- 0L
+  state$de           <- list(contrasts = list(), results = list(), active = NULL,
+                             stamp = NULL, shrink = "apeglm")
   state$data_version <- state$data_version + 1L
   .log(state, list(action = "load", source = source))
   invisible(state)
@@ -121,6 +137,49 @@ state_mutate <- function(state, fn, action = list()) {
   state$data_version <- state$data_version + 1L
   .log(state, action)
   invisible(state)
+}
+
+#' Set the model design (and optional reference-level relevels) -- design-scoped
+#'
+#' Updates `design(working)` and any factor reference levels **without** bumping
+#' `data_version`, so design-independent caches (PCA/VST/QC) survive; bumps a
+#' separate `design_version` that the DE fit keys on. Logs to history. Not pushed
+#' onto the undo stack (the design is directly re-editable). The design formula
+#' does not change sample/feature values, and a relevel only reorders factor
+#' levels, so nothing downstream except DE actually depends on it. **Invariant:** no
+#' `derived` cache key may depend on factor level order except `de_fit` (which keys on
+#' `design_version`); if a future artifact orders/colours by a reference level, revisit this.
+#'
+#' @param state App-state object.
+#' @param design A one-sided model formula (e.g. `~ condition + batch`).
+#' @param relevel Optional named list `col = ref` of reference levels to set
+#'   (via [de_relevel()]) before applying the design.
+#' @param action Extra named fields to merge into the history entry.
+#' @return `state`, invisibly.
+#' @export
+state_set_design <- function(state, design, relevel = NULL, action = list()) {
+  dds <- state$working
+  if (is.null(dds)) stop("No dataset loaded; cannot set a design.", call. = FALSE)
+  for (col in names(relevel)) dds <- de_relevel(dds, col, relevel[[col]])
+  DESeq2::design(dds) <- design
+  state$working        <- dds
+  state$design_version <- (state$design_version %||% 0L) + 1L
+  .log(state, utils::modifyList(
+    list(action = "set_design",
+         design = paste(deparse(design), collapse = " "),
+         reference = if (length(relevel)) relevel else NULL), action))
+  invisible(state)
+}
+
+#' DE result staleness relative to the current data + design
+#' @param state App-state object.
+#' @return `"none"` (no results), `"current"`, or `"stale"`.
+#' @export
+de_status <- function(state) {
+  de <- state$de %||% list()
+  if (is.null(de$stamp) || !length(de$results)) return("none")
+  cur <- list(dv = state$data_version, desv = state$design_version %||% 0L)
+  if (identical(de$stamp, cur)) "current" else "stale"
 }
 
 #' Get-or-compute a version-stamped derived artifact
@@ -206,6 +265,8 @@ state_meta <- function(state) {
     n_endogenous = .class_count(dds, "endogenous"),
     n_spike_in   = .class_count(dds, "spike_in"),
     n_exogenous  = .class_count(dds, "exogenous"),
-    data_version = state$data_version
+    data_version = state$data_version,
+    de_status    = de_status(state),
+    de_n_results = length((state$de %||% list())$results)   # result tables, not stored specs
   )
 }

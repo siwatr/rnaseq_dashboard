@@ -99,3 +99,36 @@ test_that("state_meta reports feature-class counts", {
   expect_equal(m$n_exogenous, 1L)                 # mock has one exogenous (GFP)
   expect_equal(m$n_endogenous, 50L)
 })
+
+test_that("state_set_design is design-scoped: bumps design_version, not data_version", {
+  skip_if_not_installed("DESeq2")
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  st <- new_app_state()
+  state_load(st, make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 1))
+  dv <- st$data_version; desv <- st$design_version
+  state_set_design(st, ~ condition + bio_rep, relevel = list(condition = "treated"))
+  expect_equal(st$data_version, dv)                     # design-independent caches survive
+  expect_equal(st$design_version, desv + 1L)            # DE fit keys on this
+  expect_match(paste(deparse(DESeq2::design(st$working)), collapse = " "), "bio_rep")
+  expect_equal(levels(SummarizedExperiment::colData(st$working)$condition)[1], "treated")
+  # logged to history
+  expect_equal(st$history[[length(st$history)]]$action, "set_design")
+})
+
+test_that("de_status reflects DE results vs the current data/design", {
+  skip_if_not_installed("DESeq2")
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  st <- new_app_state()
+  expect_equal(de_status(st), "none")
+  state_load(st, make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 1))
+  expect_equal(de_status(st), "none")                   # no results yet
+  de <- st$de
+  de$results <- list(x = data.frame(a = 1))
+  de$stamp   <- list(dv = st$data_version, desv = st$design_version)
+  st$de <- de
+  expect_equal(de_status(st), "current")
+  st$design_version <- st$design_version + 1L           # design changed -> stale
+  expect_equal(de_status(st), "stale")
+  state_load(st, make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 2))
+  expect_equal(de_status(st), "none")                   # load clears de
+})

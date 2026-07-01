@@ -56,6 +56,16 @@ mod_statusbar_server <- function(id, state) {
           paste("Assays:", paste(m$assays, collapse = ", "))),
         .badge(paste("design:", m$design))
       )
+      # DE status: current (fit matches data + design) / stale (needs re-run).
+      if (!identical(m$de_status, "none")) {
+        de_cls <- if (identical(m$de_status, "current")) "text-bg-success" else "text-bg-warning"
+        badges <- c(badges, list(bslib::tooltip(
+          .badge(sprintf("DE: %s (%d)", m$de_status, m$de_n_results), de_cls),
+          if (identical(m$de_status, "current"))
+            "Differential-expression results match the current data + design."
+          else
+            "DE results are stale - the data or design changed since the last run; re-run on the DE page.")))
+      }
       # Flag non-endogenous features (spike-in / exogenous) when present.
       if (isTRUE(m$n_spike_in > 0L) || isTRUE(m$n_exogenous > 0L)) {
         parts <- c(if (m$n_spike_in > 0L) sprintf("%d spike-in", m$n_spike_in),
