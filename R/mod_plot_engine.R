@@ -48,13 +48,15 @@
 # choices thematic does not manage (gridline + text contrast). Used by QC + PCA.
 .plot_theme <- function(dark_theme = FALSE) {
   grid <- if (isTRUE(dark_theme)) "grey35" else "grey85"
-  text <- if (isTRUE(dark_theme)) "grey90" else "grey25"
+  text <- if (isTRUE(dark_theme)) "grey90" else "gray5"
   ggplot2::theme() +
     ggplot2::theme(
-      panel.grid.major = ggplot2::element_line(colour = grid),
+      panel.background = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(linewidth = 1, colour = grid),
       panel.grid.minor = ggplot2::element_blank(),
-      text = ggplot2::element_text(size = 14, color = text),
-      legend.position  = "bottom"
+      axis.ticks = ggplot2::element_line(linewidth = 1, colour = grid),
+      text = ggplot2::element_text(size = 20, color = text),
+      legend.position = "bottom"
     )
 }
 

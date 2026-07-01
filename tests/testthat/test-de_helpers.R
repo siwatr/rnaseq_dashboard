@@ -93,8 +93,10 @@ test_that("de_shrink returns an aligned vector + method attr; apeglm/ashr popula
     expect_length(sh, nrow(fit))
     expect_true(any(is.finite(sh)))
     expect_true(attr(sh, "method") %in% c("apeglm", "ashr", "normal"))
+    expect_length(attr(sh, "se"), nrow(fit))          # shrunk posterior SD carried alongside
     df <- de_results(fit, c("condition", "treated", "control"), shrink_type = "apeglm")
     expect_false(is.null(attr(df, "shrink_method")))
+    expect_true("lfcSE_shrunk" %in% names(df))         # matching SE for the shrunk LFC
   }
 })
 
@@ -188,4 +190,59 @@ test_that("de_ma_gg / de_volcano_gg / de_direct_gg build ggplots and validate in
   means <- data.frame(id = c("g1", "g2"), control = c(1, 2), test = c(3, 4))
   expect_s3_class(de_direct_gg(means), "ggplot")
   expect_error(de_ma_gg(data.frame(x = 1)), "Missing column")
+})
+
+test_that("axis limits set explicit coord limits (extend the axis, not just clamp)", {
+  df <- data.frame(baseMean = c(10, 100), log2FoldChange = c(-1, 1),
+                   padj = c(0.01, 0.01), row.names = c("g1", "g2"))
+  df <- de_classify_table(df)
+  p <- de_ma_gg(df, y_range = c(-6, 6))               # wider than the data (-1, 1)
+  expect_s3_class(p$coordinates, "CoordCartesian")
+  expect_equal(p$coordinates$limits$y, c(-6, 6))
+})
+
+test_that("de_direct_gg fixed_ratio squares the panel via coord_fixed", {
+  means <- data.frame(id = c("g1", "g2"), control = c(1, 2), test = c(3, 4))
+  p <- de_direct_gg(means, fixed_ratio = TRUE)
+  expect_equal(p$coordinates$ratio, 1)                 # coord_fixed(ratio = 1)
+  q <- de_direct_gg(means, fixed_ratio = FALSE)
+  expect_null(q$coordinates$ratio)                     # plain cartesian
+})
+
+test_that("de_direct_gg labels the axes with the contrast level names", {
+  means <- data.frame(id = c("g1", "g2"), control = c(1, 2), test = c(3, 4))
+  p <- de_direct_gg(means, value_label = "logcounts", control_label = "wt", test_label = "ko")
+  expect_equal(p$labels$x, "wt (logcounts)")
+  expect_equal(p$labels$y, "ko (logcounts)")
+})
+
+test_that("DEG points draw no_change first so up/down land on top", {
+  df <- data.frame(baseMean = c(10, 20, 30), log2FoldChange = c(3, -3, 0.1),
+                   padj = c(0.001, 0.001, 0.5), row.names = c("g1", "g2", "g3"))
+  df <- de_classify_table(df)                          # g1 up, g2 down, g3 no_change
+  p <- de_ma_gg(df, colour = de_colour_resolve(df, "DEG"))
+  expect_equal(as.character(p$data$colour)[1], "no_change")   # background is row 1
+})
+
+test_that("de_transform_matrix applies log with a pseudocount", {
+  m <- matrix(c(0, 9, 99, 999), nrow = 2)
+  expect_identical(de_transform_matrix(m, "none"), m)
+  expect_equal(de_transform_matrix(m, "log10", 1), log10(m + 1))
+  expect_equal(de_transform_matrix(m, "log2", 0.5), log2(m + 0.5))
+})
+
+test_that("de_group_means applies the transform before averaging", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 5))
+  cd <- SummarizedExperiment::colData(dds)
+  ctrl <- colnames(dds)[cd$condition == "control"]
+  trt  <- colnames(dds)[cd$condition == "treated"]
+  gm_raw <- de_group_means(dds, "counts", ctrl, trt)
+  gm_log <- de_group_means(dds, "counts", ctrl, trt, transform = "log10", pseudocount = 1)
+  expect_false(isTRUE(all.equal(gm_raw$control, gm_log$control)))
+})
+
+test_that("expr_value_label reflects the transform", {
+  expect_equal(expr_value_label("CPM"), "CPM")
+  expect_equal(expr_value_label("CPM", "log10", 1), "log10(CPM + 1)")
 })

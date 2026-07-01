@@ -175,3 +175,29 @@ test_that("palette_from_json drops empty items and errors on invalid JSON", {
   expect_length(out, 0L)                             # nothing usable
   expect_error(palette_from_json("{not json"))
 })
+
+# --- DEG palette set (P5c) --------------------------------------------------
+
+test_that("DEG palette set resolves each named scheme in level order", {
+  expect_setequal(palette_names("DEG palette"),
+                  c("DEG: Pink-Blue", "DEG: Orange-Purple", "DEG: Red-Blue", "DEG: Coral-Teal"))
+  expect_true(.pal_type_discrete("DEG palette"))
+  expect_equal(palette_colors("DEG: Pink-Blue", 3), c("#B54661", "#235675", "gray80"))
+  # palette_discrete maps positionally onto the DEG factor levels + normalizes hex
+  cols <- palette_discrete(c("up", "down", "no_change"), NULL, "DEG: Red-Blue")
+  expect_equal(names(cols), c("up", "down", "no_change"))
+  expect_equal(unname(cols[c("up", "down")]), c("#D62728", "#1F77B4"))
+})
+
+test_that("deg_palette_choices leads with the DEG schemes then the generic palettes", {
+  ch <- deg_palette_choices()
+  # DEG palette group is first, then every generic discrete/continuous group.
+  expect_equal(names(ch)[1], "DEG palette")
+  expect_true(all(palette_type_names() %in% names(ch)))   # Okabe-Ito, Brewer, viridis, ...
+  expect_setequal(unname(ch[["DEG palette"]]), palette_names("DEG palette"))
+  expect_equal(unname(ch[["Custom"]]), "Custom palette")
+  # a generic palette still resolves to 3 colours for the DEG levels
+  expect_length(palette_discrete(c("up", "down", "no_change"), NULL, "Okabe-Ito"), 3L)
+  # the generic per-item catalogue must NOT include DEG palettes
+  expect_false("DEG palette" %in% palette_type_names())
+})

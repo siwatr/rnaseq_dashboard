@@ -216,6 +216,10 @@ User can have some freedom to modify the range of x- and y-axis. Data point outs
 > - **Guided design, not free-text.** Build the formula via a UI: pick the variable of interest + optional covariates, set the **reference (control) level**, and validate the model is **full rank** before running. Replace free-text "results names" with a **contrast picker** listing factor levels. Support **multiple stored contrasts**.
 > - **LFC shrinkage is precomputed, toggled at view time.** At DE time, store both `log2FoldChange` (standard `results()`) and `log2FoldChange_shrunk` (`DESeq2::lfcShrink()`, apeglm/ashr), each with its own `sig`/`DEG` (`sig_shrunk`/`DEG_shrunk`). `padj` is shared. The shrinkage toggle selects which column set drives the plot/colour — no recompute. Significance default: `!is.na(padj) & padj < 0.05 & abs(log2FoldChange) >= log2(2)`.
 > - DE must **rerun from raw counts** on the current sample/feature subset whenever the data changes (state model).
+> - **Implemented (Phase 5).** The page is a 3-tab module (Design & Contrasts / DE Plots / Results
+>   Table); the fit and per-contrast result extraction are separate (extraction is reactive/cached);
+>   design changes are **design-scoped** (they don't invalidate PCA/VST/QC). DEG plot colours come from
+>   a curated Palette **`other/DEG`** set. See the **`shiny-de-analysis`** skill for the full spec.
 
 <!--
 MARK: 6th page 

@@ -44,7 +44,9 @@
 .pal_other_meta <- function() {
   c(aes_other_palette_items(),
     list(correlation = list(kind = "continuous", levels = character(0),
-                            class = "numeric", label = "Sample correlation")))
+                            class = "numeric", label = "Sample correlation"),
+         DEG = list(kind = "discrete", levels = c("up", "down", "no_change"),
+                    class = "factor", label = "DEG status")))
 }
 .pal_other_items <- function() names(.pal_other_meta())
 .pal_removal_levels <- c("pass", "suggested_other", "suggested_this")
@@ -52,8 +54,9 @@
 # Preview swatch for a palette. `discrete` -> equal-width solid blocks (no
 # interpolation); otherwise a smooth gradient ramp. `name` is the resolvable
 # palette name; the visible label is its clean form. Static / pure.
-.pal_ref_swatch <- function(name, discrete) {
-  cols <- palette_colors(name, if (discrete) 8L else 9L)
+.pal_ref_swatch <- function(name, discrete, n = NULL) {
+  if (is.null(n)) n <- if (discrete) 8L else 9L
+  cols <- palette_colors(name, n)
   if (!length(cols)) return(NULL)
   bar <- if (discrete) {
     tags$div(class = "d-flex",
@@ -80,11 +83,14 @@
 .pal_reference_ui <- function(ns) {
   panel <- function(type) {
     nm <- palette_names(type); disc <- .pal_type_discrete(type)
+    n <- if (identical(type, "DEG palette")) 3L else NULL   # show the 3 semantic swatches, not 8
     bslib::accordion_panel(type,
-      if (length(nm)) lapply(nm, .pal_ref_swatch, discrete = disc)
+      if (length(nm)) lapply(nm, .pal_ref_swatch, discrete = disc, n = n)
       else tags$p(class = "text-muted small", "Install the source package to preview these."))
   }
-  groups <- setdiff(palette_type_names(), "Custom")   # Custom isn't a real preset
+  # Custom isn't a real preset; DEG palette is item-scoped (not in palette_type_names)
+  # but still previewed here so the DEG schemes are visible in the catalogue.
+  groups <- c(setdiff(palette_type_names(), "Custom"), "DEG palette")
   tagList(
     tags$div(class = "d-flex justify-content-between align-items-center mb-2",
       tags$p(class = "text-muted small mb-0",
@@ -315,6 +321,8 @@ mod_palette_server <- function(id, state) {
       if (dom == "other" && item == "correlation")
         return(list(name = "RColorBrewer: RdBu", min = "-1", max = "1",
                     reverse = TRUE, custom = NULL))
+      if (dom == "other" && item == "DEG")           # default DEG scheme (resolves via the name)
+        return(list(name = "DEG: Pink-Blue", colors = NULL))
       NULL
     }
     # Default config for a freshly added item (preset if it has one).
@@ -913,8 +921,11 @@ mod_palette_server <- function(id, state) {
       tags$div(class = "d-flex align-items-center gap-2 mb-1 pal-level-row",
                picker, tags$span(class = "fw-medium", lev))
     }
+    # The DEG status item offers only its curated 3-colour schemes (+ Custom);
+    # every other discrete item gets the generic N-level palette catalogue.
+    base_choices <- if (dom == "other" && item == "DEG") deg_palette_choices() else palette_choices()
     tagList(
-      selectInput(id("name"), "Base palette", choices = palette_choices(), selected = name),
+      selectInput(id("name"), "Base palette", choices = base_choices, selected = name),
       if (length(levels) > .pal_many_levels)
         tags$div(class = "alert alert-warning py-1 px-2 small",
                  sprintf("%d levels - colours are interpolated; pinning each is tedious.",

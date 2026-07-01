@@ -23,6 +23,18 @@
 .viridis_options <- c("viridis", "magma", "plasma", "inferno",
                       "cividis", "mako", "rocket", "turbo")
 
+# Curated 3-colour schemes for the DEG status item ONLY (up=warm / no_change=
+# neutral / down=cool). Stored in the DEG factor's LEVEL order (up, down,
+# no_change) so palette_colors() -> palette_discrete() maps positionally. These
+# are offered as a dedicated "DEG palette" group shown only for the DEG item --
+# the generic N-level qualitative palettes are meaningless for 3 fixed semantic
+# levels. Keep OUT of palette_type_names() so other items never see them.
+.deg_palettes <- list(
+  "DEG: Pink-Blue"     = c("#B54661", "#235675", "gray80"),   # up, down, no_change
+  "DEG: Orange-Purple" = c("orange",  "darkorchid4", "gray80"),
+  "DEG: Red-Blue"      = c("#D62728", "#1F77B4", "gray80"),
+  "DEG: Coral-Teal"    = c("#E4572E", "#0B7A75", "gray85"))
+
 # ggplot2's default discrete colours == scales::hue_pal()(n). Reproduced with
 # grDevices::hcl so we take no scales dependency.
 .gg_hue <- function(n) {
@@ -67,13 +79,31 @@ palette_names <- function(type = "Qualitative") {
     "Brewer: Divergent"   = .brewer_names("div"),
     viridis              = if (requireNamespace("viridisLite", quietly = TRUE))
                              paste0("viridis: ", .viridis_options) else character(0),
+    "DEG palette"        = names(.deg_palettes),
     character(0))
 }
 
 # A group is shown with discrete swatches (vs a smooth gradient) in the Preview.
 .pal_type_discrete <- function(type) {
-  type %in% c("Custom", "Qualitative", "Brewer: Qualitative")
+  type %in% c("Custom", "Qualitative", "Brewer: Qualitative", "DEG palette")
 }
+
+#' Base-palette `selectInput` choices for the DEG status item
+#'
+#' The DEG item (3 fixed levels up/down/no_change) leads with the curated
+#' "DEG palette" schemes (semantic up/down/no_change colours), then offers the
+#' generic discrete palettes too (Okabe-Ito, Brewer, viridis, ...) so a user can
+#' also colour DEG status with any qualitative/sequential scheme.
+#' @return A named list (group -> named character vector) for `selectInput`.
+#' @export
+deg_palette_choices <- function() {
+  schemes <- palette_names("DEG palette")
+  c(list("DEG palette" = stats::setNames(schemes, .pal_label_deg(schemes))),
+    palette_choices())
+}
+
+# Drop the "DEG: " prefix for display (the optgroup already names the source).
+.pal_label_deg <- function(name) sub("^DEG: ", "", name)
 
 # Drop the "<pkg>: " prefix for display (the optgroup already names the source).
 .pal_label <- function(name) sub("^(RColorBrewer|viridis): ", "", name)
@@ -142,6 +172,10 @@ palette_colors <- function(name = "Okabe-Ito", n, custom = NULL) {
   if (identical(name, "Custom palette")) return(ramp(if (length(custom)) custom else .okabe_ito))
   if (identical(name, "ggplot default")) return(.gg_hue(n))
   if (identical(name, "Okabe-Ito")) return(ramp(.okabe_ito))
+  if (name %in% names(.deg_palettes)) {                # curated DEG 3-colour scheme
+    cols <- .deg_palettes[[name]]
+    return(if (n <= length(cols)) cols[seq_len(n)] else grDevices::colorRampPalette(cols)(n))
+  }
   parts <- strsplit(name, ": ", fixed = TRUE)[[1]]
   pkg <- parts[1L]; pal <- if (length(parts) > 1L) parts[2L] else parts[1L]
   if (identical(pkg, "viridis") && requireNamespace("viridisLite", quietly = TRUE)) {

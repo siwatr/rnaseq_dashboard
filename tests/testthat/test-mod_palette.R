@@ -473,3 +473,17 @@ test_that("import is gated on the Load button (no auto-import on file select)", 
     expect_false(is.null(state$palette$colData$condition))
   })
 })
+
+test_that("other/DEG palette item is registered + round-trips through JSON", {
+  meta <- .pal_other_meta()
+  expect_true("DEG" %in% names(meta))
+  expect_equal(meta$DEG$kind, "discrete")
+  expect_equal(meta$DEG$levels, c("up", "down", "no_change"))
+
+  pal <- list(other = list(DEG = list(
+    name = "DEG: Orange-Purple",
+    colors = c(up = "#FFA500", down = "#68228B", no_change = "#CCCCCC"))))
+  back <- palette_from_json(palette_to_json(pal))
+  expect_equal(back$other$DEG$name, "DEG: Orange-Purple")
+  expect_equal(back$other$DEG$colors[["up"]], "#FFA500")
+})
