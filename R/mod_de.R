@@ -80,19 +80,18 @@
           selectizeInput(ns("remove_multi"), NULL, choices = NULL, multiple = TRUE,
                          options = list(placeholder = "select contrasts to remove")),
           tags$div(class = "d-flex gap-2 flex-wrap",
-            actionButton(ns("remove_sel"), "Remove selected", class = "btn-outline-secondary btn-sm"),
-            actionButton(ns("remove_invalid"), "Remove invalid", class = "btn-outline-danger btn-sm"),
-            actionButton(ns("remove_all"), "Remove all", class = "btn-outline-danger btn-sm")))
+            actionButton(ns("remove_sel"), "Remove selected", class = "btn-secondary btn-sm"),
+            actionButton(ns("remove_invalid"), "Remove invalid", class = "btn-danger btn-sm"),
+            actionButton(ns("remove_all"), "Remove all", class = "btn-danger btn-sm")))
       ),
       tags$hr(),
 
       ## Row 3 -- DEG summary (extraction controls under the header, table below)
       tags$h5("DEG summary", class = "fs-6"),
-      tags$div(class = "d-flex align-items-center gap-3 mb-2",
-        bslib::tooltip(
-          bslib::input_switch(ns("auto_update"), "Auto-update results", value = TRUE),
-          "On: results refresh automatically as you add/remove contrasts (no re-fit needed). Off: use the Update results button."),
-        uiOutput(ns("update_btn"), inline = TRUE)),
+      bslib::tooltip(
+        bslib::input_switch(ns("auto_update"), "Auto-update results", value = TRUE),
+        "On: results refresh automatically as you add/remove contrasts (no re-fit needed). Off: use the Update results button."),
+      uiOutput(ns("update_btn")),
       uiOutput(ns("summary"))
     )
   )
@@ -159,11 +158,18 @@ mod_de_server <- function(id, state) {
       results <- de$results %||% list(); methods <- de$methods %||% list()
       extractable <- Filter(function(s) de_contrast_validity(dds, s) == "extractable", specs)
       ex_labels <- vapply(extractable, function(s) s$label, character(1))
-      for (s in extractable) {
-        if (!is.null(results[[s$label]])) next
-        df <- de_results(fit, c(s$var, s$test, s$control), shrink_type = shrink)
-        results[[s$label]] <- df
-        methods[[s$label]] <- attr(df, "shrink_method") %||% "none"
+      # Only the not-yet-cached contrasts cost anything (results()/lfcShrink can be
+      # slow); show a progress spinner while they compute (auto or manual path).
+      todo <- Filter(function(s) is.null(results[[s$label]]), extractable)
+      if (length(todo)) {
+        shiny::withProgress(message = "Extracting DE results", value = 0, {
+          for (s in todo) {
+            shiny::incProgress(1 / length(todo), detail = s$label)
+            df <- de_results(fit, c(s$var, s$test, s$control), shrink_type = shrink)
+            results[[s$label]] <- df
+            methods[[s$label]] <- attr(df, "shrink_method") %||% "none"
+          }
+        })
       }
       results <- results[intersect(names(results), ex_labels)]
       methods <- methods[intersect(names(methods), ex_labels)]
@@ -283,10 +289,10 @@ mod_de_server <- function(id, state) {
         v <- if (is.null(dds)) "invalid" else de_contrast_validity(dds, s)
         bslib::tooltip(
           tags$span(class = paste("badge rounded-pill me-1 mb-1", .de_tier_class[[v]]),
-                    style = "font-size:0.8rem;", s$label),
+                    style = "font-size:1rem;", s$label),
           .de_tier_tip[[v]])
       })
-      tags$div(class = "d-flex flex-wrap", badges)
+      tags$div(class = "d-flex flex-wrap mt-3", badges)
     })
 
     # --- run DESeq2 (fit only) --------------------------------------------
@@ -330,8 +336,10 @@ mod_de_server <- function(id, state) {
 
     output$update_btn <- renderUI({
       if (auto_on()) return(NULL)
-      cls <- if (needs_update()) "btn-primary btn-sm mt-1" else "btn-outline-primary btn-sm mt-1"
-      actionButton(session$ns("update_results"), "Update results", class = cls)
+      # Opaque; primary when an update is pending, secondary otherwise.
+      cls <- if (needs_update()) "btn-primary btn-sm mt-1" else "btn-secondary btn-sm mt-1"
+      actionButton(session$ns("update_results"), "Update results",
+                   icon = icon("arrows-rotate"), class = cls)
     })
 
     output$run_note <- renderUI({
