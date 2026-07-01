@@ -154,12 +154,18 @@ app_ui <- function(themer_mode = FALSE) {
     title = tags$h1("DDS Dashboard", class = "fs-3 fw-bold mb-0 pb-0 pe-3",
                     style = "color:#8b58db;"),
     theme = .app_theme(),
-    bslib::nav_panel(tags$h2("Input", class = "fs-6 mb-0"),
+    bslib::nav_panel(tags$h2("Dataset", class = "fs-6 mb-0"),
       bslib::navset_card_tab(
-        bslib::nav_panel(tags$h3("Dataset", class = "fs-6"),         mod_input_ui("input")),
+        bslib::nav_panel(tags$h3("Import", class = "fs-6"),        mod_input_ui("input")),
         bslib::nav_panel(tags$h3("Sample", class = "fs-6"),  mod_metadata_ui("metadata")),
         bslib::nav_panel(tags$h3("Feature", class = "fs-6"), mod_feature_ui("feature")),
-        bslib::nav_panel(tags$h3("Assay", class = "fs-6"),        mod_assay_ui("assay"))
+        bslib::nav_panel(tags$h3("Assay", class = "fs-6"),        mod_assay_ui("assay")),
+        bslib::nav_panel(tags$h3("Design", class = "fs-6"),
+          bslib::card(bslib::card_body(
+            tags$p(class = "text-muted",
+                   "Set the model design and reference (control) levels early. This only sets the stage - running differential expression happens on the DE page (the design there stays in sync with this)."),
+            tags$div(style = "max-width: 480px;",
+                     mod_design_builder_ui("design_input")))))
       )
     ),
     bslib::nav_panel(tags$h2("QC", class = "fs-6 mb-0"),        mod_qc_ui("qc")),
@@ -202,6 +208,7 @@ app_server <- function(input, output, session) {
   mod_metadata_server("metadata", state)
   mod_feature_server("feature", state)
   mod_assay_server("assay", state)
+  mod_design_builder_server("design_input", state)   # Dataset > Design tab (synced with the DE page)
   mod_qc_server("qc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_dimreduc_server("dimreduc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_de_server("de", state)
