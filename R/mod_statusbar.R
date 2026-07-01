@@ -60,7 +60,7 @@ mod_statusbar_server <- function(id, state) {
       if (!identical(m$de_status, "none")) {
         de_cls <- if (identical(m$de_status, "current")) "text-bg-success" else "text-bg-warning"
         badges <- c(badges, list(bslib::tooltip(
-          .badge(sprintf("DE: %s (%d)", m$de_status, m$de_n_contrasts), de_cls),
+          .badge(sprintf("DE: %s (%d)", m$de_status, m$de_n_results), de_cls),
           if (identical(m$de_status, "current"))
             "Differential-expression results match the current data + design."
           else

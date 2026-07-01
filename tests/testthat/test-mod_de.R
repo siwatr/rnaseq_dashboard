@@ -28,6 +28,28 @@ test_that("mod_de: add a contrast, run DESeq2, store results + current stamp; ed
   })
 })
 
+test_that("mod_de: a contrast invalid for the current design is skipped, not fatal", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_de_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 40, n_per_group = 3, n_spike = 0, seed = 8)),
+               source = "demo")
+    session$flushReact()
+    session$setInputs(c_var = "condition", c_test = "treated", c_control = "control")
+    session$setInputs(c_add = 1); session$flushReact()
+    # inject a stale spec referencing a level that doesn't exist
+    de <- state$de
+    de$contrasts <- c(de$contrasts, list(list(var = "condition", test = "ghost",
+                                              control = "control", label = "condition: ghost vs control")))
+    state$de <- de
+    session$setInputs(shrink = "none", run = 1); session$flushReact()
+    res <- (state$de)$results
+    expect_true("condition: treated vs control" %in% names(res))   # valid one ran
+    expect_false("condition: ghost vs control" %in% names(res))    # invalid one skipped
+    expect_equal(de_status(state), "current")
+  })
+})
+
 test_that("mod_de: duplicate contrasts are rejected; remove works", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()

@@ -25,5 +25,7 @@ Updates \code{design(working)} and any factor reference levels \strong{without} 
 separate \code{design_version} that the DE fit keys on. Logs to history. Not pushed
 onto the undo stack (the design is directly re-editable). The design formula
 does not change sample/feature values, and a relevel only reorders factor
-levels, so nothing downstream except DE actually depends on it.
+levels, so nothing downstream except DE actually depends on it. \strong{Invariant:} no
+\code{derived} cache key may depend on factor level order except \code{de_fit} (which keys on
+\code{design_version}); if a future artifact orders/colours by a reference level, revisit this.
 }

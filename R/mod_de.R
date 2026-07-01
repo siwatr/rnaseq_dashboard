@@ -77,14 +77,16 @@ mod_de_server <- function(id, state) {
     design_status <- mod_design_builder_server("design", state)
 
     # --- contrast pickers -------------------------------------------------
-    # Factor choices follow the design vars (fall back to any discrete column).
+    # A contrast can only be on a factor that is IN the model (else DESeq2::results
+    # errors), so restrict the Factor to the discrete design terms; preserve the
+    # user's selection across unrelated data edits when it's still valid.
     observeEvent(list(state$data_version, state$design_version), {
       dds <- state$working
       if (is.null(dds)) return()
-      fac <- de_design_factors(dds)
-      dv  <- intersect(tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0)), fac)
-      updateSelectInput(session, "c_var", choices = fac,
-                        selected = if (length(dv)) dv[1] else if (length(fac)) fac[1])
+      dv <- intersect(tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0)),
+                      de_design_factors(dds))
+      sel <- if (isTRUE(input$c_var %in% dv)) input$c_var else if (length(dv)) dv[1] else NULL
+      updateSelectInput(session, "c_var", choices = dv, selected = sel)
     }, ignoreNULL = FALSE)
 
     observeEvent(input$c_var, {
@@ -154,14 +156,29 @@ mod_de_server <- function(id, state) {
       specs <- (state$de %||% list())$contrasts %||% list()
       if (!length(specs)) { showNotification("Add at least one contrast.", type = "error"); return() }
       shrink <- input$shrink %||% "apeglm"
+      # Only contrasts whose factor is in the model and whose levels still exist
+      # can be extracted; a stale spec (factor dropped from the design, or a level
+      # removed by a later edit) is skipped + reported rather than sinking the batch.
+      dv <- intersect(tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0)),
+                      de_design_factors(dds))
+      valid <- vapply(specs, function(s)
+        s$var %in% dv && all(c(s$test, s$control) %in% de_contrast_levels(dds, s$var)),
+        logical(1))
+      if (!any(valid)) {
+        showNotification("No stored contrast is valid for the current design.", type = "error")
+        return()
+      }
       ok <- tryCatch({
         shiny::withProgress(message = "Running DESeq2", value = 0.2, {
+          # data_version is carried by state_derive's version stamp; only the
+          # design_version needs to be an explicit param (state_derive has no
+          # concept of it) so the fit refits on a design-only change.
           fit <- state_derive(state, "de_fit",
-            params = list(dv = state$data_version, desv = state$design_version %||% 0L),
+            params = list(desv = state$design_version %||% 0L),
             expr = function() de_run(dds))
           shiny::incProgress(0.5, message = "Extracting contrasts")
           results <- list(); methods <- list()
-          for (s in specs) {
+          for (s in specs[valid]) {
             df <- de_results(fit, c(s$var, s$test, s$control), shrink_type = shrink)
             results[[s$label]] <- df
             methods[[s$label]] <- attr(df, "shrink_method") %||% "none"
@@ -169,7 +186,7 @@ mod_de_server <- function(id, state) {
           de <- state$de %||% list()
           de$results <- results
           de$methods <- methods
-          de$active  <- de$active %||% specs[[1]]$label
+          de$active  <- if (!is.null(de$active) && de$active %in% names(results)) de$active else names(results)[1]
           de$shrink  <- shrink
           de$stamp   <- list(dv = state$data_version, desv = state$design_version %||% 0L)
           state$de <- de
@@ -179,7 +196,13 @@ mod_de_server <- function(id, state) {
         showNotification(paste("DESeq2 failed:", conditionMessage(e)),
                          type = "error", duration = NULL); FALSE
       })
-      if (ok) showNotification("DE run complete.", type = "message", duration = 3)
+      if (ok) {
+        n_skip <- sum(!valid)
+        showNotification(
+          if (n_skip) sprintf("DE run complete (%d contrast(s) skipped as invalid for the current design).", n_skip)
+          else "DE run complete.",
+          type = if (n_skip) "warning" else "message", duration = 4)
+      }
     })
 
     output$run_note <- renderUI({

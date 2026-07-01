@@ -146,7 +146,9 @@ state_mutate <- function(state, fn, action = list()) {
 #' separate `design_version` that the DE fit keys on. Logs to history. Not pushed
 #' onto the undo stack (the design is directly re-editable). The design formula
 #' does not change sample/feature values, and a relevel only reorders factor
-#' levels, so nothing downstream except DE actually depends on it.
+#' levels, so nothing downstream except DE actually depends on it. **Invariant:** no
+#' `derived` cache key may depend on factor level order except `de_fit` (which keys on
+#' `design_version`); if a future artifact orders/colours by a reference level, revisit this.
 #'
 #' @param state App-state object.
 #' @param design A one-sided model formula (e.g. `~ condition + batch`).
@@ -264,7 +266,7 @@ state_meta <- function(state) {
     n_spike_in   = .class_count(dds, "spike_in"),
     n_exogenous  = .class_count(dds, "exogenous"),
     data_version = state$data_version,
-    de_status       = de_status(state),
-    de_n_contrasts  = length((state$de %||% list())$results)
+    de_status    = de_status(state),
+    de_n_results = length((state$de %||% list())$results)   # result tables, not stored specs
   )
 }

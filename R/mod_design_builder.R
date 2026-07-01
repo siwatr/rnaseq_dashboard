@@ -28,20 +28,31 @@ mod_design_builder_ui <- function(id, title = NULL) {
 mod_design_builder_server <- function(id, state) {
   moduleServer(id, function(input, output, session) {
 
-    # Re-sync the controls to the committed design whenever the dataset or the
-    # design changes (so the two embedded instances mirror each other). Keyed on
-    # both versions; design_version bumps on Apply, data_version on load/edit.
+    # Re-sync the controls whenever the dataset or design changes (so the two
+    # embedded instances mirror each other). A DESIGN change (or a stale/empty
+    # primary, e.g. after a load) force-resets the selections to the committed
+    # design; an unrelated DATA edit only refreshes the choice lists and KEEPS the
+    # user's in-progress (not-yet-applied) selection when it is still valid -- so a
+    # QC filter elsewhere doesn't wipe a half-built design here.
+    last_desv <- reactiveVal(-1L)
     sync_key <- reactive(list(state$data_version, state$design_version))
     observeEvent(sync_key(), {
       dds <- state$working
       if (is.null(dds)) return()
-      fac <- de_design_factors(dds)
-      dv  <- tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0))
-      dv  <- intersect(dv, fac)                       # only discrete design vars
-      prim <- if (length(dv)) dv[1] else if (length(fac)) fac[1] else character(0)
-      cov  <- setdiff(dv, prim)
-      updateSelectInput(session, "primary", choices = fac, selected = prim)
-      updateSelectizeInput(session, "covariates", choices = fac, selected = cov)
+      fac  <- de_design_factors(dds)
+      desv <- state$design_version %||% 0L
+      design_changed <- !identical(desv, last_desv())
+      last_desv(desv)
+      if (design_changed || !isTRUE(input$primary %in% fac)) {
+        dv   <- intersect(tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0)), fac)
+        prim <- if (length(dv)) dv[1] else if (length(fac)) fac[1] else character(0)
+        updateSelectInput(session, "primary", choices = fac, selected = prim)
+        updateSelectizeInput(session, "covariates", choices = fac, selected = setdiff(dv, prim))
+      } else {
+        updateSelectInput(session, "primary", choices = fac, selected = input$primary)
+        updateSelectizeInput(session, "covariates", choices = fac,
+                             selected = intersect(input$covariates %||% character(0), fac))
+      }
     }, ignoreNULL = FALSE)
 
     # The terms the user has selected (primary first; primary excluded from covs).
