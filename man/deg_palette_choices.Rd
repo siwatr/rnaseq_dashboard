@@ -10,6 +10,8 @@ deg_palette_choices()
 A named list (group -> named character vector) for \code{selectInput}.
 }
 \description{
-The DEG item (3 fixed levels up/down/no_change) offers only the curated
-"DEG palette" schemes + Custom -- the generic N-level palettes don't apply.
+The DEG item (3 fixed levels up/down/no_change) leads with the curated
+"DEG palette" schemes (semantic up/down/no_change colours), then offers the
+generic discrete palettes too (Okabe-Ito, Brewer, viridis, ...) so a user can
+also colour DEG status with any qualitative/sequential scheme.
 }

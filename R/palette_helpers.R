@@ -90,14 +90,16 @@ palette_names <- function(type = "Qualitative") {
 
 #' Base-palette `selectInput` choices for the DEG status item
 #'
-#' The DEG item (3 fixed levels up/down/no_change) offers only the curated
-#' "DEG palette" schemes + Custom -- the generic N-level palettes don't apply.
+#' The DEG item (3 fixed levels up/down/no_change) leads with the curated
+#' "DEG palette" schemes (semantic up/down/no_change colours), then offers the
+#' generic discrete palettes too (Okabe-Ito, Brewer, viridis, ...) so a user can
+#' also colour DEG status with any qualitative/sequential scheme.
 #' @return A named list (group -> named character vector) for `selectInput`.
 #' @export
 deg_palette_choices <- function() {
   schemes <- palette_names("DEG palette")
-  list("DEG palette" = stats::setNames(schemes, .pal_label_deg(schemes)),
-       "Custom"      = c("Custom palette" = "Custom palette"))
+  c(list("DEG palette" = stats::setNames(schemes, .pal_label_deg(schemes))),
+    palette_choices())
 }
 
 # Drop the "DEG: " prefix for display (the optgroup already names the source).

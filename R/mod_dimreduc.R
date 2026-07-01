@@ -91,7 +91,7 @@ mod_dimreduc_ui <- function(id) {
         bslib::accordion_panel(
           "Plot aesthetics", icon = icon("sliders"),
           bslib::input_switch(ns("fixed_ratio"), "Fix 1:1 aspect ratio", value = FALSE),
-          sliderInput(ns("point_size"), "Point size", min = 0.25, max = 5,
+          sliderInput(ns("point_size"), "Point size", min = 0.25, max = 10,
                       value = 3, step = 0.25),
           selectInput(ns("legend_pos"), "Legend position",
                       choices = c("Right" = "right", "Left" = "left", "Top" = "top",

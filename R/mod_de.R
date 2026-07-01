@@ -27,6 +27,22 @@
            function(t) item(.de_tier_class[[t]], .de_tier_label[[t]])))
 }
 
+# The shared "Contrast & thresholds" accordion group. Rendered in every DE tab's
+# sidebar with a per-tab `suffix` (design/plots/table); the server keeps the three
+# copies in sync (contrast-to-view via state$de$active; padj/lfc/shrunk via a
+# canonical thr store), so the same controls are available and consistent on all
+# tabs. This is why the ids are suffixed (a Shiny input id can't appear twice).
+.de_view_controls <- function(ns, suffix) {
+  bslib::accordion_panel(
+    "Contrast & thresholds", icon = icon("circle-half-stroke"),
+    selectInput(ns(paste0("view_", suffix)), "Contrast to view", choices = NULL),
+    numericInput(ns(paste0("padj_", suffix)), "padj threshold",
+                 value = 0.05, min = 0, max = 1, step = 0.01),
+    numericInput(ns(paste0("lfc_", suffix)), "abs(log2FC) threshold",
+                 value = log2(2), min = 0, step = 0.1),
+    bslib::input_switch(ns(paste0("shrunk_", suffix)), "Use shrunk LFC", value = FALSE))
+}
+
 # --- Design & Contrasts tab UI ---------------------------------------------
 .de_design_ui <- function(ns) {
   bslib::layout_sidebar(
@@ -49,7 +65,9 @@
         bslib::tooltip(
           actionButton(ns("run"), "Run DESeq2", class = "btn fw-semibold",
                        style = "background-color:#8b58db;border-color:#8b58db;color:#fff;"),
-          "Fits DESeq2 on the current design (this can take a while). Re-run after a data or design change."))
+          "Fits DESeq2 on the current design (this can take a while). Re-run after a data or design change.")),
+      tags$hr(),
+      bslib::accordion(open = FALSE, .de_view_controls(ns, "design"))
     ),
     bslib::card(
       fill = FALSE,
@@ -65,7 +83,7 @@
         selectInput(ns("c_test"), "Test", choices = NULL),
         selectInput(ns("c_control"), "Control", choices = NULL)
       ),
-      actionButton(ns("c_add"), "Add contrast", class = "btn-secondary btn-sm"),
+      actionButton(ns("c_add"), "Add contrast", class = "btn-secondary btn-sm", width="10%"),
       tags$hr(),
 
       ## Row 2 -- Defined contrasts + Remove
@@ -126,26 +144,22 @@
     sidebar = bslib::sidebar(
       title = "Plot controls", width = 340,
       bslib::accordion(
-        open = c("Contrast", "Appearance"),
-        bslib::accordion_panel("Contrast", icon = icon("code-compare"),
-          selectInput(ns("view_plots"), "Contrast to view", choices = NULL),
-          checkboxInput(ns("plot_auto"), "Auto-render", value = TRUE),
-          actionButton(ns("plot_render"), "Render", icon = icon("play"), class = "btn-sm btn-primary")),
-        bslib::accordion_panel("Thresholds", icon = icon("filter"),
-          numericInput(ns("padj"), "padj threshold", value = 0.05, min = 0, max = 1, step = 0.01),
-          numericInput(ns("lfc"), "abs(log2FC) threshold", value = log2(2), min = 0, step = 0.1),
-          bslib::input_switch(ns("use_shrunk"), "Use shrunk LFC", value = FALSE)),
+        open = c("Contrast & thresholds", "Appearance"),
+        .de_view_controls(ns, "plots"),
         bslib::accordion_panel("Appearance", icon = icon("palette"),
           selectInput(ns("colour_by"), "Colour by",
                       c("DEG status" = "DEG", "None" = "__none__",
                         "log2FC" = "__lfc__", "baseMean" = "baseMean")),
-          sliderInput(ns("point_size"), "Point size", min = 0.25, max = 4, value = 1.4, step = 0.25),
+          sliderInput(ns("point_size"), "Point size", min = 0.25, max = 10, value = 3, step = 0.25),
           sliderInput(ns("point_alpha"), "Point opacity", min = 0.1, max = 1, value = 0.85, step = 0.05),
           selectInput(ns("legend_pos"), "Legend position",
                       c(Right = "right", Left = "left", Top = "top", Bottom = "bottom", None = "none"),
                       selected = "right"),
           conditionalPanel(shows("Direct comparison"),
-            bslib::input_switch(ns("fixed_ratio"), "Fix 1:1 aspect ratio", value = FALSE))),
+            tags$hr(),
+            tags$div(class = "small text-muted mb-1", "Direct comparison"),
+            bslib::input_switch(ns("fixed_ratio"), "Fix 1:1 aspect ratio", value = FALSE),
+            expr_value_ui(ns, "direct"))),
         bslib::accordion_panel("Labels", icon = icon("tag"),
           bslib::input_switch(ns("show_labels"), "Show gene labels", value = FALSE),
           numericInput(ns("top_n"), "Label top N by padj", value = 0, min = 0, max = 100, step = 1),
@@ -171,6 +185,12 @@
         tags$div(class = "d-flex align-items-center justify-content-between flex-wrap gap-2",
           tags$h4("DE plot", class = "fs-6 mb-0"),
           .de_plot_type_control(ns("plot_type")))),
+      # Render controls live above the plot (not buried in the sidebar accordion).
+      tags$div(class = "d-flex align-items-center gap-3 flex-wrap mb-2",
+        tags$div(class = "mt-2 mb-0",
+          checkboxInput(ns("plot_auto"), "Auto-render", value = TRUE)),
+        actionButton(ns("plot_render"), "Render", icon = icon("play"),
+                     class = "btn-sm btn-primary")),
       uiOutput(ns("de_plot_stale")),
       .plot_dual(ns("de_plot_container"))
     )
@@ -182,10 +202,9 @@
   bslib::layout_sidebar(
     fillable = FALSE,
     sidebar = bslib::sidebar(
-      title = "Table", width = 300,
-      selectInput(ns("view_table"), "Contrast to view", choices = NULL),
-      bslib::input_switch(ns("sig_only"), "Significant only", value = FALSE),
-      uiOutput(ns("table_thresh_note"))),
+      title = "Table", width = 320,
+      bslib::accordion(open = "Contrast & thresholds", .de_view_controls(ns, "table")),
+      bslib::input_switch(ns("sig_only"), "Significant only", value = FALSE)),
     bslib::card(
       bslib::card_header(tags$h4("DE results", class = "fs-6 mb-0")),
       DT::DTOutput(ns("de_table")))
@@ -429,15 +448,20 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
       # Opaque; primary when an update is pending, secondary otherwise.
       cls <- if (needs_update()) "btn-primary btn-sm mt-1" else "btn-secondary btn-sm mt-1"
       actionButton(session$ns("update_results"), "Update results",
-                   icon = icon("arrows-rotate"), class = cls)
+                   icon = icon("arrows-rotate"), class = cls, width = "10%")
     })
 
+    # Reflects the FIT (has DESeq() been run and is it up to date?), not the
+    # extracted results -- so a fit with no contrasts yet still reads "up to date".
     output$run_note <- renderUI({
-      switch(de_status(state),
-        none    = tags$div(class = "text-muted small mb-2", "No DESeq2 results available."),
+      switch(de_fit_status(state),
+        none    = tags$div(class = "text-muted small mb-2",
+                           "No DESeq2 fit yet - run DESeq2 to enable results."),
         stale   = tags$div(class = "text-warning small mb-2",
-                           icon("triangle-exclamation"), " Re-run DESeq2 needed (data or design changed)."),
-        current = tags$div(class = "text-success small mb-2", "Results are current."))
+                           icon("triangle-exclamation"),
+                           " Fit is out of date (data or design changed) - re-run DESeq2."),
+        current = tags$div(class = "text-success small mb-2",
+                           icon("check"), " Fit is up to date."))
     })
 
     # --- per-contrast DEG summary -----------------------------------------
@@ -458,8 +482,10 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
         return(tagList(note, tags$p(class = "text-muted small", msg)))
       }
       methods <- (state$de %||% list())$methods %||% list()
+      deg_col <- if (isTRUE(thr$shrunk)) "DEG_shrunk" else "DEG"
       rows <- lapply(names(res), function(lab) {
-        s <- de_summary(de_classify_table(res[[lab]]))
+        s <- de_summary(
+          de_classify_table(res[[lab]], thr$padj %||% 0.05, thr$lfc %||% log2(2)), deg_col)
         tags$tr(
           tags$td(lab),
           tags$td(class = "text-end", s[["up"]]),
@@ -475,7 +501,9 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
                              tags$th(class = "text-end", "Total"), tags$th("Shrinkage"))),
           tags$tbody(rows)),
         tags$p(class = "text-muted small",
-               "Counts at padj < 0.05 and |log2FC| >= 1 (standard LFC); adjustable thresholds live on the DE Plots / Results Table tabs. apeglm shrinkage needs the control level to be the factor's reference; other contrasts fall back to ashr (see the Shrinkage column)."))
+               sprintf("Counts at padj < %s and |log2FC| >= %s (%s LFC), using the thresholds shared across all DE tabs. apeglm shrinkage needs the control level to be the factor's reference; other contrasts fall back to ashr (see the Shrinkage column).",
+                       thr$padj %||% 0.05, round(thr$lfc %||% log2(2), 3),
+                       if (isTRUE(thr$shrunk)) "shrunk" else "standard")))
     })
 
     # ================= DE Plots + Results Table (P5c) =================
@@ -484,22 +512,55 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
     dual_plot <- eng$dual_plot; deferred <- eng$deferred; stale_note <- eng$stale_note
     feature_type <- function() (state$meta %||% list())$feature_type %||% "feature"
 
-    # --- shared "Contrast to view" selector (synced across both tabs) -----
+    # --- shared "Contrast & thresholds" controls (synced across all 3 tabs) ---
+    # One copy of the group lives in each tab's sidebar (design/plots/table). The
+    # contrast-to-view is synced through state$de$active; the thresholds through a
+    # canonical `thr` store. Guarded fan-out so the echoes never loop.
+    de_view_suffixes <- c("design", "plots", "table")
+    thr <- reactiveValues(padj = 0.05, lfc = log2(2), shrunk = FALSE)
+
     result_labels <- reactive(names((state$de %||% list())$results %||% list()))
     observeEvent(list(result_labels(), (state$de %||% list())$active), {
       labs <- result_labels()
       a <- (state$de %||% list())$active
       if (is.null(a) || !(a %in% labs)) a <- if (length(labs)) labs[1] else NULL
-      updateSelectInput(session, "view_plots", choices = labs, selected = a)
-      updateSelectInput(session, "view_table", choices = labs, selected = a)
+      for (sfx in de_view_suffixes) {
+        updateSelectInput(session, paste0("view_", sfx), choices = labs, selected = a)
+      }
     }, ignoreNULL = FALSE)
     set_active <- function(lab) {
       if (is.null(lab) || !nzchar(lab)) return()
       de <- state$de %||% list()
       if (!identical(de$active, lab)) { de$active <- lab; state$de <- de }
     }
-    observeEvent(input$view_plots, set_active(input$view_plots))
-    observeEvent(input$view_table, set_active(input$view_table))
+
+    # Per-tab edits -> canonical (guarded so a fan-out echo is a no-op).
+    lapply(de_view_suffixes, function(sfx) {
+      observeEvent(input[[paste0("view_", sfx)]], set_active(input[[paste0("view_", sfx)]]))
+      observeEvent(input[[paste0("padj_", sfx)]], {
+        v <- input[[paste0("padj_", sfx)]]; if (!identical(thr$padj, v)) thr$padj <- v
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("lfc_", sfx)]], {
+        v <- input[[paste0("lfc_", sfx)]]; if (!identical(thr$lfc, v)) thr$lfc <- v
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("shrunk_", sfx)]], {
+        v <- input[[paste0("shrunk_", sfx)]]; if (!identical(thr$shrunk, v)) thr$shrunk <- v
+      }, ignoreInit = TRUE)
+    })
+    # Canonical -> every copy (handler is isolated, so reading inputs here can't loop).
+    observeEvent(thr$padj, for (sfx in de_view_suffixes) {
+      id <- paste0("padj_", sfx)
+      if (!identical(input[[id]], thr$padj)) updateNumericInput(session, id, value = thr$padj)
+    })
+    observeEvent(thr$lfc, for (sfx in de_view_suffixes) {
+      id <- paste0("lfc_", sfx)
+      if (!identical(input[[id]], thr$lfc)) updateNumericInput(session, id, value = thr$lfc)
+    })
+    observeEvent(thr$shrunk, for (sfx in de_view_suffixes) {
+      id <- paste0("shrunk_", sfx)
+      if (!identical(input[[id]], thr$shrunk))
+        bslib::update_switch(id, value = thr$shrunk, session = session)
+    })
 
     active_spec <- reactive({
       a <- (state$de %||% list())$active
@@ -521,14 +582,14 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # --- deferred classified results (the DATA; display aesthetics stay live) ---
     de_spec <- reactive({
       res <- req(active_raw())
-      de_classify_table(res, input$padj %||% 0.05, input$lfc %||% log2(2))
+      de_classify_table(res, thr$padj %||% 0.05, thr$lfc %||% log2(2))
     })
     # The sig includes a results-identity token (the fit stamp + shrink method) so a
     # re-fit / re-extraction of the SAME contrast marks the plot stale even though
     # extraction never bumps data_version (auto-render off would otherwise show old
     # values). Display aesthetics stay OUT of the sig (cheap live re-plots).
     de_shown <- deferred("plot_auto", "plot_render", de_spec,
-      sig = reactive(list((state$de %||% list())$active, input$padj, input$lfc,
+      sig = reactive(list((state$de %||% list())$active, thr$padj, thr$lfc,
                           state$data_version, (state$de %||% list())$stamp,
                           (state$de %||% list())$shrink)))
     output$de_plot_stale <- stale_note(de_shown)
@@ -544,18 +605,21 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
            bm = rng("clamp_bm"), expr = rng("clamp_expr"))
     })
 
-    # Direct-comparison group means (from the active contrast's control/test levels).
-    direct_assay <- reactive({
-      present <- SummarizedExperiment::assayNames(state$working)
-      if ("logcounts" %in% present) "logcounts" else if (length(present)) present[1] else "counts"
-    })
+    # Direct-comparison: the shared assay/transform/pseudocount control, then group
+    # means of that (transformed) assay over the active contrast's control/test.
+    direct_value <- expr_value_server(input, output, session, state, "direct")
     direct_means <- reactive({
       s <- active_spec(); dds <- state$working; req(s, dds)
       x <- SummarizedExperiment::colData(dds)[[s$var]]
       ctrl <- colnames(dds)[!is.na(x) & x == s$control]
       test <- colnames(dds)[!is.na(x) & x == s$test]
       validate(need(length(ctrl) && length(test), "The contrast's groups are empty in the current data."))
-      de_group_means(dds, direct_assay(), ctrl, test)
+      spec <- direct_value()
+      present <- SummarizedExperiment::assayNames(dds)
+      assay <- if (spec$assay %in% present) spec$assay
+               else if ("logcounts" %in% present) "logcounts" else present[1]
+      de_group_means(dds, assay, ctrl, test,
+                     transform = spec$transform, pseudocount = spec$pseudocount)
     })
 
     # --- gene labels (top-N by padj + ad-hoc searched genes) --------------
@@ -604,7 +668,7 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
       ckey <- input$colour_by %||% "DEG"
       if (identical(ckey, "__none__")) return(NULL)
       d2 <- d[match(ids, rownames(d)), , drop = FALSE]
-      shr <- isTRUE(input$use_shrunk)
+      shr <- isTRUE(thr$shrunk)
       if (identical(ckey, "DEG")) {
         de_colour_resolve(d2, if (shr) "DEG_shrunk" else "DEG", deg_colors())
       } else if (identical(ckey, "__lfc__")) {
@@ -629,7 +693,7 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
       d <- de_shown$value()
       validate(need(!is.null(d), "Click Render to draw the plot (or enable auto-render)."))
       ptype <- input$plot_type %||% "MA"
-      shr <- isTRUE(input$use_shrunk)
+      shr <- isTRUE(thr$shrunk)
       lfc_col <- if (shr) "log2FoldChange_shrunk" else "log2FoldChange"
       validate(need(lfc_col %in% names(d) && any(is.finite(d[[lfc_col]])),
                     "Shrunk LFC is unavailable for this contrast - switch off 'Use shrunk LFC'."))
@@ -639,39 +703,33 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
       gg <- switch(ptype,
         "MA" = de_ma_gg(d, lfc_col, de_colour_for(d, rownames(d)),
                         x_range = rg$bm, y_range = rg$lfc, labels = labs,
-                        point_size = ps, point_alpha = pa, interactive = interactive),
+                        point_size = ps, point_alpha = pa, dark = dark(),
+                        interactive = interactive),
         "Volcano" = de_volcano_gg(d, lfc_col, de_colour_for(d, rownames(d)),
                         x_range = rg$lfc, y_range = rg$neglogp, labels = labs,
-                        point_size = ps, point_alpha = pa, interactive = interactive),
+                        point_size = ps, point_alpha = pa, dark = dark(),
+                        interactive = interactive),
         "Direct comparison" = {
           gm <- direct_means()
-          de_direct_gg(gm, value_label = direct_assay(), colour = de_colour_for(d, gm$id),
+          de_direct_gg(gm, value_label = direct_value()$label,
+                       colour = de_colour_for(d, gm$id),
                        x_range = rg$expr, y_range = rg$expr, labels = labs,
-                       point_size = ps, point_alpha = pa, interactive = interactive)
+                       point_size = ps, point_alpha = pa, dark = dark(),
+                       fixed_ratio = isTRUE(input$fixed_ratio), interactive = interactive)
         })
-      gg <- gg + .plot_theme(dark()) +
+      gg + .plot_theme(dark()) +
         ggplot2::theme(legend.position = input$legend_pos %||% "right")
-      if (identical(ptype, "Direct comparison") && isTRUE(input$fixed_ratio)) {
-        gg <- gg + ggplot2::coord_fixed(ratio = 1)
-      }
-      gg
     }
     dual_plot("de_plot", build_de_gg,
               n_elements = reactive({ v <- de_shown$value(); if (is.null(v)) 0L else nrow(v) }),
               height = "460px")
 
     # --- Results Table ----------------------------------------------------
-    output$table_thresh_note <- renderUI({
-      tags$p(class = "small text-muted",
-        sprintf("padj < %s, |log2FC| >= %s, %s LFC (thresholds are set on the DE Plots tab).",
-                input$padj %||% 0.05, round(input$lfc %||% log2(2), 3),
-                if (isTRUE(input$use_shrunk)) "shrunk" else "standard"))
-    })
     output$de_table <- DT::renderDT({
       res <- active_raw()
       validate(need(!is.null(res), "No results - run DESeq2 on the Design & Contrasts tab."))
-      shr <- isTRUE(input$use_shrunk)
-      d <- de_classify_table(res, input$padj %||% 0.05, input$lfc %||% log2(2))
+      shr <- isTRUE(thr$shrunk)
+      d <- de_classify_table(res, thr$padj %||% 0.05, thr$lfc %||% log2(2))
       lfc_col <- if (shr) "log2FoldChange_shrunk" else "log2FoldChange"
       deg_col <- if (shr) "DEG_shrunk" else "DEG"
       sig_col <- if (shr) "sig_shrunk" else "sig"

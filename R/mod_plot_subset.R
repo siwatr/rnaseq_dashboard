@@ -16,7 +16,7 @@ plot_subset_ui <- function(ns, suffix) {
   bslib::accordion(
     open = FALSE,
     bslib::accordion_panel(
-      "Plot Showing",
+      "Plot Showing", icon = icon("filter"),
       selectInput(ns(paste0(suffix, "_show_by")), "Show by (display only)",
                   choices = c("All samples" = "__all__"), selected = "__all__"),
       selectizeInput(ns(paste0(suffix, "_show_values")), "Keep (blank = show all)",

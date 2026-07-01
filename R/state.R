@@ -182,6 +182,22 @@ de_status <- function(state) {
   if (identical(de$stamp, cur)) "current" else "stale"
 }
 
+#' DESeq2 *fit* status (independent of result extraction)
+#'
+#' Unlike [de_status()] (which reports on extracted result tables), this reports
+#' whether a `DESeq()` fit exists and is up to date: `"none"` (never run on this
+#' dataset), `"stale"` (run, but data/design changed since), or `"current"`.
+#' Drives the note above the Run DESeq2 button.
+#' @param state App-state object.
+#' @return `"none"`, `"stale"`, or `"current"`.
+#' @export
+de_fit_status <- function(state) {
+  de <- state$de %||% list()
+  if (is.null(de$stamp)) return("none")
+  cur <- list(dv = state$data_version, desv = state$design_version %||% 0L)
+  if (identical(de$stamp, cur)) "current" else "stale"
+}
+
 #' Get-or-compute a version-stamped derived artifact
 #'
 #' Returns the cached value for `key` iff it was computed under the current

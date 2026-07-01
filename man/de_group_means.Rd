@@ -4,7 +4,14 @@
 \alias{de_group_means}
 \title{Per-group mean expression for the direct-comparison plot}
 \usage{
-de_group_means(dds, assay = "logcounts", control_samples, test_samples)
+de_group_means(
+  dds,
+  assay = "logcounts",
+  control_samples,
+  test_samples,
+  transform = "none",
+  pseudocount = 1
+)
 }
 \arguments{
 \item{dds}{A \code{DESeqDataSet}.}
@@ -12,13 +19,17 @@ de_group_means(dds, assay = "logcounts", control_samples, test_samples)
 \item{assay}{Assay name to average (default \code{"logcounts"}).}
 
 \item{control_samples, test_samples}{Sample-id vectors for the two groups.}
+
+\item{transform, pseudocount}{Optional display transform (see
+\code{\link[=de_transform_matrix]{de_transform_matrix()}}); default \code{"none"} leaves the assay as-is.}
 }
 \value{
 A \code{data.frame(id, control, test)}.
 }
 \description{
-Averages the chosen \code{assay} \strong{on its native scale} for each group. Pass a
-depth-normalized / log assay (e.g. \code{logcounts}, the default) — averaging raw
-\code{counts} is depth-confounded and not comparable across the axes. Both groups
-must be non-empty and their ids present in the dds.
+Averages the chosen \code{assay} for each group, optionally applying a display
+\code{transform} (\code{log2}/\code{log10} + \code{pseudocount}) to the assay \strong{before} averaging.
+Pass a depth-normalized / log assay (e.g. \code{logcounts}, the default) — averaging
+raw \code{counts} is depth-confounded and not comparable across the axes. Both
+groups must be non-empty and their ids present in the dds.
 }

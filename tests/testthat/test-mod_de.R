@@ -109,9 +109,11 @@ test_that("mod_de: DE Plots build for MA/volcano/direct + table renders + view s
     expect_length((state$de)$results, 1L)
 
     lab <- names((state$de)$results)[1]
+    # Thresholds/contrast controls are the shared, per-tab-suffixed inputs now.
     session$setInputs(view_plots = lab, plot_auto = TRUE, colour_by = "DEG",
-                      padj = 0.05, lfc = 1, use_shrunk = FALSE, point_size = 1.4,
-                      point_alpha = 0.85, show_labels = FALSE, plot_type = "MA")
+                      padj_plots = 0.05, lfc_plots = 1, shrunk_plots = FALSE,
+                      point_size = 1.4, point_alpha = 0.85, show_labels = FALSE,
+                      plot_type = "MA")
     session$flushReact()
     expect_false(is.null(de_shown$value()))                  # auto-rendered classified df
     expect_s3_class(build_de_gg(FALSE), "ggplot")            # MA
@@ -127,6 +129,11 @@ test_that("mod_de: DE Plots build for MA/volcano/direct + table renders + view s
     # the shared view selector drives state$de$active
     session$setInputs(view_table = lab); session$flushReact()
     expect_equal((state$de)$active, lab)
+
+    # thresholds are synced across tabs: editing the table copy updates the canonical
+    # store the plots read (and vice versa).
+    session$setInputs(padj_table = 0.01); session$flushReact()
+    expect_equal(thr$padj, 0.01)
 
     # the results table renders without error
     expect_error(output$de_table, NA)

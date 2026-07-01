@@ -271,19 +271,44 @@ de_results <- function(fit, contrast, shrink_type = c("apeglm", "ashr", "none"))
   df
 }
 
+#' Apply a display transform to an expression matrix
+#'
+#' `"none"` returns the matrix unchanged; `"log2"`/`"log10"` add `pseudocount`
+#' first (so zeros are defined). Shared by the DE direct-comparison plot and the
+#' Expression page.
+#' @param mat A numeric matrix.
+#' @param transform `"none"`, `"log2"`, or `"log10"`.
+#' @param pseudocount Added before a log transform (default 1).
+#' @return The transformed matrix.
+#' @export
+de_transform_matrix <- function(mat, transform = c("none", "log2", "log10"),
+                                pseudocount = 1) {
+  transform <- match.arg(transform)
+  pc <- suppressWarnings(as.numeric(pseudocount)); if (is.na(pc)) pc <- 0
+  switch(transform,
+         none  = mat,
+         log2  = log2(mat + pc),
+         log10 = log10(mat + pc))
+}
+
 #' Per-group mean expression for the direct-comparison plot
 #'
-#' Averages the chosen `assay` **on its native scale** for each group. Pass a
-#' depth-normalized / log assay (e.g. `logcounts`, the default) — averaging raw
-#' `counts` is depth-confounded and not comparable across the axes. Both groups
-#' must be non-empty and their ids present in the dds.
+#' Averages the chosen `assay` for each group, optionally applying a display
+#' `transform` (`log2`/`log10` + `pseudocount`) to the assay **before** averaging.
+#' Pass a depth-normalized / log assay (e.g. `logcounts`, the default) — averaging
+#' raw `counts` is depth-confounded and not comparable across the axes. Both
+#' groups must be non-empty and their ids present in the dds.
 #' @param dds A `DESeqDataSet`.
 #' @param assay Assay name to average (default `"logcounts"`).
 #' @param control_samples,test_samples Sample-id vectors for the two groups.
+#' @param transform,pseudocount Optional display transform (see
+#'   [de_transform_matrix()]); default `"none"` leaves the assay as-is.
 #' @return A `data.frame(id, control, test)`.
 #' @export
-de_group_means <- function(dds, assay = "logcounts", control_samples, test_samples) {
-  m <- as.matrix(SummarizedExperiment::assay(dds, assay))
+de_group_means <- function(dds, assay = "logcounts", control_samples, test_samples,
+                           transform = "none", pseudocount = 1) {
+  m <- de_transform_matrix(as.matrix(SummarizedExperiment::assay(dds, assay)),
+                           transform, pseudocount)
   if (!length(control_samples) || !length(test_samples)) {
     stop("Both groups need at least one sample.", call. = FALSE)
   }
@@ -356,9 +381,13 @@ de_colour_resolve <- function(df, key, colors = NULL) {
 
 # Shared scatter: clamp -> shape(triangle) for out-of-range, optional colour, an
 # optional ggrepel label layer, and a hover `text` aes only when interactive.
+# `x_range`/`y_range` also set explicit coord limits, so a range *wider* than the
+# data extends the axis (e.g. a symmetric log2FC window for publication) rather
+# than only pulling outliers inward. `dark` drives high-contrast label styling;
+# `fixed_ratio` squares the panel (Direct plot).
 .de_scatter <- function(d, xlab, ylab, colour = NULL, x_range = NULL, y_range = NULL,
                         labels = NULL, point_size = 1.4, point_alpha = 0.85,
-                        interactive = FALSE) {
+                        dark = FALSE, fixed_ratio = FALSE, interactive = FALSE) {
   cx <- de_clamp(d$x, x_range[1], x_range[2])
   cy <- de_clamp(d$y, y_range[1], y_range[2])
   d$x <- cx$value
@@ -369,6 +398,17 @@ de_colour_resolve <- function(df, key, colors = NULL) {
   if (has_col) d$colour <- colour$values
   if (interactive) {
     d$text <- sprintf("%s\n%s: %.3g\n%s: %.3g", d$id, xlab, d$x, ylab, d$y)
+  }
+  # Draw order: for a discrete (DEG) colour, plot the last factor level first so
+  # the earlier levels (up/down) land on top of the no_change background -- the
+  # usual "arrange rows before plotting" idiom. Continuous colours draw low first.
+  if (has_col && nrow(d)) {
+    ord <- if (is.factor(d$colour) || is.character(d$colour)) {
+      order(as.integer(factor(d$colour)), decreasing = TRUE)
+    } else {
+      order(suppressWarnings(as.numeric(d$colour)), decreasing = FALSE, na.last = FALSE)
+    }
+    d <- d[ord, , drop = FALSE]
   }
 
   base_map <- if (has_col) {
@@ -384,15 +424,30 @@ de_colour_resolve <- function(df, key, colors = NULL) {
                                 drop = FALSE, guide = "none") +
     ggplot2::labs(x = xlab, y = ylab, colour = if (has_col) colour$label else NULL)
   if (has_col && !is.null(colour$scale)) p <- p + colour$scale
+  # Explicit limits (clip points already clamped to the edge; extend the axis when
+  # the range exceeds the data). coord_fixed carries the same limits when squared.
+  if (isTRUE(fixed_ratio)) {
+    p <- p + ggplot2::coord_fixed(ratio = 1, xlim = x_range, ylim = y_range)
+  } else if (!is.null(x_range) || !is.null(y_range)) {
+    p <- p + ggplot2::coord_cartesian(xlim = x_range, ylim = y_range)
+  }
   if (!is.null(labels) && nrow(labels)) {
-    geom_lab <- if (requireNamespace("ggrepel", quietly = TRUE)) {
-      ggrepel::geom_text_repel
+    # Labels for out-of-range genes sit at the boundary too (match the triangles).
+    labels$x <- de_clamp(labels$x, x_range[1], x_range[2])$value
+    labels$y <- de_clamp(labels$y, y_range[1], y_range[2])$value
+    lab_col <- if (isTRUE(dark)) "grey95" else "grey5"
+    lab_bg  <- if (isTRUE(dark)) "grey10" else "white"
+    lab_aes <- ggplot2::aes(x = .data$x, y = .data$y, label = .data$label)
+    if (requireNamespace("ggrepel", quietly = TRUE)) {
+      # bg.color/bg.r draw a halo so labels stay legible over dense points.
+      p <- p + ggrepel::geom_text_repel(
+        data = labels, mapping = lab_aes, inherit.aes = FALSE, size = 4,
+        fontface = "bold", colour = lab_col, bg.color = lab_bg, bg.r = 0.15,
+        max.overlaps = Inf, seed = 1)
     } else {
-      ggplot2::geom_text
+      p <- p + ggplot2::geom_text(data = labels, mapping = lab_aes,
+        inherit.aes = FALSE, size = 4, fontface = "bold", colour = lab_col)
     }
-    p <- p + geom_lab(data = labels,
-                      mapping = ggplot2::aes(x = .data$x, y = .data$y, label = .data$label),
-                      inherit.aes = FALSE, size = 3, max.overlaps = Inf)
   }
   p
 }
@@ -405,16 +460,19 @@ de_colour_resolve <- function(df, key, colors = NULL) {
 #' @param x_range,y_range Optional `c(lo, hi)` axis clamps (triangle markers).
 #' @param labels Optional `data.frame(x, y, label)` for a ggrepel layer.
 #' @param point_size Point size.
+#' @param point_alpha Point opacity.
+#' @param dark `TRUE` in dark mode (drives high-contrast label colour/halo).
 #' @param interactive Add a hover `text` aes (for the plotly path).
 #' @return A ggplot object.
 #' @export
 de_ma_gg <- function(df, lfc_col = "log2FoldChange", colour = NULL,
                      x_range = NULL, y_range = NULL, labels = NULL,
-                     point_size = 1.4, point_alpha = 0.85, interactive = FALSE) {
+                     point_size = 1.4, point_alpha = 0.85, dark = FALSE,
+                     interactive = FALSE) {
   .de_require(df, c("baseMean", lfc_col))
   d <- data.frame(id = rownames(df), x = log10(df$baseMean), y = df[[lfc_col]])
   .de_scatter(d, "log10(baseMean)", lfc_col, colour, x_range, y_range,
-              labels, point_size, point_alpha, interactive)
+              labels, point_size, point_alpha, dark = dark, interactive = interactive)
 }
 
 #' Volcano plot: x = (chosen) log2FoldChange, y = -log10(padj)
@@ -423,27 +481,32 @@ de_ma_gg <- function(df, lfc_col = "log2FoldChange", colour = NULL,
 #' @export
 de_volcano_gg <- function(df, lfc_col = "log2FoldChange", colour = NULL,
                           x_range = NULL, y_range = NULL, labels = NULL,
-                          point_size = 1.4, point_alpha = 0.85, interactive = FALSE) {
+                          point_size = 1.4, point_alpha = 0.85, dark = FALSE,
+                          interactive = FALSE) {
   .de_require(df, c("padj", lfc_col))
   d <- data.frame(id = rownames(df), x = df[[lfc_col]], y = -log10(df$padj))
   .de_scatter(d, lfc_col, "-log10(padj)", colour, x_range, y_range,
-              labels, point_size, point_alpha, interactive)
+              labels, point_size, point_alpha, dark = dark, interactive = interactive)
 }
 
 #' Direct-comparison plot: x = control mean, y = test mean expression
 #' @param mean_df A `data.frame(id, control, test)` (from [de_group_means()]).
 #' @param value_label Scale/assay shown in the axis labels (e.g. `"logcounts"`),
 #'   so the y=x guide isn't read as a linear comparison when the assay is log-scale.
-#' @param colour,x_range,y_range,labels,point_size,interactive As in [de_ma_gg()].
+#' @param colour,x_range,y_range,labels,point_size,point_alpha,dark,interactive
+#'   As in [de_ma_gg()].
+#' @param fixed_ratio Square the panel with a 1:1 aspect (`coord_fixed`).
 #' @return A ggplot object.
 #' @export
 de_direct_gg <- function(mean_df, value_label = "mean", colour = NULL,
                          x_range = NULL, y_range = NULL, labels = NULL,
-                         point_size = 1.4, point_alpha = 0.85, interactive = FALSE) {
+                         point_size = 1.4, point_alpha = 0.85, dark = FALSE,
+                         fixed_ratio = FALSE, interactive = FALSE) {
   .de_require(mean_df, c("control", "test"))
   d <- data.frame(id = mean_df$id, x = mean_df$control, y = mean_df$test)
   .de_scatter(d, sprintf("control (%s)", value_label), sprintf("test (%s)", value_label),
-              colour, x_range, y_range, labels, point_size, point_alpha, interactive) +
+              colour, x_range, y_range, labels, point_size, point_alpha,
+              dark = dark, fixed_ratio = fixed_ratio, interactive = interactive) +
     ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed",
                          colour = "grey60", linewidth = 0.3)
 }

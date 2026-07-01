@@ -13,6 +13,7 @@ de_volcano_gg(
   labels = NULL,
   point_size = 1.4,
   point_alpha = 0.85,
+  dark = FALSE,
   interactive = FALSE
 )
 }
@@ -28,6 +29,10 @@ de_volcano_gg(
 \item{labels}{Optional \code{data.frame(x, y, label)} for a ggrepel layer.}
 
 \item{point_size}{Point size.}
+
+\item{point_alpha}{Point opacity.}
+
+\item{dark}{\code{TRUE} in dark mode (drives high-contrast label colour/halo).}
 
 \item{interactive}{Add a hover \code{text} aes (for the plotly path).}
 }

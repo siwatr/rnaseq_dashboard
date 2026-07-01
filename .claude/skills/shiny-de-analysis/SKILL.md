@@ -77,21 +77,43 @@ median-of-ratios on endogenous `controlGenes`. Known failure modes:
   `aes_helpers` resolver is per-*sample*). `key` = `"__none__"` / `"DEG"`/`"DEG_shrunk"` / a numeric
   DE column. **Config is centralized:** the DEG palette comes from the Palette **`other/DEG`** slot
   — a curated **"DEG palette" set** (Pink-Blue default / Orange-Purple / Red-Blue / Coral-Teal),
-  offered *only* for the 3-level DEG item via `deg_palette_choices()`, resolved by a `"DEG:"` branch
-  in `palette_colors()` (kept out of `palette_type_names()` so other items never see it; still shown
-  in the Palette Preview). Read it with `palette_discrete(c("up","down","no_change"), cfg$colors,
-  cfg$name %||% "DEG: Pink-Blue", cfg$custom)`.
-- **Axis clamping → triangles, field-based:** clamp by *field* (log2FC / -log10(padj) /
-  log10(baseMean) / expression), not raw X/Y, so a limit follows its field across plot types (log2FC
-  is MA-y and volcano-x). `de_clamp` flags out-of-range points → **shape** (circle vs triangle),
-  never dropped. The Direct plot has a **1:1 aspect** toggle (`coord_fixed`) so its y=x guide reads true.
+  led by `deg_palette_choices()` for the 3-level DEG item, which **also offers the generic discrete
+  palettes** (Okabe-Ito / Brewer / viridis) so DEG can be coloured with any scheme; the DEG set is
+  resolved by a `"DEG:"` branch in `palette_colors()` (kept out of `palette_type_names()` so other
+  items never see it; still shown in the Palette Preview). Read it with
+  `palette_discrete(c("up","down","no_change"), cfg$colors, cfg$name %||% "DEG: Pink-Blue", cfg$custom)`.
+- **Point draw order:** the shared scatter reorders rows so a discrete DEG colour draws
+  **`no_change` first** (up/down land on top); continuous colours draw low-first. So DEGs are never
+  hidden behind the grey background — the standard "arrange before plotting" idiom, done in `.de_scatter`.
+- **Axis limits are field-based AND set real coord limits.** Clamp/limit by *field* (log2FC /
+  -log10(padj) / log10(baseMean) / expression), not raw X/Y, so a limit follows its field across plot
+  types (log2FC is MA-y and volcano-x). `.de_scatter` (a) `de_clamp`s out-of-range points → **shape**
+  (circle vs triangle), never dropped, **and** (b) applies `coord_cartesian(xlim/ylim)` (or
+  `coord_fixed` when squared) so a range **wider than the data extends the axis** (e.g. a symmetric
+  log2FC window for a figure), not only pulls outliers in. Gene labels are clamped to the same range
+  so they sit at the boundary too. The Direct plot's **1:1 aspect** toggle passes `fixed_ratio` into
+  `de_direct_gg` (one coord, no double-`coord_*`).
 - **Builders:** `de_ma_gg` / `de_volcano_gg` / `de_direct_gg(de_group_means(...))` — each takes
-  `interactive` (hover `text` aes for plotly only), `point_size`/`point_alpha`, and an optional
-  ggrepel `labels` frame (top-N by padj + ad-hoc searched genes via `resolve_feature`).
-- **Shared "Contrast to view" selector** across both tabs, synced via `state$de$active`
-  (equality-guarded, no loop). The **Results Table** is a `dt_table()` of the active contrast with
-  DEG `formatStyle`/`styleEqual` colouring (same `other/DEG` palette) + a significant-only filter; it
-  reads the same threshold inputs as the plots.
+  `interactive` (hover `text` aes for plotly only), `point_size`/`point_alpha`, `dark` (high-contrast
+  bold ggrepel labels with a `bg.color` halo), and an optional ggrepel `labels` frame (top-N by padj +
+  ad-hoc searched genes via `resolve_feature`); `de_direct_gg` also takes `fixed_ratio`.
+- **Direct plot expression value = the shared `expr_value_*` control** ([R/mod_expr_value.R] —
+  `expr_value_ui(ns, suffix)` + `expr_value_server(input, output, session, state, suffix)`, the
+  host-namespace idiom like `mod_plot_subset`): **assay + transform (none/log2/log10) + pseudocount**,
+  applied via `de_group_means(dds, assay, ctrl, test, transform, pseudocount)` (transform → average).
+  This is the **standard expression-value control** the P7 Expression page reuses; the axis label
+  comes from `expr_value_label()`.
+- **Shared "Contrast & thresholds" group in *all three* tabs** (Design & Contrasts / DE Plots /
+  Results Table): the `.de_view_controls(ns, suffix)` accordion panel (contrast-to-view + padj + |LFC|
+  + Use-shrunk), rendered once per tab with a per-tab `suffix` (ids can't repeat). The server syncs
+  the copies — contrast via `state$de$active`, thresholds via a canonical `thr` reactiveValues — with
+  **guarded fan-out** (no loop). Downstream reads `thr$*`, not the raw inputs. The **Render / Auto-render**
+  controls sit **above the plot** in the card (not buried in the sidebar). The **Results Table** is a
+  `dt_table()` of the active contrast with DEG `formatStyle`/`styleEqual` colouring (same `other/DEG`
+  palette) + a significant-only filter.
+- **Fit vs results status:** the note above **Run DESeq2** reflects the **fit** (`de_fit_status(state)`:
+  none / stale / current) — a fit with no contrasts yet still reads "up to date". `de_status(state)`
+  (results-level) drives the DEG-summary staleness note.
 - **Layered for the P6 gene-set overlay (channel separation):** reserve **shape** for the clamp
   (triangle), **fill/stroke** for gene-set DEG-membership (filled vs hollow "donut", `shape 21`
   `fill=NA`), **colour** for DEG-status-or-set. So the clamp and the donut never collide. The
@@ -107,6 +129,9 @@ median-of-ratios on endogenous `controlGenes`. Known failure modes:
 - [ ] Size factors go through the hardened endogenous estimator (poscounts fallback).
 - [ ] DE colour via `de_colour_resolve` (local), DEG palette from the curated `other/DEG` set; clamp = shape, never drop.
 - [ ] DE Plots deferred sig = data-only; display aesthetics (plot type / colour / labels / clamps) stay live.
-- [ ] Shared "Contrast to view" selector synced via `state$de$active` (equality-guarded, no loop).
-- [ ] Field-based axis limits (log2FC follows MA-y / volcano-x); Direct plot 1:1 toggle.
+- [ ] Shared "Contrast & thresholds" group in all 3 tabs; synced via `state$de$active` + a canonical `thr` (guarded fan-out, no loop).
+- [ ] Field-based axis limits set real coord limits (extend the axis); labels clamped; Direct plot `fixed_ratio` 1:1.
+- [ ] DEG points draw `no_change` first (DEGs on top); labels are high-contrast (`dark` + halo).
+- [ ] Direct plot uses the shared `expr_value_*` control (assay/transform/pseudocount) → `de_group_means`.
+- [ ] Run-note uses `de_fit_status` (fit), summary uses `de_status` (results).
 - [ ] Plots are layered so the P6 gene-set overlay drops in without rework.

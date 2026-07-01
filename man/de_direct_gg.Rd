@@ -13,6 +13,8 @@ de_direct_gg(
   labels = NULL,
   point_size = 1.4,
   point_alpha = 0.85,
+  dark = FALSE,
+  fixed_ratio = FALSE,
   interactive = FALSE
 )
 }
@@ -22,7 +24,9 @@ de_direct_gg(
 \item{value_label}{Scale/assay shown in the axis labels (e.g. \code{"logcounts"}),
 so the y=x guide isn't read as a linear comparison when the assay is log-scale.}
 
-\item{colour, x_range, y_range, labels, point_size, interactive}{As in \code{\link[=de_ma_gg]{de_ma_gg()}}.}
+\item{colour, x_range, y_range, labels, point_size, point_alpha, dark, interactive}{As in \code{\link[=de_ma_gg]{de_ma_gg()}}.}
+
+\item{fixed_ratio}{Square the panel with a 1:1 aspect (\code{coord_fixed}).}
 }
 \value{
 A ggplot object.
