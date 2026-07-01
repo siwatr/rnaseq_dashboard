@@ -15,14 +15,16 @@
   not_in_design = "Factor is valid but not in the current design - add it to the design to extract (kept for later).",
   invalid       = "Factor or a level no longer exists in the data - kept, and recoverable if you restore it.")
 
-# A small colour legend for the contrast badges.
+# A small colour legend for the contrast badges, derived from the tier map so it
+# can't drift from the badges themselves.
+.de_tier_label <- c(extractable = "in design", not_in_design = "not in design",
+                    invalid = "invalid")
 .de_legend <- function() {
   item <- function(cls, txt) tags$span(class = "d-inline-flex align-items-center me-2",
     tags$span(class = paste("badge rounded-pill me-1", cls), " "), txt)
   tags$div(class = "small text-muted mt-2",
-    item("text-bg-primary", "in design"),
-    item("text-bg-warning", "not in design"),
-    item("text-bg-danger", "invalid"))
+    lapply(names(.de_tier_label),
+           function(t) item(.de_tier_class[[t]], .de_tier_label[[t]])))
 }
 
 # --- Design & Contrasts tab UI ---------------------------------------------
@@ -121,7 +123,10 @@ mod_de_server <- function(id, state) {
     design_status <- mod_design_builder_server("design", state)
 
     # The fitted DESeqDataSet lives in the derived env (non-reactive) under a
-    # stamp; extraction reads it without triggering a re-fit. NULL if no current fit.
+    # stamp; extraction reads it without triggering a re-fit. It bypasses the
+    # state_derive accessor deliberately: state_derive keys only on data_version,
+    # but the fit must also invalidate on a design change (design_version) -- hence
+    # the manual (dv, desv) stamp. NULL if no current fit.
     current_fit <- function() {
       if (!exists("de_fit", envir = state$derived, inherits = FALSE)) return(NULL)
       ent <- get("de_fit", envir = state$derived)
@@ -137,7 +142,11 @@ mod_de_server <- function(id, state) {
       fit <- current_fit(); if (is.null(fit)) return(invisible())
       dds <- state$working; if (is.null(dds)) return(invisible())
       de <- state$de %||% list()
-      shrink <- de$shrink %||% "apeglm"
+      # Extraction always uses the CURRENT shrinkage; if it changed since the last
+      # extraction, drop the cached results so they recompute under the new method.
+      shrink <- input$shrink %||% de$shrink %||% "apeglm"
+      if (!identical(de$shrink, shrink)) { de$results <- list(); de$methods <- list() }
+      de$shrink <- shrink
       specs <- de$contrasts %||% list()
       results <- de$results %||% list(); methods <- de$methods %||% list()
       extractable <- Filter(function(s) de_contrast_validity(dds, s) == "extractable", specs)
@@ -158,6 +167,20 @@ mod_de_server <- function(id, state) {
     }
     auto_on <- function() isTRUE(input$auto_update %||% TRUE)
     maybe_extract <- function() if (auto_on()) do_extract()
+
+    # Results out of date vs the controls (auto-off only): an extractable contrast
+    # without a cached result, or a shrinkage change not yet applied, given a fit.
+    needs_update <- function() {
+      if (auto_on() || is.null(current_fit())) return(FALSE)
+      de <- state$de %||% list(); dds <- state$working
+      specs <- de$contrasts %||% list()
+      ex <- vapply(specs, function(s) de_contrast_validity(dds, s) == "extractable", logical(1))
+      ex_labels <- vapply(specs[ex], function(s) s$label, character(1))
+      missing <- length(setdiff(ex_labels, names(de$results %||% list())))
+      shrink_mismatch <- length(de$results %||% list()) > 0 &&
+        !identical(de$shrink %||% "apeglm", input$shrink %||% "apeglm")
+      missing > 0 || shrink_mismatch
+    }
 
     # --- contrast pickers (reactive to data + design + factor) ------------
     observeEvent(list(state$data_version, state$design_version), {
@@ -287,22 +310,20 @@ mod_de_server <- function(id, state) {
       }
     })
 
-    # Shrinkage change re-extracts (it changes the shrunk LFC) against a current fit.
-    observeEvent(input$shrink, {
-      de <- state$de %||% list()
-      if (identical(de$shrink, input$shrink)) return()
-      de$shrink <- input$shrink; de$results <- list(); de$methods <- list()
-      state$de <- de
-      maybe_extract()
-    }, ignoreInit = TRUE)
+    # A shrinkage change needs re-extraction (new shrunk LFC), not a re-fit.
+    # do_extract() clears + recomputes when it sees the mismatch; with auto off the
+    # results stay (under the old shrink) until Update results, and needs_update()
+    # flags them out of date.
+    observeEvent(input$shrink, if (auto_on()) do_extract(), ignoreInit = TRUE)
 
     # Flipping Auto-update on catches results up.
     observeEvent(input$auto_update, if (auto_on()) do_extract(), ignoreInit = TRUE)
-    observeEvent(input$update_results, do_extract())
+    observeEvent(input$update_results, do_extract(), ignoreInit = TRUE)
 
     output$update_btn <- renderUI({
       if (auto_on()) return(NULL)
-      actionButton(session$ns("update_results"), "Update results", class = "btn-outline-primary btn-sm mt-1")
+      cls <- if (needs_update()) "btn-primary btn-sm mt-1" else "btn-outline-primary btn-sm mt-1"
+      actionButton(session$ns("update_results"), "Update results", class = cls)
     })
 
     output$run_note <- renderUI({
@@ -317,10 +338,19 @@ mod_de_server <- function(id, state) {
     # --- per-contrast DEG summary -----------------------------------------
     output$summary <- renderUI({
       res <- (state$de %||% list())$results %||% list()
+      # Echo the staleness the sidebar/status bar show, so the DEG table below is
+      # never read as current when the data/design/shrink moved on.
+      note <- if (identical(de_status(state), "stale"))
+                tags$p(class = "text-warning small mb-1",
+                       "DEG counts below are stale (data or design changed) - re-run DESeq2.")
+              else if (needs_update())
+                tags$p(class = "text-warning small mb-1",
+                       "Results are out of date - click Update results.")
+              else NULL
       if (!length(res)) {
         msg <- if (!is.null(current_fit())) "Add a contrast to extract results."
                else "Run DESeq2 to see the DEG summary."
-        return(tags$p(class = "text-muted small", msg))
+        return(tagList(note, tags$p(class = "text-muted small", msg)))
       }
       methods <- (state$de %||% list())$methods %||% list()
       rows <- lapply(names(res), function(lab) {
@@ -333,6 +363,7 @@ mod_de_server <- function(id, state) {
           tags$td(class = "text-muted small", methods[[lab]] %||% ""))
       })
       tags$div(
+        note,
         tags$h5("DEG summary", class = "fs-6"),
         tags$table(class = "table table-sm",
           tags$thead(tags$tr(tags$th("Contrast"), tags$th(class = "text-end", "Up"),

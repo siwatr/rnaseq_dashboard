@@ -200,7 +200,8 @@ de_run <- function(dds, quiet = TRUE) {
 #' @export
 de_contrast_validity <- function(dds, spec) {
   cd <- SummarizedExperiment::colData(dds)
-  if (is.null(spec$var) || is.null(cd[[spec$var]])) return("invalid")
+  if (is.null(spec$var) || is.null(spec$test) || is.null(spec$control) ||
+      is.null(cd[[spec$var]])) return("invalid")
   lv <- de_contrast_levels(dds, spec$var)
   if (!all(c(spec$test, spec$control) %in% lv)) return("invalid")
   design_vars <- tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0))

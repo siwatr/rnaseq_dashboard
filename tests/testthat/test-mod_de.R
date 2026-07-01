@@ -34,11 +34,14 @@ test_that("mod_de: extraction is reactive (auto on) and gated (auto off)", {
     session$setInputs(c_add = 1, run = 1); session$flushReact()
     expect_length((state$de)$results, 1L)
 
+    fit_before <- get("de_fit", envir = state$derived)$value
     # auto ON: remove then re-add re-extracts from the current fit without a new Run
     session$setInputs(remove_multi = "condition: treated vs control", remove_sel = 1); session$flushReact()
     expect_length((state$de)$results, 0L)
     session$setInputs(c_add = 2); session$flushReact()
     expect_length((state$de)$results, 1L)                 # seamless re-extraction
+    # the fit object is untouched by add/remove (extraction != re-fit)
+    expect_identical(get("de_fit", envir = state$derived)$value, fit_before)
 
     # auto OFF: re-adding does not extract until Update results
     session$setInputs(auto_update = FALSE); session$flushReact()
