@@ -30,6 +30,10 @@
 # --- Design & Contrasts tab UI ---------------------------------------------
 .de_design_ui <- function(ns) {
   bslib::layout_sidebar(
+    # This tab is a FORM whose height grows with the number of contrasts, so opt
+    # out of the fill/flex container (which would compress + overlap the content):
+    # let it flow at natural height and scroll with the page.
+    fillable = FALSE,
     sidebar = bslib::sidebar(
       title = "Design & fit", width = 360,
       mod_design_builder_ui(ns("design")),
@@ -40,18 +44,15 @@
                     c("apeglm (recommended)" = "apeglm", "ashr" = "ashr", "none" = "none"),
                     selected = "apeglm"),
         "Shrinks noisy log2 fold-changes toward zero for low-count genes. apeglm (recommended) is stable but needs the contrast as a model coefficient (control = reference level); ashr works for any contrast; none = raw LFCs."),
-      bslib::tooltip(
-        bslib::input_switch(ns("auto_update"), "Auto-update results", value = TRUE),
-        "On: results refresh automatically as you add/remove contrasts (no re-fit needed). Off: use the Update results button."),
-      uiOutput(ns("update_btn")),
-      tags$div(class = "d-grid mt-3",
+      uiOutput(ns("run_note")),                       # fit status, above the button
+      tags$div(class = "d-grid mt-2",
         bslib::tooltip(
           actionButton(ns("run"), "Run DESeq2", class = "btn fw-semibold",
                        style = "background-color:#8b58db;border-color:#8b58db;color:#fff;"),
-          "Fits DESeq2 on the current design (this can take a while). Re-run after a data or design change.")),
-      uiOutput(ns("run_note"))
+          "Fits DESeq2 on the current design (this can take a while). Re-run after a data or design change."))
     ),
     bslib::card(
+      fill = FALSE,
       bslib::card_header(tags$h4("Contrasts", class = "fs-6 mb-0")),
 
       ## Row 1 -- Add contrast
@@ -72,7 +73,8 @@
         col_widths = c(7, 5),
         tags$div(
           tags$h5("Defined contrasts", class = "fs-6"),
-          uiOutput(ns("contrast_list"))),
+          .de_legend(),                               # legend right under the header
+          uiOutput(ns("contrast_list"))),             # badges below the legend
         tags$div(
           tags$h5("Remove contrasts", class = "fs-6"),
           selectizeInput(ns("remove_multi"), NULL, choices = NULL, multiple = TRUE,
@@ -84,7 +86,13 @@
       ),
       tags$hr(),
 
-      ## Row 3 -- DEG summary
+      ## Row 3 -- DEG summary (extraction controls under the header, table below)
+      tags$h5("DEG summary", class = "fs-6"),
+      tags$div(class = "d-flex align-items-center gap-3 mb-2",
+        bslib::tooltip(
+          bslib::input_switch(ns("auto_update"), "Auto-update results", value = TRUE),
+          "On: results refresh automatically as you add/remove contrasts (no re-fit needed). Off: use the Update results button."),
+        uiOutput(ns("update_btn"), inline = TRUE)),
       uiOutput(ns("summary"))
     )
   )
@@ -278,7 +286,7 @@ mod_de_server <- function(id, state) {
                     style = "font-size:0.8rem;", s$label),
           .de_tier_tip[[v]])
       })
-      tagList(tags$div(class = "d-flex flex-wrap", badges), .de_legend())
+      tags$div(class = "d-flex flex-wrap", badges)
     })
 
     # --- run DESeq2 (fit only) --------------------------------------------
@@ -327,12 +335,11 @@ mod_de_server <- function(id, state) {
     })
 
     output$run_note <- renderUI({
-      st <- de_status(state)
-      if (identical(st, "none")) return(NULL)
-      if (identical(st, "stale"))
-        tags$div(class = "text-warning small mt-2",
-                 icon("triangle-exclamation"), " Re-run DESeq2 needed (data or design changed).")
-      else tags$div(class = "text-success small mt-2", "Results are current.")
+      switch(de_status(state),
+        none    = tags$div(class = "text-muted small mb-2", "No DESeq2 results available."),
+        stale   = tags$div(class = "text-warning small mb-2",
+                           icon("triangle-exclamation"), " Re-run DESeq2 needed (data or design changed)."),
+        current = tags$div(class = "text-success small mb-2", "Results are current."))
     })
 
     # --- per-contrast DEG summary -----------------------------------------
@@ -364,14 +371,13 @@ mod_de_server <- function(id, state) {
       })
       tags$div(
         note,
-        tags$h5("DEG summary", class = "fs-6"),
         tags$table(class = "table table-sm",
           tags$thead(tags$tr(tags$th("Contrast"), tags$th(class = "text-end", "Up"),
                              tags$th(class = "text-end", "Down"),
                              tags$th(class = "text-end", "Total"), tags$th("Shrinkage"))),
           tags$tbody(rows)),
         tags$p(class = "text-muted small",
-               "Counts at padj < 0.05 and |log2FC| >= 1 (standard LFC). Adjustable thresholds arrive with the plots (P5c)."))
+               "Counts at padj < 0.05 and |log2FC| >= 1 (standard LFC); adjustable thresholds arrive with the plots (P5c). apeglm shrinkage needs the control level to be the factor's reference; other contrasts fall back to ashr (see the Shrinkage column)."))
     })
 
     invisible(NULL)
