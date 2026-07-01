@@ -21,6 +21,7 @@ dependencies:
   - r-jsonlite           # palette config import/export (Palette page Config tab)
   # Plotting / data wrangling / IO
   - r-ggplot2
+  - r-ggrepel            # non-overlapping gene labels on DE plots (MA/volcano)
   - r-plotly             # optional interactive plot engine (ggplotly); QC toggle
   - r-rcolorbrewer       # palette catalogue (Palette page: qual/seq/div)
   - r-viridislite        # viridis palette catalogue (Palette page)

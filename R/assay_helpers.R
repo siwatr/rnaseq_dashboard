@@ -45,6 +45,11 @@ add_normalized_assays <- function(dds, which = c("CPM", "TPM", "FPKM")) {
 
 #' Estimate size factors on endogenous genes
 #'
+#' Uses DESeq2's median-of-ratios on the endogenous `controlGenes`. That estimator
+#' **fails when every control gene has at least one zero** (all geometric means are
+#' zero -- common on sparse/shallow data): we catch that and retry with the
+#' positive-counts estimator (`type = "poscounts"`), which computes geometric means
+#' over the non-zero entries. Protects the assay/QC/PCA paths and `DESeq()`.
 #' @param dds A `DESeqDataSet`.
 #' @return The `DESeqDataSet` with `sizeFactors` set (endogenous `controlGenes`).
 #' @export
@@ -52,7 +57,13 @@ estimate_size_factors_endogenous <- function(dds) {
   rd <- SummarizedExperiment::rowData(dds)
   endo <- if ("feature_class" %in% colnames(rd)) which(rd$feature_class == "endogenous") else seq_len(nrow(dds))
   if (!length(endo)) endo <- seq_len(nrow(dds))
-  DESeq2::estimateSizeFactors(dds, controlGenes = endo)
+  tryCatch(
+    DESeq2::estimateSizeFactors(dds, controlGenes = endo),
+    error = function(e) {
+      message("Size-factor estimation fell back to type='poscounts' (sparse data: ",
+              conditionMessage(e), ")")
+      DESeq2::estimateSizeFactors(dds, controlGenes = endo, type = "poscounts")
+    })
 }
 
 #' Recompute every present normalized/log assay from current counts
