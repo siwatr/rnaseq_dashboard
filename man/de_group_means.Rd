@@ -17,5 +17,8 @@ de_group_means(dds, assay = "logcounts", control_samples, test_samples)
 A \code{data.frame(id, control, test)}.
 }
 \description{
-Per-group mean expression for the direct-comparison plot
+Averages the chosen \code{assay} \strong{on its native scale} for each group. Pass a
+depth-normalized / log assay (e.g. \code{logcounts}, the default) — averaging raw
+\code{counts} is depth-confounded and not comparable across the axes. Both groups
+must be non-empty and their ids present in the dds.
 }

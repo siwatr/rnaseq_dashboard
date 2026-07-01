@@ -6,6 +6,7 @@
 \usage{
 de_direct_gg(
   mean_df,
+  value_label = "mean",
   colour = NULL,
   x_range = NULL,
   y_range = NULL,
@@ -16,6 +17,9 @@ de_direct_gg(
 }
 \arguments{
 \item{mean_df}{A \code{data.frame(id, control, test)} (from \code{\link[=de_group_means]{de_group_means()}}).}
+
+\item{value_label}{Scale/assay shown in the axis labels (e.g. \code{"logcounts"}),
+so the y=x guide isn't read as a linear comparison when the assay is log-scale.}
 
 \item{colour, x_range, y_range, labels, point_size, interactive}{As in \code{\link[=de_ma_gg]{de_ma_gg()}}.}
 }

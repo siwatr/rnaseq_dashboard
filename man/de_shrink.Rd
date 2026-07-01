@@ -14,7 +14,9 @@ de_shrink(fit, contrast, type = c("apeglm", "ashr", "none"))
 \item{type}{\code{"apeglm"} (default), \code{"ashr"}, or \code{"none"}.}
 }
 \value{
-A numeric vector aligned to \code{rownames(fit)} (\code{NA} where unavailable).
+A numeric vector aligned to \code{rownames(fit)} (\code{NA} where unavailable),
+carrying an \code{attr(., "method")} naming the estimator that actually ran
+(\code{"apeglm"}/\code{"ashr"}/\code{"normal"}/\code{"none"}) so the UI can label honestly.
 }
 \description{
 \code{apeglm} needs a coefficient (available when \code{control} is the reference level);

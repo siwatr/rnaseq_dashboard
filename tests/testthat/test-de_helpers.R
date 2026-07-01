@@ -80,18 +80,33 @@ test_that("de_run + de_results carry both LFC variants and classify", {
   expect_true(is.logical(cdf$sig))
 })
 
-test_that("de_shrink returns an aligned vector; apeglm/ashr populate it when present", {
+test_that("de_shrink returns an aligned vector + method attr; apeglm/ashr populate it", {
   skip_if_not_installed("DESeq2")
   dds <- make_mock_dds(n_genes = 120, n_per_group = 4, n_spike = 6, seed = 3)
   fit <- de_run(dds)
   sh_none <- de_shrink(fit, c("condition", "treated", "control"), type = "none")
   expect_length(sh_none, nrow(fit))
   expect_true(all(is.na(sh_none)))
+  expect_equal(attr(sh_none, "method"), "none")
   if (requireNamespace("apeglm", quietly = TRUE) || requireNamespace("ashr", quietly = TRUE)) {
     sh <- de_shrink(fit, c("condition", "treated", "control"), type = "apeglm")
     expect_length(sh, nrow(fit))
     expect_true(any(is.finite(sh)))
+    expect_true(attr(sh, "method") %in% c("apeglm", "ashr", "normal"))
+    df <- de_results(fit, c("condition", "treated", "control"), shrink_type = "apeglm")
+    expect_false(is.null(attr(df, "shrink_method")))
   }
+})
+
+test_that("de_group_means guards empty / unknown groups", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 3, n_spike = 2, seed = 5))
+  ctrl <- colnames(dds)[SummarizedExperiment::colData(dds)$condition == "control"]
+  trt  <- colnames(dds)[SummarizedExperiment::colData(dds)$condition == "treated"]
+  gm <- de_group_means(dds, "logcounts", ctrl, trt)
+  expect_equal(nrow(gm), nrow(dds))
+  expect_error(de_group_means(dds, "logcounts", character(0), trt), "at least one")
+  expect_error(de_group_means(dds, "logcounts", "NOPE", trt), "Unknown sample")
 })
 
 # --- size-factor edge case (poscounts fallback) ----------------------------

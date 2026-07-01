@@ -170,30 +170,32 @@ de_run <- function(dds, quiet = TRUE) {
 #' @param fit A fitted `DESeqDataSet` (from [de_run()]).
 #' @param contrast `c(variable, test, control)`.
 #' @param type `"apeglm"` (default), `"ashr"`, or `"none"`.
-#' @return A numeric vector aligned to `rownames(fit)` (`NA` where unavailable).
+#' @return A numeric vector aligned to `rownames(fit)` (`NA` where unavailable),
+#'   carrying an `attr(., "method")` naming the estimator that actually ran
+#'   (`"apeglm"`/`"ashr"`/`"normal"`/`"none"`) so the UI can label honestly.
 #' @export
 de_shrink <- function(fit, contrast, type = c("apeglm", "ashr", "none")) {
   type <- match.arg(type)
   ids <- rownames(fit)
   na_vec <- rep(NA_real_, length(ids))
-  if (identical(type, "none")) return(na_vec)
+  if (identical(type, "none")) return(structure(na_vec, method = "none"))
 
   coef_name <- de_coef_name(contrast)
   has_coef <- coef_name %in% DESeq2::resultsNames(fit)
   try_shrink <- function(...) tryCatch(DESeq2::lfcShrink(fit, ..., quiet = TRUE),
                                        error = function(e) NULL)
-  sh <- NULL
+  sh <- NULL; used <- "none"
   if (identical(type, "apeglm") && has_coef && requireNamespace("apeglm", quietly = TRUE)) {
-    sh <- try_shrink(coef = coef_name, type = "apeglm")
+    sh <- try_shrink(coef = coef_name, type = "apeglm"); if (!is.null(sh)) used <- "apeglm"
   }
   if (is.null(sh) && requireNamespace("ashr", quietly = TRUE)) {
-    sh <- try_shrink(contrast = contrast, type = "ashr")
+    sh <- try_shrink(contrast = contrast, type = "ashr"); if (!is.null(sh)) used <- "ashr"
   }
   if (is.null(sh) && has_coef) {
-    sh <- try_shrink(coef = coef_name, type = "normal")
+    sh <- try_shrink(coef = coef_name, type = "normal"); if (!is.null(sh)) used <- "normal"
   }
-  if (is.null(sh)) return(na_vec)
-  as.numeric(sh$log2FoldChange)[match(ids, rownames(sh))]
+  if (is.null(sh)) return(structure(na_vec, method = "none"))
+  structure(as.numeric(sh$log2FoldChange)[match(ids, rownames(sh))], method = used)
 }
 
 #' A results table carrying both LFC variants
@@ -210,11 +212,18 @@ de_shrink <- function(fit, contrast, type = c("apeglm", "ashr", "none")) {
 de_results <- function(fit, contrast, shrink_type = c("apeglm", "ashr", "none")) {
   shrink_type <- match.arg(shrink_type)
   df <- as.data.frame(DESeq2::results(fit, contrast = contrast))
-  df$log2FoldChange_shrunk <- de_shrink(fit, contrast, shrink_type)
+  sh <- de_shrink(fit, contrast, shrink_type)
+  df$log2FoldChange_shrunk <- as.numeric(sh)
+  attr(df, "shrink_method") <- attr(sh, "method")   # what actually ran (for the UI label)
   df
 }
 
 #' Per-group mean expression for the direct-comparison plot
+#'
+#' Averages the chosen `assay` **on its native scale** for each group. Pass a
+#' depth-normalized / log assay (e.g. `logcounts`, the default) — averaging raw
+#' `counts` is depth-confounded and not comparable across the axes. Both groups
+#' must be non-empty and their ids present in the dds.
 #' @param dds A `DESeqDataSet`.
 #' @param assay Assay name to average (default `"logcounts"`).
 #' @param control_samples,test_samples Sample-id vectors for the two groups.
@@ -222,6 +231,13 @@ de_results <- function(fit, contrast, shrink_type = c("apeglm", "ashr", "none"))
 #' @export
 de_group_means <- function(dds, assay = "logcounts", control_samples, test_samples) {
   m <- as.matrix(SummarizedExperiment::assay(dds, assay))
+  if (!length(control_samples) || !length(test_samples)) {
+    stop("Both groups need at least one sample.", call. = FALSE)
+  }
+  miss <- setdiff(c(control_samples, test_samples), colnames(m))
+  if (length(miss)) {
+    stop("Unknown sample(s): ", paste(miss, collapse = ", "), call. = FALSE)
+  }
   data.frame(
     id      = rownames(m),
     control = rowMeans(m[, control_samples, drop = FALSE], na.rm = TRUE),
@@ -361,15 +377,18 @@ de_volcano_gg <- function(df, lfc_col = "log2FoldChange", colour = NULL,
 
 #' Direct-comparison plot: x = control mean, y = test mean expression
 #' @param mean_df A `data.frame(id, control, test)` (from [de_group_means()]).
+#' @param value_label Scale/assay shown in the axis labels (e.g. `"logcounts"`),
+#'   so the y=x guide isn't read as a linear comparison when the assay is log-scale.
 #' @param colour,x_range,y_range,labels,point_size,interactive As in [de_ma_gg()].
 #' @return A ggplot object.
 #' @export
-de_direct_gg <- function(mean_df, colour = NULL, x_range = NULL, y_range = NULL,
+de_direct_gg <- function(mean_df, value_label = "mean", colour = NULL,
+                         x_range = NULL, y_range = NULL,
                          labels = NULL, point_size = 1.4, interactive = FALSE) {
   .de_require(mean_df, c("control", "test"))
   d <- data.frame(id = mean_df$id, x = mean_df$control, y = mean_df$test)
-  .de_scatter(d, "control (mean)", "test (mean)", colour, x_range, y_range,
-              labels, point_size, interactive) +
+  .de_scatter(d, sprintf("control (%s)", value_label), sprintf("test (%s)", value_label),
+              colour, x_range, y_range, labels, point_size, interactive) +
     ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed",
                          colour = "grey60", linewidth = 0.3)
 }
