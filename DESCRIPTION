@@ -30,10 +30,13 @@ Imports:
     SummarizedExperiment,
     thematic
 Suggests:
+    apeglm,
+    ashr,
     circlize,
     ComplexHeatmap,
     edgeR,
     GenomicRanges,
+    ggrepel,
     IRanges,
     MASS,
     matrixStats,

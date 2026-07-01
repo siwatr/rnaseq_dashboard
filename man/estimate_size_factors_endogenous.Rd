@@ -13,5 +13,9 @@ estimate_size_factors_endogenous(dds)
 The \code{DESeqDataSet} with \code{sizeFactors} set (endogenous \code{controlGenes}).
 }
 \description{
-Estimate size factors on endogenous genes
+Uses DESeq2's median-of-ratios on the endogenous \code{controlGenes}. That estimator
+\strong{fails when every control gene has at least one zero} (all geometric means are
+zero -- common on sparse/shallow data): we catch that and retry with the
+positive-counts estimator (\code{type = "poscounts"}), which computes geometric means
+over the non-zero entries. Protects the assay/QC/PCA paths and \code{DESeq()}.
 }
