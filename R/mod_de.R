@@ -27,15 +27,20 @@
            function(t) item(.de_tier_class[[t]], .de_tier_label[[t]])))
 }
 
-# The shared "Contrast & thresholds" accordion group. Rendered in every DE tab's
-# sidebar with a per-tab `suffix` (design/plots/table); the server keeps the three
-# copies in sync (contrast-to-view via state$de$active; padj/lfc/shrunk via a
-# canonical thr store), so the same controls are available and consistent on all
-# tabs. This is why the ids are suffixed (a Shiny input id can't appear twice).
-.de_view_controls <- function(ns, suffix) {
+# The shared thresholds (+ optional contrast-to-view) accordion group. Rendered in
+# every DE tab's sidebar with a per-tab `suffix` (design/plots/table); the server
+# keeps the copies in sync (contrast-to-view via state$de$active; padj/lfc/shrunk
+# via a canonical thr store), so the controls are consistent on all tabs. The ids
+# are suffixed because a Shiny input id can't appear twice. `include_view = FALSE`
+# drops the "Contrast to view" selector on the Design & Contrasts tab, where a
+# single "view" contrast is meaningless (that tab lists all contrasts) -- the
+# thresholds still apply, driving the DEG summary there.
+.de_view_controls <- function(ns, suffix, include_view = TRUE) {
   bslib::accordion_panel(
-    "Contrast & thresholds", icon = icon("circle-half-stroke"),
-    selectInput(ns(paste0("view_", suffix)), "Contrast to view", choices = NULL),
+    if (include_view) "Contrast & thresholds" else "DEG thresholds",
+    icon = icon("circle-half-stroke"),
+    if (include_view)
+      selectInput(ns(paste0("view_", suffix)), "Contrast to view", choices = NULL),
     numericInput(ns(paste0("padj_", suffix)), "padj threshold",
                  value = 0.05, min = 0, max = 1, step = 0.01),
     numericInput(ns(paste0("lfc_", suffix)), "abs(log2FC) threshold",
@@ -67,7 +72,7 @@
                        style = "background-color:#8b58db;border-color:#8b58db;color:#fff;"),
           "Fits DESeq2 on the current design (this can take a while). Re-run after a data or design change.")),
       tags$hr(),
-      bslib::accordion(open = FALSE, .de_view_controls(ns, "design"))
+      bslib::accordion(open = FALSE, .de_view_controls(ns, "design", include_view = FALSE))
     ),
     bslib::card(
       fill = FALSE,
