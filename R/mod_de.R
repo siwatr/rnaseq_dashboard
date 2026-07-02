@@ -168,9 +168,7 @@
         bslib::accordion_panel("Labels", icon = icon("tag"),
           bslib::input_switch(ns("show_labels"), "Show gene labels", value = FALSE),
           numericInput(ns("top_n"), "Label top N by padj", value = 0, min = 0, max = 100, step = 1),
-          textInput(ns("label_genes"), "Genes of interest",
-                    placeholder = "comma-separated, e.g. Gene1, Duxf3"),
-          uiOutput(ns("label_hint"))),
+          gene_search_ui(ns, "label", multiple = TRUE, label = "Genes of interest")),
         bslib::accordion_panel("Axis limits", icon = icon("up-right-and-down-left-from-center"),
           tags$p(class = "small text-muted",
                  "Blank = auto; out-of-range points draw as triangles. A limit is shared across plot types wherever its field recurs."),
@@ -668,12 +666,12 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
                      transform = spec$transform, pseudocount = spec$pseudocount)
     })
 
-    # --- gene labels (top-N by padj + ad-hoc searched genes) --------------
-    label_values <- reactive({
-      rd <- SummarizedExperiment::rowData(state$working)
-      fn <- paste0(feature_type(), "_name")
-      if (fn %in% colnames(rd)) as.character(rd[[fn]]) else rownames(state$working)
-    })
+    # --- gene labels (top-N by padj + searched genes via the shared module) ---
+    # The searched "Genes of interest" box is the shared gene-search module (multi
+    # mode; DE now gets an explicit "Search by" column picker + case toggle). Its
+    # `label_hint` output reports unmatched terms.
+    label_search <- gene_search_server(input, output, session, state, "label",
+                                       multiple = TRUE)
     display_names <- function(ids) {
       rd <- SummarizedExperiment::rowData(state$working)
       fn <- paste0(feature_type(), "_name")
@@ -685,29 +683,8 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
       ids <- character(0)
       n <- suppressWarnings(as.integer(input$top_n %||% 0)); if (is.na(n)) n <- 0L
       if (n > 0L) ids <- rownames(d)[utils::head(order(d$padj, na.last = NA), n)]
-      q <- trimws(input$label_genes %||% "")
-      if (nzchar(q)) {
-        terms <- trimws(strsplit(q, "[,\n]+")[[1]]); terms <- terms[nzchar(terms)]
-        vals <- label_values(); rn <- rownames(state$working)
-        for (t in terms) {
-          rf <- resolve_feature(t, vals, rn, case_insensitive = TRUE)
-          if (!is.null(rf) && !is.na(rf$id)) ids <- c(ids, rf$id)
-        }
-      }
-      unique(intersect(ids, rownames(d)))
+      unique(intersect(c(ids, label_search()$ids), rownames(d)))
     }
-    output$label_hint <- renderUI({
-      if (!isTRUE(input$show_labels) || is.null(state$working)) return(NULL)
-      q <- trimws(input$label_genes %||% ""); if (!nzchar(q)) return(NULL)
-      terms <- trimws(strsplit(q, "[,\n]+")[[1]]); terms <- terms[nzchar(terms)]
-      vals <- label_values(); rn <- rownames(state$working)
-      miss <- Filter(function(t) {
-        rf <- resolve_feature(t, vals, rn, case_insensitive = TRUE)
-        is.null(rf) || is.na(rf$id)
-      }, terms)
-      if (length(miss))
-        tags$div(class = "small text-primary", sprintf("Not found: %s", paste(miss, collapse = ", ")))
-    })
 
     # --- the plot builder + dual_plot ------------------------------------
     de_colour_for <- function(d, ids) {
