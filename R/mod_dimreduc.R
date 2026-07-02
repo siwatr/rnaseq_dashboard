@@ -192,15 +192,8 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       assays <- SummarizedExperiment::assayNames(state$working)
       assay_sel <- if ("logcounts" %in% assays) "logcounts" else assays[1]
       tagList(
-        bslib::input_switch(ns("gene_dup"),
-          bslib::tooltip(
-            tags$span("Include columns with duplicate values"),
-            "Off hides rowData columns whose values are not unique (e.g. gene names that repeat). When such a column is searched, the first matching feature is used."),
-          value = n_nonlogical <= 10L),
-        uiOutput(ns("gene_searchby_ui")),
-        bslib::input_switch(ns("gene_ci"), "Case-insensitive search", value = FALSE),
-        textInput(ns("gene"), label = NULL, placeholder = "e.g. Gene1"),
-        uiOutput(ns("gene_hint")),
+        gene_search_ui(ns, "gene", multiple = FALSE, dup_toggle = TRUE,
+                       dup_default = n_nonlogical <= 10L, placeholder = "e.g. Gene1"),
         selectInput(ns("gene_assay"), "Expression assay",
                     choices = stats::setNames(assays, assays), selected = assay_sel),
         selectInput(ns("gene_transform"), "Transformation",
@@ -211,16 +204,14 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         uiOutput(ns("gene_pseudo_ui"))
       )
     })
-    # Search-by field choices depend on the duplicate-columns switch.
-    output$gene_searchby_ui <- renderUI({
-      req(identical(input$colour_by %||% "", "__gene__"), state$working)
-      rd <- SummarizedExperiment::rowData(state$working)
-      ch <- feature_search_choices(rd, include_duplicates = isTRUE(input$gene_dup))
-      def <- paste0(feature_type(), "_name")
-      sel <- if (def %in% ch) def else "__rownames__"
-      cur <- shiny::isolate(input$gene_searchby)
-      if (!is.null(cur) && cur %in% ch) sel <- cur   # preserve across dup-toggle
-      selectInput(ns("gene_searchby"), "Search by", choices = ch, selected = sel)
+    # The "Search by" picker + case-insensitive toggle + hint are the shared
+    # gene-search module (single mode; returns list(ids, records, unmatched)).
+    gene_search <- gene_search_server(input, output, session, state, "gene",
+                                      multiple = FALSE)
+    # Shims onto the old single-hit shape the colour/caption code below expects.
+    gene_q <- reactive(input$gene_q %||% "")
+    gene_resolved <- reactive({
+      r <- gene_search(); if (length(r$records)) r$records[[1]] else NULL
     })
     # Pseudocount appears only when a log transform is chosen; its default tracks
     # whether the chosen assay is integer-valued (counts) vs continuous.
@@ -272,52 +263,6 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # PC count for the axis selectors (0 until first render).
     pca_n_pc <- reactive({ v <- pca_shown$value(); if (is.null(v)) 2L else v$n_pc })
 
-    # --- Gene search (debounced; field-aware) -------------------------------
-    # Debounce the free-text gene box so the lookup + suggestion search don't fire
-    # on every keystroke (the suggestion regex is O(n features) on a miss).
-    gene_q <- debounce(reactive(input$gene %||% ""), 300)
-    # The character vector searched for the current "Search by" field (rownames
-    # for the feature-id sentinel, else the chosen rowData column as character).
-    search_values <- reactive({
-      req(state$working)
-      field <- input$gene_searchby %||% "__rownames__"
-      if (identical(field, "__rownames__")) return(rownames(state$working))
-      rd <- as.data.frame(SummarizedExperiment::rowData(state$working), optional = TRUE)
-      if (field %in% names(rd)) as.character(rd[[field]]) else rownames(state$working)
-    })
-    # The resolved feature for the current query/field (id + the actual matched
-    # value + match count), or NULL when not colouring by gene / box is empty.
-    # Shared by the legend label, the in-card caption, and the hint.
-    gene_resolved <- reactive({
-      req(identical(input$colour_by %||% "", "__gene__"), state$working)
-      q <- trimws(gene_q()); if (!nzchar(q)) return(NULL)
-      resolve_feature(q, search_values(), rownames(state$working),
-                      case_insensitive = isTRUE(input$gene_ci))
-    })
-    # Inline feedback under the gene box: duplicate-hit note, "Did you mean ...?"
-    # on a near miss, a refine hint when too broad, or a not-found message.
-    output$gene_hint <- renderUI({
-      req(identical(input$colour_by %||% "", "__gene__"))
-      q <- trimws(gene_q()); if (!nzchar(q)) return(NULL)
-      rf <- gene_resolved()
-      note <- function(cls, ...) tags$div(class = paste("small mb-2", cls), ...)
-      if (!is.null(rf) && !is.na(rf$id)) {
-        if (rf$n > 1L)
-          return(note("text-muted", sprintf("%d features matched '%s'; showing the first (%s).",
-                                             rf$n, q, rf$match)))
-        return(NULL)
-      }
-      sg <- suggest_features(q, search_values())  # always case-insensitive (independent of toggle)
-      if (isTRUE(sg$over_cap))
-        return(note("text-primary", "Too many partial matches - type more to narrow it down."))
-      if (length(sg$suggestions)) {
-        more <- sg$n_match - length(sg$suggestions)
-        txt <- paste(sg$suggestions, collapse = ", ")
-        if (more > 0L) txt <- paste0(txt, sprintf(" (+%d more)", more))
-        return(note("text-primary", sprintf("Feature '%s' not found. Did you mean: %s?", q, txt)))
-      }
-      note("text-primary", sprintf("Feature '%s' not found.", q))
-    })
     # In-card caption naming the feature + its true unique id (the dds rowname)
     # the expression colour is plotting, shown only when colouring by a gene.
     output$gene_caption <- renderUI({

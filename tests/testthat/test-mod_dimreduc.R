@@ -42,10 +42,10 @@ test_that("scatter colours by metadata + gene; scree builds; gene-not-found vali
     # validates with a clear message. The gene box is debounced -> elapse the timer.
     gname <- SummarizedExperiment::rowData(state$working)$gene_name[1]
     session$setInputs(colour_by = "__gene__", gene_searchby = "gene_name",
-                      gene_assay = "logcounts", gene = gname)
+                      gene_assay = "logcounts", gene_q = gname)
     session$elapse(300); session$flushReact()
     expect_s3_class(build_pca_gg(FALSE), "ggplot")
-    session$setInputs(gene = "NoSuchGene"); session$elapse(300); session$flushReact()
+    session$setInputs(gene_q = "NoSuchGene"); session$elapse(300); session$flushReact()
     expect_error(build_pca_gg(FALSE), "not found")
   })
 })
@@ -62,19 +62,19 @@ test_that("gene search: field selector, transform, duplicate + suggestion hints"
     session$setInputs(assay = "vst", n_top = 80, auto = TRUE, colour_by = "__gene__",
                       gene_searchby = "gene_name", gene_assay = "logcounts"); session$flushReact()
     dupname <- rd$gene_name[1]
-    session$setInputs(gene = dupname); session$elapse(300); session$flushReact()
+    session$setInputs(gene_q = dupname); session$elapse(300); session$flushReact()
     expect_match(as.character(output$gene_hint$html), "matched")     # "N features matched ...; showing the first"
     expect_s3_class(build_pca_gg(FALSE), "ggplot")                   # first match used
 
     # A near miss yields a "Did you mean ...?" suggestion (always case-insensitive).
     real <- rd$gene_name[50]
-    session$setInputs(gene_ci = FALSE, gene = tolower(substr(real, 1, nchar(real) - 1)))
+    session$setInputs(gene_ci = FALSE, gene_q = tolower(substr(real, 1, nchar(real) - 1)))
     session$elapse(300); session$flushReact()
     expect_match(as.character(output$gene_hint$html), "Did you mean")
 
     # A case-insensitive hit labels the legend + caption with the STORED value
     # (e.g. "Gene45"), not the typed lowercase query.
-    session$setInputs(gene_ci = TRUE, gene = tolower(real)); session$elapse(300); session$flushReact()
+    session$setInputs(gene_ci = TRUE, gene_q = tolower(real)); session$elapse(300); session$flushReact()
     expect_match(build_pca_gg(FALSE)$labels$colour, real, fixed = TRUE)
     cap <- as.character(output$gene_caption$html)
     expect_match(cap, "Plotting expression of")
@@ -83,7 +83,7 @@ test_that("gene search: field selector, transform, duplicate + suggestion hints"
 
     # Searching by Feature ID (rownames) resolves an id directly.
     rid <- rownames(state$working)[3]
-    session$setInputs(gene_ci = FALSE, gene_searchby = "__rownames__", gene = rid)
+    session$setInputs(gene_ci = FALSE, gene_searchby = "__rownames__", gene_q = rid)
     session$elapse(300); session$flushReact()
     expect_silent(g <- build_pca_gg(FALSE))
     expect_s3_class(g, "ggplot")

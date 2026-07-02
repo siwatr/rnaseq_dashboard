@@ -165,18 +165,34 @@ DE statistics + DEG plots (the heatmap split out to Phase 7). Sub-PR'd P5a→P5c
 - **P5c ✅** DE Plots (segmented MA/volcano/direct on the `dual_plot` engine; deferred sig = data-only;
   local per-feature colour via `de_colour_resolve` + the curated Palette **`other/DEG`** set;
   field-based axis limits → triangles; 1:1 Direct toggle; ggrepel labels) + Results Table (`dt_table`
-  DEG-coloured + significant-only) + a **shared "Contrast to view"** selector. [PR #TBD]
+  DEG-coloured + significant-only) + a **shared "Contrast to view"** selector. [PR #35]
 
-## Phase 6 — Gene Sets ⬅️ next ⬜
-A dedicated page (between DE and Expression) managing **named gene sets of interest** — the
-resource DE *seeds* and the Expression page *consumes*. Sources (all opt-in, nothing auto-included):
-- **Paste names/IDs** (textarea, resolved via `lookup_feature()` against a chosen rowData field;
-  unmatched genes reported), **upload file** (CSV/TXT), **add from DE results** (a stored contrast's
-  DEGs, select/Add-all), **add from top-variable genes** (`top_variable_features()`).
-- State: new **`state$gene_sets`** — named list of canonical feature IDs (rownames); a session/UI
-  field (no `data_version` bump), cleared on load, **reconciled** against current features on data
-  change (drop + report, mirroring `reconcile_palette()` → a `reconcile_gene_sets()` helper).
-- Recorded in the reproducibility export (Phase 9).
+## Phase 6 — Gene Sets ⬅️ next (sub-PR'd P6a→P6e)
+A dedicated page (between DE and Expression, a `navset_card_tab`: **Manage** | **Compare**) to
+*define, record, manage, compare, and share* **named gene sets of interest** — DE *seeds* them,
+the Phase 7 Expression heatmap *consumes* them. Full design + rationale in the approved plan:
+`~/.claude/plans/vast-giggling-ripple.md` (mirrored by the `gene-sets-phase-plan` project memory).
+
+**Load-bearing decisions:** a shared **`mod_gene_search`** sub-module (extracted from the inline
+PCA/DE gene-search, retrofitted into both — DE gains PCA's explicit "Search by" column picker);
+**non-destructive storage** — `state$gene_sets[[name]] = list(ids, kind, annotation, source)` keeps
+the **full authored membership**, "present in dataset" is a live derived view (powers Compare's
+"Within this dataset" toggle); sets are **snapshots** (source controls are live previews, Add
+freezes ids); a per-add **New/Append** toggle; the **annotated** layer (id→label sets, combine/
+overlap UI, a `Palette > Gene Set` sub-tab) is **deferred to P7** with its heatmap consumer
+(storage is forward-compatible). Recorded in the reproducibility export (Phase 9).
+
+- **P6a ⬅️** shared `mod_gene_search.R` (single/multi, host-namespace) + retrofit PCA + DE + tests;
+  this roadmap expansion + the plan-pointer memory. ⬜
+- **P6b** `state$gene_sets` (structured, non-destructive) + `gene_set_helpers.R`
+  (`new_gene_set`/`gene_set_commit`/`gene_set_present`/`gene_set_absent`/`parse_gene_tokens`/
+  `split_ids_by_group`) + `mod_geneset.R` Manage tab (Paste / DEG / top-variable sources +
+  management + non-destructive reconcile-notify) + nav wiring. ⬜
+- **P6c** rich tabular import (CSV/TSV/XLSX `dt_table` view/filter/select, ID-column pick,
+  add-filtered / add-selected, annotation-split → N sets, live stats). ⬜
+- **P6d** file round-trip — JSON/GMT/TSV serializers + Import-file source + Export block. ⬜
+- **P6e** Compare tab (Stats bar on `dual_plot`; Overlap Euler/Venn via `eulerr` ≤4 sets, UpSet
+  via `ComplexHeatmap`) + doc-sync close-out + propose `v0.4.0`. ⬜
 
 ## Phase 7 — Expression ⬜
 Renamed from "Heatmap": a gene-expression **browsing surface** (more than a heatmap). A
