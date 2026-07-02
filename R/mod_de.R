@@ -168,7 +168,9 @@
         bslib::accordion_panel("Labels", icon = icon("tag"),
           bslib::input_switch(ns("show_labels"), "Show gene labels", value = FALSE),
           numericInput(ns("top_n"), "Label top N by padj", value = 0, min = 0, max = 100, step = 1),
-          gene_search_ui(ns, "label", multiple = TRUE, label = "Genes of interest")),
+          gene_search_ui(ns, "label", multiple = TRUE,
+                         search_modes = c("exact", "contains", "regex"),
+                         label = "Genes of interest")),
         bslib::accordion_panel("Axis limits", icon = icon("up-right-and-down-left-from-center"),
           tags$p(class = "small text-muted",
                  "Blank = auto; out-of-range points draw as triangles. A limit is shared across plot types wherever its field recurs."),
@@ -671,7 +673,8 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # mode; DE now gets an explicit "Search by" column picker + case toggle). Its
     # `label_hint` output reports unmatched terms.
     label_search <- gene_search_server(input, output, session, state, "label",
-                                       multiple = TRUE)
+                                       multiple = TRUE,
+                                       search_modes = c("exact", "contains", "regex"))
     display_names <- function(ids) {
       rd <- SummarizedExperiment::rowData(state$working)
       fn <- paste0(feature_type(), "_name")
