@@ -1,3 +1,7 @@
+# ddsdashboard (development version)
+
+* Phase 6 (Gene Sets) in progress.
+
 # ddsdashboard 0.3.0
 
 Phase 5 — differential expression (DESeq2).
