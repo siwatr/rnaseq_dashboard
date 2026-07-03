@@ -23,7 +23,8 @@
     radioButtons(id, label = NULL, choices = choices, selected = selected, inline = TRUE)
 }
 
-.gs_section <- function(title) tags$div(class = "fw-semibold text-primary mb-1 mt-1", title)
+# The app "primary action" purple, matching the Run DESeq2 button (mod_de.R).
+.gs_action_style <- "background-color:#8b58db;border-color:#8b58db;color:#fff;"
 
 mod_geneset_ui <- function(id) {
   ns <- NS(id)
@@ -35,75 +36,86 @@ mod_geneset_ui <- function(id) {
       bslib::layout_columns(
         fillable = FALSE, col_widths = c(6, 6),
 
-        # ---- LEFT: Build a gene set ----------------------------------------
+        # ---- LEFT: Build a gene set (one accordion per step) ---------------
         bslib::card(
           bslib::card_header(tags$h4("Build a gene set", class = "fs-6 mb-0")),
-          bslib::card_body(
-            .gs_section("1 · Select genes"),
-            .gs_pills(ns("source"),
-                      c("Paste" = "paste", "From DE" = "deg", "Top-variable" = "topvar"),
-                      selected = "paste"),
-            conditionalPanel(
-              cond("source", "paste"),
-              gene_search_ui(ns, "paste", multiple = TRUE,
-                             search_modes = c("exact", "contains", "regex")),
-              uiOutput(ns("paste_literal_ui"))),
-            conditionalPanel(cond("source", "deg"),
-                             uiOutput(ns("deg_controls"))),
-            conditionalPanel(
-              cond("source", "topvar"),
-              numericInput(ns("topvar_n"), "Number of genes", value = 100, min = 1, step = 50),
-              helpText(class = "small text-muted",
-                       "The most variable endogenous features (VST).")),
-
-            tags$hr(),
-            .gs_section("2 · Preview"),
-            uiOutput(ns("preview_head")),
-            DT::DTOutput(ns("preview_table")),
-            tags$div(class = "mt-2",
-              actionButton(ns("clear_staged"), "Clear", class = "btn-sm btn-outline-secondary",
-                           icon = shiny::icon("trash"))),
-
-            tags$hr(),
-            .gs_section("3 · Save"),
-            uiOutput(ns("save_note")),
-            .gs_pills(ns("save_mode"), c("New set" = "new", "Add to existing" = "add"),
-                      selected = "new"),
-            conditionalPanel(
-              cond("save_mode", "new"),
-              textInput(ns("new_name"), "Set name",
-                        placeholder = "What should this set be called?"),
-              uiOutput(ns("new_warn")),
-              actionButton(ns("create"), "Create set", class = "btn-primary btn-sm",
-                           icon = shiny::icon("plus"))),
-            conditionalPanel(
-              cond("save_mode", "add"),
-              uiOutput(ns("add_targets_ui")),
-              actionButton(ns("add_existing"), "Add to selected", class = "btn-primary btn-sm",
-                           icon = shiny::icon("plus")))
+          bslib::accordion(
+            open = TRUE,
+            bslib::accordion_panel(
+              "1 · Select genes",
+              .gs_pills(ns("source"),
+                        c("Paste" = "paste", "From DE" = "deg", "Top-variable" = "topvar"),
+                        selected = "paste"),
+              conditionalPanel(
+                cond("source", "paste"),
+                gene_search_ui(ns, "paste", multiple = TRUE,
+                               search_modes = c("exact", "contains", "regex")),
+                uiOutput(ns("paste_literal_ui"))),
+              conditionalPanel(cond("source", "deg"), uiOutput(ns("deg_controls"))),
+              conditionalPanel(
+                cond("source", "topvar"),
+                numericInput(ns("topvar_n"), "Number of genes", value = 100, min = 1, step = 50),
+                helpText(class = "small text-muted",
+                         "The most variable endogenous features (VST)."))),
+            bslib::accordion_panel(
+              "2 · Preview",
+              uiOutput(ns("preview_head")),
+              DT::DTOutput(ns("preview_table")),
+              tags$div(class = "mt-2",
+                actionButton(ns("clear_staged"), "Clear", class = "btn-sm btn-outline-danger",
+                             icon = shiny::icon("trash")))),
+            bslib::accordion_panel(
+              "3 · Save",
+              uiOutput(ns("save_note")),
+              .gs_pills(ns("save_mode"), c("New set" = "new", "Add to existing" = "add"),
+                        selected = "new"),
+              conditionalPanel(
+                cond("save_mode", "new"),
+                textInput(ns("new_name"), "Set name",
+                          placeholder = "What should this set be called?"),
+                uiOutput(ns("new_warn")),
+                actionButton(ns("create"), "Create set", class = "btn btn-sm fw-semibold",
+                             style = .gs_action_style, icon = shiny::icon("plus"))),
+              conditionalPanel(
+                cond("save_mode", "add"),
+                uiOutput(ns("add_targets_ui")),
+                actionButton(ns("add_existing"), "Add to selected", class = "btn btn-sm fw-semibold",
+                             style = .gs_action_style, icon = shiny::icon("plus"))))
           )
         ),
 
-        # ---- RIGHT: Your gene sets -----------------------------------------
-        bslib::card(
-          bslib::card_header(
-            tags$h4("Your gene sets", class = "fs-6 mb-0"),
-            tags$span(class = "small text-muted", "Available to the other tabs this session")),
-          bslib::card_body(
-            uiOutput(ns("show_cols_ui")),
-            uiOutput(ns("empty_note")),
-            DT::DTOutput(ns("sets_table")),
-            tags$div(
-              class = "d-flex gap-2 my-2",
-              actionButton(ns("rename"), "Rename", class = "btn-sm btn-outline-secondary",
-                           icon = shiny::icon("pen")),
-              actionButton(ns("delete"), "Delete", class = "btn-sm btn-outline-danger",
-                           icon = shiny::icon("trash")),
-              actionButton(ns("clear_all"), "Clear all", class = "btn-sm btn-outline-danger",
-                           icon = shiny::icon("xmark"))),
-            tags$hr(),
-            uiOutput(ns("members_header")),
-            DT::DTOutput(ns("members_table"))
+        # ---- RIGHT: preview-control (small) + Your gene sets ---------------
+        tags$div(
+          class = "d-flex flex-column gap-3",
+          bslib::accordion(
+            open = TRUE,
+            bslib::accordion_panel(
+              "Gene set preview control",
+              helpText(class = "small text-muted mb-2",
+                       "Changes here affect all gene set preview tables on this page."),
+              uiOutput(ns("show_cols_ui")))),
+          bslib::card(
+            bslib::card_header(
+              tags$h4("Your gene sets", class = "fs-6 mb-0"),
+              tags$span(class = "small text-muted", "Available to the other tabs this session")),
+            bslib::accordion(
+              open = TRUE,
+              bslib::accordion_panel(
+                "Defined sets",
+                uiOutput(ns("empty_note")),
+                DT::DTOutput(ns("sets_table")),
+                tags$div(
+                  class = "d-flex gap-2 my-2",
+                  actionButton(ns("rename"), "Rename", class = "btn-sm btn-outline-secondary",
+                               icon = shiny::icon("pen")),
+                  actionButton(ns("delete"), "Delete", class = "btn-sm btn-outline-danger",
+                               icon = shiny::icon("trash")),
+                  actionButton(ns("clear_all"), "Clear all", class = "btn-sm btn-outline-danger",
+                               icon = shiny::icon("xmark")))),
+              bslib::accordion_panel(
+                "Set members",
+                uiOutput(ns("members_header")),
+                DT::DTOutput(ns("members_table"))))
           )
         )
       )
