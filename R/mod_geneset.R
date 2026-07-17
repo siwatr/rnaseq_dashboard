@@ -36,9 +36,9 @@ mod_geneset_ui <- function(id) {
       bslib::layout_columns(
         fillable = FALSE, col_widths = c(6, 6),
 
-        # ---- LEFT: Build a gene set (one accordion per step) ---------------
-        bslib::card(
-          bslib::card_header(tags$h4("Build a gene set", class = "fs-6 mb-0")),
+        # ---- LEFT: Build a gene set (title text + one accordion per step) --
+        tags$div(
+          tags$h4("Build a gene set", class = "fs-6 mb-2"),
           bslib::accordion(
             open = TRUE,
             bslib::accordion_panel(
@@ -94,10 +94,12 @@ mod_geneset_ui <- function(id) {
               helpText(class = "small text-muted mb-2",
                        "Changes here affect all gene set preview tables on this page."),
               uiOutput(ns("show_cols_ui")))),
-          bslib::card(
-            bslib::card_header(
-              tags$h4("Your gene sets", class = "fs-6 mb-0"),
-              tags$span(class = "small text-muted", "Available to the other tabs this session")),
+          tags$div(
+            tags$div(
+              class = "mb-2",
+              tags$h4("Your gene sets", class = "fs-6 mb-0 d-inline"),
+              tags$span(class = "small text-muted ms-2",
+                        "Available to the other tabs this session")),
             bslib::accordion(
               open = TRUE,
               bslib::accordion_panel(
