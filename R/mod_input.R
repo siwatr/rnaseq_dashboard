@@ -6,19 +6,6 @@
 #
 # Later rounds add: colData/rowData editing, annotation (OrgDb/GTF), pseudobulk.
 
-# Read a user-uploaded table by file extension (csv/tsv/txt/xlsx/xls).
-.read_user_table <- function(path, name) {
-  ext <- tolower(tools::file_ext(name))
-  switch(ext,
-    csv         = as.data.frame(readr::read_csv(path, show_col_types = FALSE)),
-    tsv         = as.data.frame(readr::read_tsv(path, show_col_types = FALSE)),
-    txt         = as.data.frame(readr::read_tsv(path, show_col_types = FALSE)),
-    xlsx        = as.data.frame(readxl::read_excel(path)),
-    xls         = as.data.frame(readxl::read_excel(path)),
-    stop("Unsupported file type '.", ext, "'. Use CSV, TSV, or XLSX.", call. = FALSE)
-  )
-}
-
 mod_input_ui <- function(id) {
   ns <- NS(id)
   bslib::layout_sidebar(

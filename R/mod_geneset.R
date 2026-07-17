@@ -26,9 +26,31 @@
 # The app "primary action" purple, matching the Run DESeq2 button (mod_de.R).
 .gs_action_style <- "background-color:#8b58db;border-color:#8b58db;color:#fff;"
 
+# A namespaced conditionalPanel condition. Module-level (NOT a UI-local closure)
+# so the server's renderUI blocks -- e.g. the multi-set Save UI -- can build
+# conditions too; `ns` is the UI's NS() in the UI, session$ns in the server.
+.gs_cond <- function(ns, inp, val) sprintf("input['%s'] == '%s'", ns(inp), val)
+
+# Which field to match an imported ID column against: the rowData column (or
+# rownames) with the most hits for `query`. Ties: rownames win, then first
+# rowData column. Returns a feature_search_choices() value ("__rownames__" or a
+# column name). Cheap (hashed match over a handful of columns).
+.gs_best_match_field <- function(query, dds) {
+  q <- unique(trimws(as.character(query))); q <- q[!is.na(q) & nzchar(q)]
+  if (!length(q)) return("__rownames__")
+  best <- "__rownames__"; best_n <- sum(q %in% rownames(dds))
+  rd <- as.data.frame(SummarizedExperiment::rowData(dds), optional = TRUE)
+  ok <- vapply(rd, function(x) is.character(x) || is.factor(x) || is.numeric(x), logical(1))
+  for (co in names(rd)[ok]) {
+    n <- sum(q %in% as.character(rd[[co]]))
+    if (n > best_n) { best_n <- n; best <- co }   # strict > keeps the earlier winner on a tie
+  }
+  best
+}
+
 mod_geneset_ui <- function(id) {
   ns <- NS(id)
-  cond <- function(inp, val) sprintf("input['%s'] == '%s'", ns(inp), val)
+  cond <- function(inp, val) .gs_cond(ns, inp, val)
   bslib::navset_card_tab(
     id = ns("tabs"),
     bslib::nav_panel(
@@ -44,7 +66,8 @@ mod_geneset_ui <- function(id) {
             bslib::accordion_panel(
               "1 · Select genes",
               .gs_pills(ns("source"),
-                        c("Paste" = "paste", "From DE" = "deg", "Top-variable" = "topvar"),
+                        c("Paste" = "paste", "From DE" = "deg", "Top-variable" = "topvar",
+                          "Import table" = "file"),
                         selected = "paste"),
               conditionalPanel(
                 cond("source", "paste"),
@@ -56,7 +79,17 @@ mod_geneset_ui <- function(id) {
                 cond("source", "topvar"),
                 numericInput(ns("topvar_n"), "Number of genes", value = 100, min = 1, step = 50),
                 helpText(class = "small text-muted",
-                         "The most variable endogenous features (VST)."))),
+                         "The most variable endogenous features (VST).")),
+              conditionalPanel(
+                cond("source", "file"),
+                uiOutput(ns("tbl_file_ui")),   # rebuilt on Clear so re-uploading the same file works
+                bslib::input_switch(ns("tbl_header"), "File has a header row", value = TRUE),
+                actionButton(ns("tbl_load"), "Load file", class = "btn-sm btn-primary",
+                             icon = shiny::icon("upload")),
+                uiOutput(ns("tbl_controls")),
+                uiOutput(ns("tbl_loaded_head")),
+                DT::DTOutput(ns("tbl_table")),
+                uiOutput(ns("tbl_stats")))),
             bslib::accordion_panel(
               "2 · Preview",
               uiOutput(ns("preview_head")),
@@ -67,20 +100,29 @@ mod_geneset_ui <- function(id) {
             bslib::accordion_panel(
               "3 · Save",
               uiOutput(ns("save_note")),
-              .gs_pills(ns("save_mode"), c("New set" = "new", "Add to existing" = "add"),
-                        selected = "new"),
+              # One staged set -> the New/Add controls (kept in conditionalPanels,
+              # never renderUI, so typing in the name box is never torn down).
+              # Many staged sets (an annotation-split import) -> the multi-set UI.
+              # `multi_staged` is a server flag exposed to the client condition.
               conditionalPanel(
-                cond("save_mode", "new"),
-                textInput(ns("new_name"), "Set name",
-                          placeholder = "What should this set be called?"),
-                uiOutput(ns("new_warn")),
-                actionButton(ns("create"), "Create set", class = "btn btn-sm fw-semibold",
-                             style = .gs_action_style, icon = shiny::icon("plus"))),
-              conditionalPanel(
-                cond("save_mode", "add"),
-                uiOutput(ns("add_targets_ui")),
-                actionButton(ns("add_existing"), "Add to selected", class = "btn btn-sm fw-semibold",
-                             style = .gs_action_style, icon = shiny::icon("plus"))))
+                sprintf("output['%s'] != '1'", ns("multi_staged")),
+                .gs_pills(ns("save_mode"), c("New set" = "new", "Add to existing" = "add"),
+                          selected = "new"),
+                conditionalPanel(
+                  cond("save_mode", "new"),
+                  textInput(ns("new_name"), "Set name",
+                            placeholder = "What should this set be called?"),
+                  uiOutput(ns("new_warn")),
+                  actionButton(ns("create"), "Create set", class = "btn btn-sm fw-semibold",
+                               style = .gs_action_style, icon = shiny::icon("plus"))),
+                conditionalPanel(
+                  cond("save_mode", "add"),
+                  uiOutput(ns("add_targets_ui")),
+                  actionButton(ns("add_existing"), "Add to selected",
+                               class = "btn btn-sm fw-semibold",
+                               style = .gs_action_style, icon = shiny::icon("plus")))),
+              conditionalPanel(sprintf("output['%s'] == '1'", ns("multi_staged")),
+                               uiOutput(ns("multi_save"))))
           )
         ),
 
@@ -230,10 +272,192 @@ mod_geneset_server <- function(id, state) {
       utils::head(topvar_ranked(), max(1L, n))
     })
 
+    # ---- Table import: an arbitrary sheet (e.g. a DESeq2 result table from
+    # another analysis) -> view/filter/select -> one or MANY staged sets. -----
+    # The fileInput is rebuilt under a nonce so Clear truly resets it -- otherwise
+    # re-selecting the SAME file emits no browser change event and the importer
+    # stays stuck (the classic fileInput footgun; there is no updateFileInput).
+    tbl_nonce <- reactiveVal(0L)
+    output$tbl_file_ui <- renderUI({
+      tbl_nonce()
+      fileInput(ns("tbl_file"), "Table file (CSV / TSV / XLSX)",
+                accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls"))
+    })
+    # Reading is intentional: the file is read only on the Load button (like the
+    # app's other uploads). `tbl_src` holds the loaded file REFERENCE, not the
+    # parsed frame -- so the header toggle can re-parse reactively after the first
+    # load without a re-click. Shiny keeps the upload on disk for the session, so
+    # this is a cheap re-read with no in-memory duplicate. NULL src -> NULL raw, so
+    # staged() always yields a list (no req cascade escapes the Save observers).
+    tbl_src <- reactiveVal(NULL)
+    observeEvent(input$tbl_load, {
+      f <- input$tbl_file
+      if (is.null(f)) { showNotification("Choose a file first.", type = "warning"); return() }
+      tbl_src(list(datapath = f$datapath, name = f$name))
+    })
+    tbl_raw <- reactive({
+      src <- tbl_src(); if (is.null(src)) return(NULL)
+      tryCatch(.read_user_table(src$datapath, src$name, col_names = isTRUE(input$tbl_header)),
+               error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
+    })
+
+    output$tbl_controls <- renderUI({
+      df <- tbl_raw(); req(df, ncol(df) > 0, state$working)
+      cols <- names(df)
+      tip <- function(x, msg) bslib::tooltip(x, msg, placement = "right")
+      tagList(
+        bslib::layout_columns(
+          col_widths = c(6, 6),
+          tip(selectInput(ns("tbl_id_col"), "ID column (in your file)",
+                          choices = cols, selected = cols[1]),
+              "The column of the uploaded file that holds the gene / feature identifiers."),
+          tip(selectInput(ns("tbl_match_by"), "Match against (dataset)",
+                          choices = feature_search_choices(
+                            SummarizedExperiment::rowData(state$working)),
+                          selected = "__rownames__"),
+              "Which part of the loaded dataset to match those identifiers to -- the feature IDs (row names) or a rowData column such as gene_name. Auto-detected from your ID column; override if needed.")),
+        # A single-column file has nothing to split by.
+        if (length(cols) > 1L)
+          tip(selectizeInput(ns("tbl_anno_cols"), "Split into sets by column(s) (optional)",
+                             choices = cols, multiple = TRUE),
+              "Create one gene set per unique value (or value combination) in these columns -- e.g. split a results table by a 'direction' column into up / down sets."),
+        conditionalPanel(
+          sprintf("input['%s'] && input['%s'].length > 1", ns("tbl_anno_cols"), ns("tbl_anno_cols")),
+          tip(textInput(ns("tbl_sep"), "Group name separator", value = "."),
+              "Joins the values of multiple split columns into each set's name (e.g. 'up.brain').")),
+        radioButtons(ns("tbl_rows"), "Use rows",
+                     c("All rows in the current view (filtered)" = "view",
+                       "Selected rows only" = "selected"),
+                     selected = "view"),
+        uiOutput(ns("tbl_match_opts")))
+    })
+    # Auto-detect the best "Match against" field for the chosen ID column.
+    # (Re-detects on a header flip indirectly: toggling the header re-renders
+    # tbl_controls and changes the ID-column name, which re-fires input$tbl_id_col.)
+    observeEvent(list(input$tbl_id_col, tbl_src()), {
+      df <- tbl_raw(); idc <- input$tbl_id_col
+      req(df, !is.null(idc), idc %in% names(df), state$working)
+      updateSelectInput(session, "tbl_match_by",
+                        selected = .gs_best_match_field(df[[idc]], state$working))
+    }, ignoreInit = TRUE)
+    # Field-dependent options: literal-add for feature-id matching, else keep-all
+    # vs first-only for a name column that can match several features.
+    output$tbl_match_opts <- renderUI({
+      if (identical(input$tbl_match_by %||% "__rownames__", "__rownames__"))
+        bslib::input_switch(ns("tbl_literal"), "Also keep unmatched as literal IDs", value = FALSE)
+      else
+        bslib::tooltip(
+          radioButtons(ns("tbl_multi"), "When a name matches several features",
+                       c("Keep all matches" = "all", "First match only" = "first"),
+                       selected = "all", inline = TRUE),
+          "A gene name can map to more than one feature (duplicated / paralogous IDs). Keep all adds every matching feature; First only keeps one.",
+          placement = "top")
+    })
+    output$tbl_loaded_head <- renderUI({
+      if (is.null(tbl_raw())) return(NULL)
+      tags$div(class = "fw-semibold small mt-2 mb-1", "Loaded data")
+    })
+    output$tbl_table <- DT::renderDT({
+      df <- tbl_raw(); req(df)
+      dt_table(df, selection = list(mode = "multiple"))
+    })
+    # The rows the user is acting on: the filtered view (_rows_all, across pages)
+    # or the explicit selection (_rows_selected).
+    tbl_rows <- reactive({
+      df <- tbl_raw(); if (is.null(df)) return(integer(0))
+      if (identical(input$tbl_rows %||% "view", "selected")) input$tbl_table_rows_selected
+      else input$tbl_table_rows_all %||% seq_len(nrow(df))
+    })
+    # Resolve the in-scope rows' ID column to feature id(s). 1-to-MANY when
+    # matching a name column with Keep-all (a name can hit several features).
+    # Returns per-input-row id vectors + the rows, so the expanded staging frame
+    # and the stats both build from it.
+    # value -> all dataset row indices for the chosen match column. Its own
+    # reactive (keyed on the column + dataset) so it isn't rebuilt over all
+    # features on every import-table filter keystroke. NULL for rownames matching.
+    tbl_match_index <- reactive({
+      field <- input$tbl_match_by %||% "__rownames__"
+      if (identical(field, "__rownames__") || is.null(state$working)) return(NULL)
+      vals <- as.character(as.data.frame(
+        SummarizedExperiment::rowData(state$working), optional = TRUE)[[field]])
+      split(seq_along(vals), vals)                        # NA-valued features drop out
+    })
+    tbl_match <- reactive({
+      df <- tbl_raw(); if (is.null(df) || is.null(state$working)) return(NULL)
+      idc <- input$tbl_id_col
+      if (is.null(idc) || !(idc %in% names(df))) return(NULL)
+      rows <- tbl_rows(); if (!length(rows)) return(NULL)
+      sub <- df[rows, , drop = FALSE]
+      raw <- trimws(as.character(sub[[idc]])); raw[!nzchar(raw)] <- NA   # blanks are not ids
+      field <- input$tbl_match_by %||% "__rownames__"
+      rn <- rownames(state$working)
+      if (identical(field, "__rownames__")) {
+        lit <- isTRUE(input$tbl_literal)                 # rownames are unique -> 1:1
+        ids <- lapply(raw, function(x)
+          if (is.na(x)) character(0) else if (x %in% rn) x else if (lit) x else character(0))
+      } else {
+        by_val <- tbl_match_index()                       # NULL[[x]] -> NULL, so still safe
+        keep_all <- !identical(input$tbl_multi %||% "all", "first")
+        ids <- lapply(raw, function(x) {
+          if (is.na(x)) return(character(0))
+          hit <- rn[by_val[[x]] %||% integer(0)]
+          if (!length(hit)) character(0) else if (keep_all) hit else hit[1]
+        })
+      }
+      list(sub = sub, ids = ids)
+    })
+    # The expanded frame (one row per input-row x matched-id) for the split.
+    tbl_resolved <- reactive({
+      m <- tbl_match(); if (is.null(m)) return(NULL)
+      reps <- pmax(lengths(m$ids), 1L)                    # 0-match rows kept as one NA row
+      exp <- m$sub[rep(seq_len(nrow(m$sub)), reps), , drop = FALSE]
+      exp$.gs_id <- unlist(lapply(m$ids, function(z) if (length(z)) z else NA_character_))
+      exp
+    })
+    tbl_staged <- reactive({
+      sub <- tbl_resolved(); if (is.null(sub)) return(list())
+      anno <- intersect(input$tbl_anno_cols %||% character(0), names(sub))
+      sep  <- input$tbl_sep %||% "."; if (!nzchar(sep)) sep <- "."
+      out <- split_ids_by_group(sub, ".gs_id", anno, sep = sep)
+      if (!length(anno) && length(out)) names(out) <- "Imported genes"
+      out
+    })
+    output$tbl_stats <- renderUI({
+      df <- tbl_raw(); req(df)
+      m <- tbl_match()
+      n_view <- length(input$tbl_table_rows_all %||% seq_len(nrow(df)))
+      n_sel  <- length(input$tbl_table_rows_selected)
+      st <- tbl_staged()
+      n_ids   <- if (is.null(m)) 0L else length(unique(unlist(m$ids)))
+      n_miss  <- if (is.null(m)) 0L else sum(lengths(m$ids) == 0L)
+      n_multi <- if (is.null(m)) 0L else sum(lengths(m$ids) > 1L)
+      grp <- if (length(st) > 1L) {
+        shown <- utils::head(st, 5L)
+        txt <- paste(sprintf("%s (%d)", names(shown), lengths(shown)), collapse = ", ")
+        if (length(st) > 5L) txt <- paste0(txt, sprintf(", +%d more", length(st) - 5L))
+        tags$div(class = "small text-muted", sprintf("%d sets: %s", length(st), txt))
+      }
+      multi_note <- if (n_multi > 0L)
+        tags$div(class = "small text-warning",
+          sprintf("%d name(s) matched multiple features -- %s.", n_multi,
+                  if (identical(input$tbl_multi %||% "all", "first")) "kept the first"
+                  else "all their IDs added"))
+      tagList(
+        # "resolved" (not "matched") because with the literal switch on some ids
+        # are kept verbatim without being in the dataset.
+        tags$div(class = "small text-muted",
+          sprintf("%d rows imported | %d in view | %d selected | %d IDs resolved%s.",
+                  nrow(df), n_view, n_sel, n_ids,
+                  if (n_miss) sprintf(" (%d unmatched)", n_miss) else "")),
+        multi_note, grp)
+    })
+
     # The active source's provenance label + its staged sets (named list).
     staged_source <- function() switch(input$source %||% "paste",
       paste = "paste", deg = paste0("DE: ", input$deg_contrast %||% ""),
-      topvar = "top-variable", "manual")
+      topvar = "top-variable",
+      file = paste0("import: ", (tbl_src() %||% list(name = "table"))$name),
+      "manual")
     # The parameters that DEFINE the staged set. Because a set is an authored
     # snapshot (its thresholds are local to this page and the user may move them
     # afterwards), these are the only record of how it was built -- log them so
@@ -251,9 +475,22 @@ mod_geneset_server <- function(id, state) {
                  shrunk = isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok()),
                  de_status = de_status(state)),
       topvar = list(n_top = input$topvar_n %||% 100L, input = "vst (endogenous)"),
+      file = list(file = (tbl_src() %||% list(name = ""))$name,
+                  multi_match = if (identical(input$tbl_match_by %||% "__rownames__", "__rownames__"))
+                    NA_character_ else (input$tbl_multi %||% "all"),
+                  id_col = input$tbl_id_col %||% "",
+                  match_by = input$tbl_match_by %||% "__rownames__",
+                  rows = input$tbl_rows %||% "view",
+                  split_by = input$tbl_anno_cols %||% character(0),
+                  sep = input$tbl_sep %||% ".",
+                  literal_unmatched = isTRUE(input$tbl_literal) &&
+                    identical(input$tbl_match_by %||% "__rownames__", "__rownames__")),
       list())
+    # The staged sets: a NAMED LIST, so a source may stage one set (paste / DE /
+    # top-variable) or many (an annotation-split import).
     staged <- reactive({
       src <- input$source %||% "paste"
+      if (identical(src, "file")) return(tbl_staged())
       ids <- switch(src,
         paste  = paste_ids(),
         deg    = tryCatch(deg_ids(), error = function(e) character(0)),
@@ -269,13 +506,37 @@ mod_geneset_server <- function(id, state) {
     # =====================================================================
     # 2 - Preview of the staged genes.
     # =====================================================================
+    # How many queried ids the active source DROPPED as not-in-dataset (only when
+    # the literal escape hatch is off), + whether that hatch is available here.
+    dropped_info <- function() {
+      src <- input$source %||% "paste"
+      if (identical(src, "paste")) {
+        can <- .paste_literal_ok(input$paste_mode)
+        if (isTRUE(input$paste_literal) && can) return(list(n = 0L, can = can))
+        return(list(n = length(paste_search()$unmatched), can = can))
+      }
+      if (identical(src, "file")) {
+        can <- identical(input$tbl_match_by %||% "__rownames__", "__rownames__")
+        sub <- tbl_resolved(); if (is.null(sub)) return(list(n = 0L, can = can))
+        if (isTRUE(input$tbl_literal) && can) return(list(n = 0L, can = can))
+        return(list(n = sum(is.na(sub$.gs_id)), can = can))
+      }
+      list(n = 0L, can = FALSE)
+    }
     output$preview_head <- renderUI({
       st <- staged(); n <- length(st)
-      if (!n) return(helpText(class = "small text-muted", "Nothing staged yet."))
+      if (!n && !dropped_info()$n)
+        return(helpText(class = "small text-muted", "Nothing staged yet."))
       total <- length(unique(unlist(st, use.names = FALSE)))
-      txt <- if (n == 1L) sprintf("%d gene(s) staged.", total)
+      txt <- if (n <= 1L) sprintf("%d gene(s) staged.", total)
              else sprintf("%d sets staged (%d unique genes).", n, total)
-      tagList(tags$div(class = "small text-muted mb-1", txt),
+      d <- dropped_info()
+      warn <- if (d$n > 0L)
+        tags$div(class = "small text-warning mb-1",
+          sprintf("%d ID(s) not in the dataset were left out.%s", d$n,
+                  if (d$can) " Turn on 'keep unmatched as literal IDs' to include them." else ""))
+      tagList(warn,
+              tags$div(class = "small text-muted mb-1", txt),
               if (n > 1L) selectizeInput(ns("preview_pick"), NULL, choices = names(st)))
     })
     staged_active_ids <- reactive({
@@ -286,7 +547,7 @@ mod_geneset_server <- function(id, state) {
     })
     output$preview_table <- DT::renderDT({
       ids <- staged_active_ids(); req(length(ids))
-      dt_table(members_frame(ids), page_length = 5L)
+      dt_table(members_frame(ids))
     })
     observeEvent(input$clear_staged, {
       switch(input$source %||% "paste",
@@ -294,16 +555,123 @@ mod_geneset_server <- function(id, state) {
         deg    = { updateRadioButtons(session, "deg_dir", selected = "both")
                    updateNumericInput(session, "deg_padj", value = 0.05)
                    updateNumericInput(session, "deg_lfc", value = 1) },
-        topvar = updateNumericInput(session, "topvar_n", value = 100))
+        topvar = updateNumericInput(session, "topvar_n", value = 100),
+        file   = { tbl_src(NULL)                                 # drop the loaded table
+                   tbl_nonce(shiny::isolate(tbl_nonce()) + 1L)   # rebuild -> resets the file input
+                   updateSelectizeInput(session, "tbl_anno_cols", selected = character(0)) })
     })
 
     # =====================================================================
     # 3 - Save: New (reject-on-clash) / Add to existing.
     # =====================================================================
+    # A client-visible flag so the Save section can swap between the single-set
+    # and multi-set UIs without a renderUI (which would reset the name box).
+    # An explicit renderText (not a bare reactive) so the value is a plain "1"/"0"
+    # for the conditionalPanel JS; suspendWhenHidden = FALSE keeps it live while
+    # the panel it drives is hidden.
+    output$multi_staged <- renderText(if (length(staged()) > 1L) "1" else "0")
+    outputOptions(output, "multi_staged", suspendWhenHidden = FALSE)
+
     output$save_note <- renderUI({
-      if (length(staged()) > 1L)
-        tags$div(class = "small text-warning mb-1",
-          "Multiple sets staged -- bulk save (one per staged set) arrives in a later update.")
+      n <- length(staged())
+      if (n > 1L)
+        tags$div(class = "small text-muted mb-1",
+                 sprintf("%d sets staged -- save them in one go below.", n))
+    })
+
+    # ---- Multi-set save (staged > 1, i.e. an annotation-split import) -------
+    # Value-stable staged names, so re-filtering the imported table doesn't reset
+    # the picker unless the group names actually change.
+    staged_names_rv <- reactiveVal(character(0))
+    observe({
+      nms <- names(staged())
+      if (!identical(nms, shiny::isolate(staged_names_rv()))) staged_names_rv(nms)
+    })
+    output$multi_save <- renderUI({
+      nms <- staged_names_rv(); if (length(nms) <= 1L) return(NULL)
+      pick_id <- ns("multi_pick")
+      tagList(
+        # Cap the selected-items box height so many staged sets don't grow the UI
+        # unbounded (the dropdown is absolutely positioned, so it isn't clipped).
+        tags$style(HTML(sprintf(
+          "#%s + .selectize-control .selectize-input { max-height: 110px; overflow-y: auto; }",
+          pick_id))),
+        selectizeInput(pick_id, "Staged sets to save", choices = nms,
+                       selected = nms, multiple = TRUE),
+        .gs_pills(ns("multi_mode"), c("Create new sets" = "new", "Add to existing" = "add"),
+                  selected = "new"),
+        conditionalPanel(
+          .gs_cond(ns, "multi_mode", "new"),
+          textInput(ns("multi_prefix"), "Name prefix (optional)", placeholder = "e.g. res_"),
+          uiOutput(ns("multi_conflicts")),
+          bslib::input_switch(ns("multi_autoname"), "Auto-rename conflicts", value = FALSE),
+          actionButton(ns("multi_create"), "Create sets", class = "btn btn-sm fw-semibold",
+                       style = .gs_action_style, icon = shiny::icon("plus"))),
+        conditionalPanel(
+          .gs_cond(ns, "multi_mode", "add"),
+          uiOutput(ns("multi_targets_ui")),
+          actionButton(ns("multi_add"), "Add to selected", class = "btn btn-sm fw-semibold",
+                       style = .gs_action_style, icon = shiny::icon("plus"))))
+    })
+    multi_pick <- reactive(intersect(input$multi_pick %||% character(0), names(staged())))
+    multi_final_names <- reactive(paste0(trimws(input$multi_prefix %||% ""), multi_pick()))
+    output$multi_conflicts <- renderUI({
+      clash <- intersect(multi_final_names(), names(state$gene_sets))
+      if (!length(clash)) return(NULL)
+      if (isTRUE(input$multi_autoname))
+        return(tags$div(class = "small text-muted mb-1",
+          sprintf("%d name(s) taken -- they will be auto-renamed (e.g. %s_2).",
+                  length(clash), clash[1])))
+      tags$div(class = "small text-danger mb-1",
+        sprintf("Already taken: %s. Add a prefix or turn on auto-rename.",
+                paste(utils::head(clash, 5), collapse = ", ")))
+    })
+    output$multi_targets_ui <- renderUI({
+      if (!length(state$gene_sets))
+        return(helpText(class = "small text-muted",
+                        "Create a set first, then you can add to it."))
+      selectizeInput(ns("multi_targets"), "Add to set(s)", choices = names(state$gene_sets),
+                     multiple = TRUE)
+    })
+    observeEvent(input$multi_create, {
+      st <- staged(); pick <- multi_pick()
+      if (!length(pick)) { showNotification("Select at least one staged set.", type = "warning"); return() }
+      fin <- multi_final_names()
+      clash <- intersect(fin, names(state$gene_sets))
+      if (length(clash) && !isTRUE(input$multi_autoname)) {
+        showNotification(sprintf("These names are taken: %s. Add a prefix or turn on auto-rename.",
+                                 paste(utils::head(clash, 5), collapse = ", ")),
+                         type = "warning"); return()
+      }
+      sets <- state$gene_sets; made <- character(0)
+      for (i in seq_along(pick)) {                 # New auto-suffixes any clash
+        r <- gene_set_commit(sets, fin[i], st[[pick[i]]], "new", source = staged_source())
+        sets <- r$sets; made <- c(made, r$name)
+      }
+      state$gene_sets <- sets; snapshot_absent()
+      # Reset the prefix + deselect the just-created sets so the conflict banner
+      # doesn't flip to "already taken" right after a successful create.
+      updateTextInput(session, "multi_prefix", value = "")
+      updateSelectizeInput(session, "multi_pick", selected = character(0))
+      .log(state, list(action = "gene_set_add_multi", sets = made, source = staged_source(),
+                       n = unname(vapply(st[pick], length, integer(1))),
+                       params = staged_params()))
+      showNotification(sprintf("Created %d set(s): %s.", length(made),
+                               paste(utils::head(made, 5), collapse = ", ")),
+                       type = "message", duration = 5)
+    })
+    observeEvent(input$multi_add, {
+      st <- staged(); pick <- multi_pick(); targets <- input$multi_targets
+      if (!length(pick)) { showNotification("Select at least one staged set.", type = "warning"); return() }
+      if (!length(targets)) { showNotification("Select at least one set to add to.", type = "warning"); return() }
+      ids <- unique(unlist(st[pick], use.names = FALSE))
+      sets <- state$gene_sets
+      for (t in targets) sets <- gene_set_commit(sets, t, ids, "append", source = staged_source())$sets
+      state$gene_sets <- sets; snapshot_absent()
+      .log(state, list(action = "gene_set_addto", targets = targets, source = staged_source(),
+                       n = length(ids), params = staged_params()))
+      showNotification(sprintf("Added %d gene(s) to %d set(s).", length(ids), length(targets)),
+                       type = "message", duration = 4)
     })
     output$new_warn <- renderUI({
       nm <- trimws(input$new_name %||% "")

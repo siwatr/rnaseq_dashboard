@@ -30,7 +30,12 @@ lookup_feature(
 }
 \value{
 Character vector of matched feature IDs (NA where unmatched), same
-length as \code{query}.
+length as \code{query}. \strong{1:1, first match} -- when a name is shared by several
+features (duplicated / paralogous IDs) only the first is returned. This is
+the right contract for row \strong{annotation} (each \code{dds} row is unique and gets
+one label; see the \code{annotation} skill). Gene-set \emph{building} deliberately
+differs -- it may keep \strong{all} matches for a name (a set is a collection) --
+so the Gene Sets import uses its own 1:many resolver rather than this.
 }
 \description{
 Resolve queries to feature IDs by name

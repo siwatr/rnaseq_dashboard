@@ -85,3 +85,39 @@ gene_set_absent <- function(set, feature_ids) {
   ids <- if (is.list(set)) set$ids else as.character(set)
   ids[!(ids %in% feature_ids)]
 }
+
+#' Split feature ids into groups by annotation column(s)
+#'
+#' Powers the Gene Sets table import: an imported table (e.g. a DESeq2 result
+#' sheet from another analysis) is sliced into **one gene set per annotation
+#' group** -- filter out `no_change`, split by direction, get `up` / `down` sets.
+#' The group key is the annotation columns' values joined by `sep`.
+#'
+#' @param df A data.frame carrying the id column and the annotation column(s).
+#'   Subset it to the rows you want *before* calling.
+#' @param id_col Name of the column holding feature ids.
+#' @param anno_cols Character vector of column names whose combined values key
+#'   the groups. Empty (the default) yields a single group named `"All"`.
+#' @param sep Separator joining multiple annotation values (default `"."`).
+#' @return A named list of unique id vectors, one per group. `NA` / blank ids are
+#'   dropped, as are groups left with no ids; `NA` annotation values key as
+#'   `"NA"`. Returns an empty list when nothing survives.
+#' @export
+split_ids_by_group <- function(df, id_col, anno_cols = character(0), sep = ".") {
+  stopifnot(is.data.frame(df))
+  if (!id_col %in% names(df))
+    stop("ID column '", id_col, "' is not in the table.", call. = FALSE)
+  ids  <- as.character(df[[id_col]])
+  keep <- !is.na(ids) & nzchar(ids)
+  anno_cols <- intersect(anno_cols, names(df))
+  if (!length(anno_cols)) {
+    out <- unique(ids[keep])
+    return(if (length(out)) list(All = out) else list())
+  }
+  key <- do.call(paste, c(lapply(anno_cols, function(cc) {
+    v <- as.character(df[[cc]]); v[is.na(v)] <- "NA"; v
+  }), list(sep = sep)))
+  sp <- split(ids[keep], key[keep])
+  sp <- lapply(sp, unique)
+  sp[vapply(sp, length, integer(1)) > 0L]
+}

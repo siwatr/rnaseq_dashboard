@@ -41,6 +41,34 @@ test_that("gene_set_commit rejects an empty name", {
   expect_error(gene_set_commit(list(), "  ", c("a"), "new"), "non-empty")
 })
 
+test_that("split_ids_by_group keys groups by the annotation column(s)", {
+  df <- data.frame(id = c("a", "b", "c", "d"),
+                   dir = c("up", "up", "down", "down"),
+                   grp = c("x", "y", "x", "y"), stringsAsFactors = FALSE)
+  # No annotation columns -> one "All" group.
+  expect_equal(split_ids_by_group(df, "id"), list(All = c("a", "b", "c", "d")))
+  # One column -> one set per level.
+  s1 <- split_ids_by_group(df, "id", "dir")
+  expect_setequal(names(s1), c("up", "down"))
+  expect_equal(s1$up, c("a", "b")); expect_equal(s1$down, c("c", "d"))
+  # Two columns -> combined key with the separator.
+  s2 <- split_ids_by_group(df, "id", c("dir", "grp"), sep = ".")
+  expect_setequal(names(s2), c("up.x", "up.y", "down.x", "down.y"))
+  expect_equal(s2[["up.x"]], "a")
+  expect_equal(names(split_ids_by_group(df, "id", c("dir", "grp"), sep = "_"))[1], "down_x")
+})
+
+test_that("split_ids_by_group drops NA/blank ids + empty groups; keys NA annotations", {
+  df <- data.frame(id = c("a", NA, "", "b", "a"),
+                   dir = c("up", "up", "up", NA, "up"), stringsAsFactors = FALSE)
+  s <- split_ids_by_group(df, "id", "dir")
+  expect_equal(s$up, c("a"))              # NA/blank dropped, deduped
+  expect_equal(s[["NA"]], "b")            # NA annotation keys as "NA"
+  # An all-blank table yields nothing.
+  expect_length(split_ids_by_group(data.frame(id = c(NA, "")), "id"), 0L)
+  expect_error(split_ids_by_group(df, "nope"), "not in the table")
+})
+
 test_that("gene_set_present / gene_set_absent derive the live view (order-preserving)", {
   set <- new_gene_set(c("g3", "g1", "gX"))
   feats <- c("g1", "g2", "g3")

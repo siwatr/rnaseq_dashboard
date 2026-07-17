@@ -182,17 +182,22 @@ freezes ids); a per-add **New/Append** toggle; the **annotated** layer (id→lab
 overlap UI, a `Palette > Gene Set` sub-tab) is **deferred to P7** with its heatmap consumer
 (storage is forward-compatible). Recorded in the reproducibility export (Phase 9).
 
-- **P6a ⬅️** shared `mod_gene_search.R` (single/multi, host-namespace) + retrofit PCA + DE + tests;
-  this roadmap expansion + the plan-pointer memory. ⬜
-- **P6b** `state$gene_sets` (structured, non-destructive) + `gene_set_helpers.R`
-  (`new_gene_set`/`gene_set_commit`/`gene_set_present`/`gene_set_absent`/`parse_gene_tokens`/
-  `split_ids_by_group`) + `mod_geneset.R` Manage tab (Paste / DEG / top-variable sources +
-  management + non-destructive reconcile-notify) + nav wiring. ⬜
-- **P6c** rich tabular import (CSV/TSV/XLSX `dt_table` view/filter/select, ID-column pick,
-  add-filtered / add-selected, annotation-split → N sets, live stats). ⬜
+- **P6a ✅** shared `mod_gene_search.R` (single/multi, host-namespace; Exact/Contains/Regex match
+  modes + tiered miss hints) + retrofit PCA + DE; this roadmap expansion + the plan-pointer
+  memory. [PR #36]
+- **P6b ✅** `state$gene_sets` (structured, non-destructive) + `gene_set_helpers.R`
+  (`new_gene_set`/`gene_set_commit`/`gene_set_present`/`gene_set_absent`) + `mod_geneset.R` and
+  its **staging** Manage tab — "Build a gene set" (source pills → live Preview → New/Add Save,
+  New rejects a name clash) beside "Your gene sets"; `staged()` = a named list following the
+  active source, so the P6c import reuses the layout. + nav wiring. [PR #37]
+- **P6c ⬅️** rich tabular import (CSV/TSV/XLSX `dt_table` view/filter/select, ID-column pick +
+  `lookup_feature` matching, add-filtered / add-selected, annotation-split → N staged sets, live
+  stats) **+ the multi-set Save UI** (staged > 1: pick sets, name prefix, conflict resolver /
+  auto-rename, or union-add into existing). `.read_user_table` promoted to `load_helpers.R`. ⬜
 - **P6d** file round-trip — JSON/GMT/TSV serializers + Import-file source + Export block. ⬜
 - **P6e** Compare tab (Stats bar on `dual_plot`; Overlap Euler/Venn via `eulerr` ≤4 sets, UpSet
-  via `ComplexHeatmap`) + doc-sync close-out + propose `v0.4.0`. ⬜
+  via `ComplexHeatmap`) + a final doc consistency pass (doc-sync is now **per-PR**, not deferred
+  here) + propose `v0.4.0`. ⬜
 
 ## Phase 7 — Expression ⬜
 Renamed from "Heatmap": a gene-expression **browsing surface** (more than a heatmap). A

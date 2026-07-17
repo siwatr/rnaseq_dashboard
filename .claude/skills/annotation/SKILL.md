@@ -26,6 +26,20 @@ and `shiny-module` owns the draft/state mechanics. Pure logic lives in
   decides the name column: symbols land in **`<feature_type>_name`** (e.g. `gene_name`).
   `lookup_feature()` and the adaptive labels read the same column.
 
+### ID resolution is **1:1, first-match** here — gene sets deliberately differ
+
+`lookup_feature()` returns `ids[match(q, v, incomparables = NA)]`: exactly one id per query,
+the **first** when a name is shared by several features, and **NA never matches an NA-valued
+column** (so an unannotated feature is never returned for a missing query). This is the right
+contract for **annotation**, where each `dds` row is unique and gets one label.
+
+**Gene-set *building* is the deliberate exception.** A set is a *collection*, so the Gene Sets
+import (`mod_geneset.R`) resolves a name to **all** matching feature ids by default (keep-all,
+user-toggleable to first-only) via its **own 1:many resolver** — matching against **rownames**
+stays 1:1 (rownames are unique). **Do not route gene-set matching through `lookup_feature()`.**
+Because gene-set membership is non-destructive (a wrong id is never trimmed), keeping this
+divergence explicit matters: reusing the 1:1 helper there would silently drop paralogs.
+
 ## OrgDb mapping (`annotate_with_orgdb`)
 
 Organism → package: `mouse`=`org.Mm.eg.db`, `human`=`org.Hs.eg.db` (Suggests; loaded via

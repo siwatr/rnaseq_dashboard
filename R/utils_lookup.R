@@ -13,7 +13,12 @@
 #' @param column Explicit name column to search; overrides `feature_type`.
 #' @param case_insensitive Match case-insensitively (default `FALSE`).
 #' @return Character vector of matched feature IDs (NA where unmatched), same
-#'   length as `query`.
+#'   length as `query`. **1:1, first match** -- when a name is shared by several
+#'   features (duplicated / paralogous IDs) only the first is returned. This is
+#'   the right contract for row **annotation** (each `dds` row is unique and gets
+#'   one label; see the `annotation` skill). Gene-set *building* deliberately
+#'   differs -- it may keep **all** matches for a name (a set is a collection) --
+#'   so the Gene Sets import uses its own 1:many resolver rather than this.
 #' @export
 lookup_feature <- function(query, row_data, ids = rownames(row_data),
                            feature_type = NULL, column = NULL,
@@ -30,7 +35,9 @@ lookup_feature <- function(query, row_data, ids = rownames(row_data),
   }
   q <- as.character(query); v <- values
   if (isTRUE(case_insensitive)) { q <- tolower(q); v <- tolower(v) }
-  ids[match(q, v)]
+  # incomparables = NA so a missing/NA query never matches an NA value column
+  # (e.g. an unannotated gene_name) and resolves to a real feature id.
+  ids[match(q, v, incomparables = NA)]
 }
 
 #' Resolve a single query to a feature id, with a match count
