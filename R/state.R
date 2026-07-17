@@ -55,7 +55,15 @@ new_app_state <- function() {
     # (data_version, design_version) the fit ran under (staleness); `shrink` = the
     # shrinkage method. Cleared on data load; marked stale (not cleared) on edits.
     de = list(contrasts = list(), results = list(), active = NULL,
-              stamp = NULL, shrink = "apeglm")
+              stamp = NULL, shrink = "apeglm"),
+    # Named gene sets of interest (the Gene Sets page). A session/UI field like
+    # `palette`: NO data_version impact. Each entry is a structured record
+    # list(ids, kind = "simple"|"annotated", annotation, source); `ids` is the
+    # FULL authored membership (never trimmed by feature edits) -- "present in the
+    # dataset" is derived live via gene_set_present()/gene_set_absent(). Unlike
+    # `palette` (keyed by column name -> persists), gene sets are keyed by feature
+    # id, so state_load() CLEARS them (meaningless on a new object).
+    gene_sets = list()
   )
   # A plain environment so writing cache entries does not trigger reactivity
   # (avoids reactive-write-in-reactive churn); staleness is keyed on data_version.
@@ -111,6 +119,7 @@ state_load <- function(state, obj, source = "rds", meta = list()) {
   state$design_version <- 0L
   state$de           <- list(contrasts = list(), results = list(), active = NULL,
                              stamp = NULL, shrink = "apeglm")
+  state$gene_sets    <- list()   # feature-id-keyed -> meaningless on a new object
   state$data_version <- state$data_version + 1L
   .log(state, list(action = "load", source = source))
   invisible(state)
