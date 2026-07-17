@@ -283,18 +283,23 @@ mod_geneset_server <- function(id, state) {
       fileInput(ns("tbl_file"), "Table file (CSV / TSV / XLSX)",
                 accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls"))
     })
-    # Reading is intentional: the table only loads on the Load button (like the
-    # other file uploads in the app). `tbl_data` holds the loaded frame; NULL when
-    # nothing is loaded, so staged() always yields a list (no req cascade escapes).
-    tbl_data <- reactiveVal(NULL)
+    # Reading is intentional: the file is read only on the Load button (like the
+    # app's other uploads). `tbl_src` holds the loaded file REFERENCE, not the
+    # parsed frame -- so the header toggle can re-parse reactively after the first
+    # load without a re-click. Shiny keeps the upload on disk for the session, so
+    # this is a cheap re-read with no in-memory duplicate. NULL src -> NULL raw, so
+    # staged() always yields a list (no req cascade escapes the Save observers).
+    tbl_src <- reactiveVal(NULL)
     observeEvent(input$tbl_load, {
       f <- input$tbl_file
       if (is.null(f)) { showNotification("Choose a file first.", type = "warning"); return() }
-      df <- tryCatch(.read_user_table(f$datapath, f$name, col_names = isTRUE(input$tbl_header)),
-                     error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
-      tbl_data(df)
+      tbl_src(list(datapath = f$datapath, name = f$name))
     })
-    tbl_raw <- reactive(tbl_data())
+    tbl_raw <- reactive({
+      src <- tbl_src(); if (is.null(src)) return(NULL)
+      tryCatch(.read_user_table(src$datapath, src$name, col_names = isTRUE(input$tbl_header)),
+               error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
+    })
 
     output$tbl_controls <- renderUI({
       df <- tbl_raw(); req(df, ncol(df) > 0, state$working)
@@ -324,18 +329,26 @@ mod_geneset_server <- function(id, state) {
                      c("All rows in the current view (filtered)" = "view",
                        "Selected rows only" = "selected"),
                      selected = "view"),
-        uiOutput(ns("tbl_literal_ui")))
+        uiOutput(ns("tbl_match_opts")))
     })
     # Auto-detect the best "Match against" field for the chosen ID column.
-    observeEvent(list(input$tbl_id_col, tbl_data()), {
+    observeEvent(list(input$tbl_id_col, tbl_src()), {
       df <- tbl_raw(); idc <- input$tbl_id_col
       req(df, !is.null(idc), idc %in% names(df), state$working)
       updateSelectInput(session, "tbl_match_by",
                         selected = .gs_best_match_field(df[[idc]], state$working))
     }, ignoreInit = TRUE)
-    output$tbl_literal_ui <- renderUI({
-      if (!identical(input$tbl_match_by %||% "__rownames__", "__rownames__")) return(NULL)
-      bslib::input_switch(ns("tbl_literal"), "Also keep unmatched as literal IDs", value = FALSE)
+    # Field-dependent options: literal-add for feature-id matching, else keep-all
+    # vs first-only for a name column that can match several features.
+    output$tbl_match_opts <- renderUI({
+      if (identical(input$tbl_match_by %||% "__rownames__", "__rownames__"))
+        bslib::input_switch(ns("tbl_literal"), "Also keep unmatched as literal IDs", value = FALSE)
+      else
+        bslib::tooltip(
+          radioButtons(ns("tbl_multi"), "When a name matches several features",
+                       c("Keep all matches" = "all", "First match only" = "first"),
+                       selected = "all", inline = TRUE),
+          "A gene name can map to more than one feature (duplicated / paralogous IDs). Keep all adds every matching feature; First only keeps one.")
     })
     output$tbl_loaded_head <- renderUI({
       if (is.null(tbl_raw())) return(NULL)
@@ -352,24 +365,43 @@ mod_geneset_server <- function(id, state) {
       if (identical(input$tbl_rows %||% "view", "selected")) input$tbl_table_rows_selected
       else input$tbl_table_rows_all %||% seq_len(nrow(df))
     })
-    # The chosen rows with the ID column resolved to feature ids (NA = unmatched).
-    tbl_resolved <- reactive({
+    # Resolve the in-scope rows' ID column to feature id(s). 1-to-MANY when
+    # matching a name column with Keep-all (a name can hit several features).
+    # Returns per-input-row id vectors + the rows, so the expanded staging frame
+    # and the stats both build from it.
+    tbl_match <- reactive({
       df <- tbl_raw(); if (is.null(df) || is.null(state$working)) return(NULL)
       idc <- input$tbl_id_col
       if (is.null(idc) || !(idc %in% names(df))) return(NULL)
       rows <- tbl_rows(); if (!length(rows)) return(NULL)
       sub <- df[rows, , drop = FALSE]
-      raw <- trimws(as.character(sub[[idc]]))         # ids never carry stray whitespace
-      raw[!nzchar(raw)] <- NA                          # blank cells are not ids
+      raw <- trimws(as.character(sub[[idc]])); raw[!nzchar(raw)] <- NA   # blanks are not ids
       field <- input$tbl_match_by %||% "__rownames__"
-      hit <- lookup_feature(raw, SummarizedExperiment::rowData(state$working),
-                            ids = rownames(state$working),
-                            column = if (identical(field, "__rownames__")) NULL else field)
-      # Literal fallback only when matching against feature ids (same rule as paste).
-      if (isTRUE(input$tbl_literal) && identical(field, "__rownames__"))
-        hit <- ifelse(is.na(hit), raw, hit)
-      sub$.gs_id <- hit
-      sub
+      rn <- rownames(state$working)
+      if (identical(field, "__rownames__")) {
+        lit <- isTRUE(input$tbl_literal)                 # rownames are unique -> 1:1
+        ids <- lapply(raw, function(x)
+          if (is.na(x)) character(0) else if (x %in% rn) x else if (lit) x else character(0))
+      } else {
+        vals <- as.character(as.data.frame(
+          SummarizedExperiment::rowData(state$working), optional = TRUE)[[field]])
+        by_val <- split(seq_along(vals), vals)            # value -> dds rows (NA keys dropped)
+        keep_all <- !identical(input$tbl_multi %||% "all", "first")
+        ids <- lapply(raw, function(x) {
+          if (is.na(x)) return(character(0))
+          hit <- rn[by_val[[x]] %||% integer(0)]
+          if (!length(hit)) character(0) else if (keep_all) hit else hit[1]
+        })
+      }
+      list(sub = sub, ids = ids)
+    })
+    # The expanded frame (one row per input-row x matched-id) for the split.
+    tbl_resolved <- reactive({
+      m <- tbl_match(); if (is.null(m)) return(NULL)
+      reps <- pmax(lengths(m$ids), 1L)                    # 0-match rows kept as one NA row
+      exp <- m$sub[rep(seq_len(nrow(m$sub)), reps), , drop = FALSE]
+      exp$.gs_id <- unlist(lapply(m$ids, function(z) if (length(z)) z else NA_character_))
+      exp
     })
     tbl_staged <- reactive({
       sub <- tbl_resolved(); if (is.null(sub)) return(list())
@@ -381,31 +413,37 @@ mod_geneset_server <- function(id, state) {
     })
     output$tbl_stats <- renderUI({
       df <- tbl_raw(); req(df)
-      sub <- tbl_resolved()
+      m <- tbl_match()
       n_view <- length(input$tbl_table_rows_all %||% seq_len(nrow(df)))
       n_sel  <- length(input$tbl_table_rows_selected)
       st <- tbl_staged()
-      n_match <- if (is.null(sub)) 0L else sum(!is.na(sub$.gs_id))
-      n_miss  <- if (is.null(sub)) 0L else sum(is.na(sub$.gs_id))
+      n_ids   <- if (is.null(m)) 0L else length(unique(unlist(m$ids)))
+      n_miss  <- if (is.null(m)) 0L else sum(lengths(m$ids) == 0L)
+      n_multi <- if (is.null(m)) 0L else sum(lengths(m$ids) > 1L)
       grp <- if (length(st) > 1L) {
         shown <- utils::head(st, 5L)
         txt <- paste(sprintf("%s (%d)", names(shown), lengths(shown)), collapse = ", ")
         if (length(st) > 5L) txt <- paste0(txt, sprintf(", +%d more", length(st) - 5L))
         tags$div(class = "small text-muted", sprintf("%d sets: %s", length(st), txt))
       }
+      multi_note <- if (n_multi > 0L)
+        tags$div(class = "small text-warning",
+          sprintf("%d name(s) matched multiple features -- %s.", n_multi,
+                  if (identical(input$tbl_multi %||% "all", "first")) "kept the first"
+                  else "all their IDs added"))
       tagList(
         tags$div(class = "small text-muted",
           sprintf("%d rows imported | %d in view | %d selected | %d IDs matched%s.",
-                  nrow(df), n_view, n_sel, n_match,
+                  nrow(df), n_view, n_sel, n_ids,
                   if (n_miss) sprintf(" (%d unmatched)", n_miss) else "")),
-        grp)
+        multi_note, grp)
     })
 
     # The active source's provenance label + its staged sets (named list).
     staged_source <- function() switch(input$source %||% "paste",
       paste = "paste", deg = paste0("DE: ", input$deg_contrast %||% ""),
       topvar = "top-variable",
-      file = paste0("import: ", (input$tbl_file %||% list(name = "table"))$name),
+      file = paste0("import: ", (tbl_src() %||% list(name = "table"))$name),
       "manual")
     # The parameters that DEFINE the staged set. Because a set is an authored
     # snapshot (its thresholds are local to this page and the user may move them
@@ -424,7 +462,9 @@ mod_geneset_server <- function(id, state) {
                  shrunk = isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok()),
                  de_status = de_status(state)),
       topvar = list(n_top = input$topvar_n %||% 100L, input = "vst (endogenous)"),
-      file = list(file = (input$tbl_file %||% list(name = ""))$name,
+      file = list(file = (tbl_src() %||% list(name = ""))$name,
+                  multi_match = if (identical(input$tbl_match_by %||% "__rownames__", "__rownames__"))
+                    NA_character_ else (input$tbl_multi %||% "all"),
                   id_col = input$tbl_id_col %||% "",
                   match_by = input$tbl_match_by %||% "__rownames__",
                   rows = input$tbl_rows %||% "view",
@@ -503,7 +543,7 @@ mod_geneset_server <- function(id, state) {
                    updateNumericInput(session, "deg_padj", value = 0.05)
                    updateNumericInput(session, "deg_lfc", value = 1) },
         topvar = updateNumericInput(session, "topvar_n", value = 100),
-        file   = { tbl_data(NULL)                                # drop the loaded table
+        file   = { tbl_src(NULL)                                 # drop the loaded table
                    tbl_nonce(shiny::isolate(tbl_nonce()) + 1L)   # rebuild -> resets the file input
                    updateSelectizeInput(session, "tbl_anno_cols", selected = character(0)) })
     })
@@ -536,8 +576,14 @@ mod_geneset_server <- function(id, state) {
     })
     output$multi_save <- renderUI({
       nms <- staged_names_rv(); if (length(nms) <= 1L) return(NULL)
+      pick_id <- ns("multi_pick")
       tagList(
-        selectizeInput(ns("multi_pick"), "Staged sets to save", choices = nms,
+        # Cap the selected-items box height so many staged sets don't grow the UI
+        # unbounded (the dropdown is absolutely positioned, so it isn't clipped).
+        tags$style(HTML(sprintf(
+          "#%s + .selectize-control .selectize-input { max-height: 110px; overflow-y: auto; }",
+          pick_id))),
+        selectizeInput(pick_id, "Staged sets to save", choices = nms,
                        selected = nms, multiple = TRUE),
         .gs_pills(ns("multi_mode"), c("Create new sets" = "new", "Add to existing" = "add"),
                   selected = "new"),
@@ -590,6 +636,7 @@ mod_geneset_server <- function(id, state) {
         sets <- r$sets; made <- c(made, r$name)
       }
       state$gene_sets <- sets; snapshot_absent()
+      updateTextInput(session, "multi_prefix", value = "")   # avoid an accidental re-create
       .log(state, list(action = "gene_set_add_multi", sets = made, source = staged_source(),
                        n = unname(vapply(st[pick], length, integer(1))),
                        params = staged_params()))

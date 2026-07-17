@@ -330,7 +330,7 @@ test_that("auto-detect matches a gene_name column when the ID column holds names
   })
 })
 
-test_that("a gene name mapping to multiple ids resolves to the first (match() semantics)", {
+test_that("a name matching several features keeps ALL by default, or the first on request", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
   shiny::testServer(mod_geneset_server, args = list(state = state), {
@@ -342,16 +342,42 @@ test_that("a gene name mapping to multiple ids resolves to the first (match() se
     session$flushReact()
     rn <- rownames(state$working); dup <- as.character(rd$gene_name[1])
 
-    # Two file rows carry the duplicated name; both resolve to the FIRST id, then
-    # split_ids_by_group() dedupes -> one id.
     path <- withr::local_tempfile(fileext = ".csv")
-    utils::write.csv(data.frame(name = c(dup, dup), grp = c("a", "b")), path, row.names = FALSE)
+    utils::write.csv(data.frame(name = dup, grp = "a"), path, row.names = FALSE)
     session$setInputs(source = "file", tbl_file = list(datapath = path, name = "n.csv"),
                       tbl_header = TRUE, tbl_load = 1, tbl_id_col = "name",
                       tbl_match_by = "gene_name", tbl_rows = "view",
                       tbl_anno_cols = character(0))
     session$flushReact()
-    expect_equal(staged()[[1]], rn[1])                   # first matching id, deduped
+    # Keep-all (default): the ambiguous name expands to BOTH feature ids.
+    expect_setequal(staged()[[1]], c(rn[1], rn[2]))
+
+    # First-only: just the first matching feature.
+    session$setInputs(tbl_multi = "first"); session$flushReact()
+    expect_equal(staged()[[1]], rn[1])
+  })
+})
+
+test_that("the header toggle re-reads reactively after the first Load (no re-click)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 15))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    path <- withr::local_tempfile(fileext = ".csv")
+    # No real header: the first data row would be swallowed as one if header = TRUE.
+    writeLines(c(rn[1], rn[2], rn[3]), path)
+
+    session$setInputs(source = "file", tbl_file = list(datapath = path, name = "ids.csv"),
+                      tbl_header = TRUE, tbl_load = 1)
+    session$flushReact()
+    expect_equal(nrow(tbl_raw()), 2L)                    # first line taken as the header
+    # Flip the toggle -- NO second Load click -- and it re-parses.
+    session$setInputs(tbl_header = FALSE); session$flushReact()
+    expect_equal(nrow(tbl_raw()), 3L)
+    expect_equal(names(tbl_raw()), "Column_1")
   })
 })
 
