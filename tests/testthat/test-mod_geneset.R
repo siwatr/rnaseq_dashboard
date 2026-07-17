@@ -177,10 +177,12 @@ test_that("table import stages one set; ID column resolves; unmatched excluded",
 
     session$setInputs(source = "file",
                       tbl_file = list(datapath = path, name = "res.csv"),
-                      tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_header = TRUE, tbl_id_col = "gene", tbl_match_by = "__rownames__",
                       tbl_rows = "view", tbl_anno_cols = character(0),
                       tbl_sep = ".", tbl_literal = FALSE)
     session$flushReact()
+    expect_null(tbl_raw())                          # nothing loaded until the Load click
+    session$setInputs(tbl_load = 1); session$flushReact()
     expect_equal(nrow(tbl_raw()), 5L)
     # No split -> ONE staged set; the unmatched GHOST_ID is dropped.
     expect_length(staged(), 1L)
@@ -204,10 +206,10 @@ test_that("annotation-split stages N sets; multi-save creates one set each", {
 
     session$setInputs(source = "file",
                       tbl_file = list(datapath = path, name = "res.csv"),
-                      tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_header = TRUE, tbl_id_col = "gene", tbl_match_by = "__rownames__",
                       tbl_rows = "view", tbl_literal = FALSE,
                       tbl_anno_cols = "direction", tbl_sep = ".")
-    session$flushReact()
+    session$setInputs(tbl_load = 1); session$flushReact()
     # Split by direction -> two staged sets.
     expect_setequal(names(staged()), c("up", "down"))
     expect_setequal(staged()$up, rn[1:2])
@@ -236,12 +238,12 @@ test_that("multi-save blocks name clashes unless auto-rename is on", {
     path <- .write_import_csv(rn)
     session$setInputs(source = "file",
                       tbl_file = list(datapath = path, name = "res.csv"),
-                      tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_header = TRUE, tbl_id_col = "gene", tbl_match_by = "__rownames__",
                       tbl_rows = "view", tbl_literal = FALSE,
                       tbl_anno_cols = "direction", tbl_sep = ".",
                       multi_pick = c("up", "down"), multi_mode = "new",
                       multi_prefix = "", multi_autoname = FALSE)
-    session$flushReact()
+    session$setInputs(tbl_load = 1); session$flushReact()
     session$setInputs(multi_create = 1); session$flushReact()
     expect_setequal(names(state$gene_sets), c("up", "down"))
 
@@ -272,8 +274,9 @@ test_that("table import honours the row scope (filtered view vs selected)", {
     path <- .write_import_csv(rn)
     session$setInputs(source = "file",
                       tbl_file = list(datapath = path, name = "res.csv"),
-                      tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_header = TRUE, tbl_id_col = "gene", tbl_match_by = "__rownames__",
                       tbl_anno_cols = character(0), tbl_sep = ".", tbl_literal = FALSE)
+    session$setInputs(tbl_load = 1); session$flushReact()
 
     # A filtered view (DT reports the surviving rows) drives the staged set.
     session$setInputs(tbl_rows = "view", tbl_table_rows_all = c(1L, 2L)); session$flushReact()
@@ -282,6 +285,73 @@ test_that("table import honours the row scope (filtered view vs selected)", {
     # Explicit row selection instead.
     session$setInputs(tbl_rows = "selected", tbl_table_rows_selected = c(3L)); session$flushReact()
     expect_setequal(staged()[[1]], rn[3])
+  })
+})
+
+test_that("header toggle: no-header files get Column_<i> names + auto-detected match field", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 12))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    # A header-less single-column list of feature ids.
+    path <- withr::local_tempfile(fileext = ".txt")
+    writeLines(rn[1:5], path)
+
+    session$setInputs(source = "file", tbl_file = list(datapath = path, name = "ids.txt"),
+                      tbl_header = FALSE, tbl_load = 1)
+    session$flushReact()
+    df <- tbl_raw()
+    expect_equal(names(df), "Column_1")            # friendly name, not readr's X1
+    expect_equal(nrow(df), 5L)
+    # Auto-detect picks feature ids (rownames) for this column.
+    expect_equal(.gs_best_match_field(df$Column_1, state$working), "__rownames__")
+
+    session$setInputs(tbl_id_col = "Column_1", tbl_match_by = "__rownames__",
+                      tbl_rows = "view"); session$flushReact()
+    expect_setequal(staged()[[1]], rn[1:5])
+  })
+})
+
+test_that("auto-detect matches a gene_name column when the ID column holds names", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 13))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    nm <- as.character(SummarizedExperiment::rowData(state$working)$gene_name)[1:5]
+    # A column of gene NAMES should auto-detect the gene_name field, not rownames.
+    expect_equal(.gs_best_match_field(nm, state$working), "gene_name")
+    # And an id column still auto-detects rownames.
+    expect_equal(.gs_best_match_field(rownames(state$working)[1:5], state$working), "__rownames__")
+  })
+})
+
+test_that("a gene name mapping to multiple ids resolves to the first (match() semantics)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 14)
+    rd <- SummarizedExperiment::rowData(dds)
+    rd$gene_name[2] <- rd$gene_name[1]                    # a duplicated gene name
+    SummarizedExperiment::rowData(dds) <- rd
+    state_load(state, ensure_logcounts(dds), source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working); dup <- as.character(rd$gene_name[1])
+
+    # Two file rows carry the duplicated name; both resolve to the FIRST id, then
+    # split_ids_by_group() dedupes -> one id.
+    path <- withr::local_tempfile(fileext = ".csv")
+    utils::write.csv(data.frame(name = c(dup, dup), grp = c("a", "b")), path, row.names = FALSE)
+    session$setInputs(source = "file", tbl_file = list(datapath = path, name = "n.csv"),
+                      tbl_header = TRUE, tbl_load = 1, tbl_id_col = "name",
+                      tbl_match_by = "gene_name", tbl_rows = "view",
+                      tbl_anno_cols = character(0))
+    session$flushReact()
+    expect_equal(staged()[[1]], rn[1])                   # first matching id, deduped
   })
 })
 

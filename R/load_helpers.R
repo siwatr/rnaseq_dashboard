@@ -5,17 +5,21 @@
 
 # Read a user-uploaded table by file extension (csv/tsv/txt/xlsx/xls). Shared by
 # every page that accepts a tabular upload (Input counts/sample sheet, the
-# Sample "Additional metadata" sheet, the Gene Sets table import).
-.read_user_table <- function(path, name) {
+# Sample "Additional metadata" sheet, the Gene Sets table import). `col_names`
+# follows readr/readxl (TRUE = first row is a header); when FALSE the columns are
+# named Column_1.. (friendlier than readr's X1.. / readxl's ...1).
+.read_user_table <- function(path, name, col_names = TRUE) {
   ext <- tolower(tools::file_ext(name))
-  switch(ext,
-    csv         = as.data.frame(readr::read_csv(path, show_col_types = FALSE)),
-    tsv         = as.data.frame(readr::read_tsv(path, show_col_types = FALSE)),
-    txt         = as.data.frame(readr::read_tsv(path, show_col_types = FALSE)),
-    xlsx        = as.data.frame(readxl::read_excel(path)),
-    xls         = as.data.frame(readxl::read_excel(path)),
+  df <- switch(ext,
+    csv  = as.data.frame(readr::read_csv(path, col_names = col_names, show_col_types = FALSE)),
+    tsv  = as.data.frame(readr::read_tsv(path, col_names = col_names, show_col_types = FALSE)),
+    txt  = as.data.frame(readr::read_tsv(path, col_names = col_names, show_col_types = FALSE)),
+    xlsx = as.data.frame(readxl::read_excel(path, col_names = col_names)),
+    xls  = as.data.frame(readxl::read_excel(path, col_names = col_names)),
     stop("Unsupported file type '.", ext, "'. Use CSV, TSV, or XLSX.", call. = FALSE)
   )
+  if (isFALSE(col_names) && ncol(df)) names(df) <- paste0("Column_", seq_len(ncol(df)))
+  df
 }
 
 .counts_assay <- function(obj) {

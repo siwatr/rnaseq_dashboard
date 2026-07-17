@@ -26,9 +26,31 @@
 # The app "primary action" purple, matching the Run DESeq2 button (mod_de.R).
 .gs_action_style <- "background-color:#8b58db;border-color:#8b58db;color:#fff;"
 
+# A namespaced conditionalPanel condition. Module-level (NOT a UI-local closure)
+# so the server's renderUI blocks -- e.g. the multi-set Save UI -- can build
+# conditions too; `ns` is the UI's NS() in the UI, session$ns in the server.
+.gs_cond <- function(ns, inp, val) sprintf("input['%s'] == '%s'", ns(inp), val)
+
+# Which field to match an imported ID column against: the rowData column (or
+# rownames) with the most hits for `query`. Ties: rownames win, then first
+# rowData column. Returns a feature_search_choices() value ("__rownames__" or a
+# column name). Cheap (hashed match over a handful of columns).
+.gs_best_match_field <- function(query, dds) {
+  q <- unique(trimws(as.character(query))); q <- q[!is.na(q) & nzchar(q)]
+  if (!length(q)) return("__rownames__")
+  best <- "__rownames__"; best_n <- sum(q %in% rownames(dds))
+  rd <- as.data.frame(SummarizedExperiment::rowData(dds), optional = TRUE)
+  ok <- vapply(rd, function(x) is.character(x) || is.factor(x) || is.numeric(x), logical(1))
+  for (co in names(rd)[ok]) {
+    n <- sum(q %in% as.character(rd[[co]]))
+    if (n > best_n) { best_n <- n; best <- co }   # strict > keeps the earlier winner on a tie
+  }
+  best
+}
+
 mod_geneset_ui <- function(id) {
   ns <- NS(id)
-  cond <- function(inp, val) sprintf("input['%s'] == '%s'", ns(inp), val)
+  cond <- function(inp, val) .gs_cond(ns, inp, val)
   bslib::navset_card_tab(
     id = ns("tabs"),
     bslib::nav_panel(
@@ -61,7 +83,11 @@ mod_geneset_ui <- function(id) {
               conditionalPanel(
                 cond("source", "file"),
                 uiOutput(ns("tbl_file_ui")),   # rebuilt on Clear so re-uploading the same file works
+                bslib::input_switch(ns("tbl_header"), "File has a header row", value = TRUE),
+                actionButton(ns("tbl_load"), "Load file", class = "btn-sm btn-primary",
+                             icon = shiny::icon("upload")),
                 uiOutput(ns("tbl_controls")),
+                uiOutput(ns("tbl_loaded_head")),
                 DT::DTOutput(ns("tbl_table")),
                 uiOutput(ns("tbl_stats")))),
             bslib::accordion_panel(
@@ -257,42 +283,67 @@ mod_geneset_server <- function(id, state) {
       fileInput(ns("tbl_file"), "Table file (CSV / TSV / XLSX)",
                 accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls"))
     })
-    # These return NULL (not req()) when unavailable: staged() must always yield a
-    # list, so a req cascade must not escape into the Save observers.
-    tbl_raw <- reactive({
-      f <- input$tbl_file; if (is.null(f)) return(NULL)
-      tryCatch(.read_user_table(f$datapath, f$name),
-               error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
+    # Reading is intentional: the table only loads on the Load button (like the
+    # other file uploads in the app). `tbl_data` holds the loaded frame; NULL when
+    # nothing is loaded, so staged() always yields a list (no req cascade escapes).
+    tbl_data <- reactiveVal(NULL)
+    observeEvent(input$tbl_load, {
+      f <- input$tbl_file
+      if (is.null(f)) { showNotification("Choose a file first.", type = "warning"); return() }
+      df <- tryCatch(.read_user_table(f$datapath, f$name, col_names = isTRUE(input$tbl_header)),
+                     error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
+      tbl_data(df)
     })
+    tbl_raw <- reactive(tbl_data())
+
     output$tbl_controls <- renderUI({
       df <- tbl_raw(); req(df, ncol(df) > 0, state$working)
       cols <- names(df)
+      tip <- function(x, msg) bslib::tooltip(x, msg, placement = "right")
       tagList(
         bslib::layout_columns(
           col_widths = c(6, 6),
-          selectInput(ns("tbl_id_col"), "ID column", choices = cols, selected = cols[1]),
-          selectInput(ns("tbl_match_by"), "Match IDs against",
-                      choices = feature_search_choices(
-                        SummarizedExperiment::rowData(state$working)),
-                      selected = "__rownames__")),
-        selectizeInput(ns("tbl_anno_cols"), "Split into sets by column(s) (optional)",
-                       choices = cols, multiple = TRUE),
+          tip(selectInput(ns("tbl_id_col"), "ID column (in your file)",
+                          choices = cols, selected = cols[1]),
+              "The column of the uploaded file that holds the gene / feature identifiers."),
+          tip(selectInput(ns("tbl_match_by"), "Match against (dataset)",
+                          choices = feature_search_choices(
+                            SummarizedExperiment::rowData(state$working)),
+                          selected = "__rownames__"),
+              "Which part of the loaded dataset to match those identifiers to -- the feature IDs (row names) or a rowData column such as gene_name. Auto-detected from your ID column; override if needed.")),
+        # A single-column file has nothing to split by.
+        if (length(cols) > 1L)
+          tip(selectizeInput(ns("tbl_anno_cols"), "Split into sets by column(s) (optional)",
+                             choices = cols, multiple = TRUE),
+              "Create one gene set per unique value (or value combination) in these columns -- e.g. split a results table by a 'direction' column into up / down sets."),
         conditionalPanel(
-          sprintf("input['%s'] && input['%s'].length > 0", ns("tbl_anno_cols"), ns("tbl_anno_cols")),
-          textInput(ns("tbl_sep"), "Group name separator", value = ".")),
+          sprintf("input['%s'] && input['%s'].length > 1", ns("tbl_anno_cols"), ns("tbl_anno_cols")),
+          tip(textInput(ns("tbl_sep"), "Group name separator", value = "."),
+              "Joins the values of multiple split columns into each set's name (e.g. 'up.brain').")),
         radioButtons(ns("tbl_rows"), "Use rows",
                      c("All rows in the current view (filtered)" = "view",
                        "Selected rows only" = "selected"),
                      selected = "view"),
         uiOutput(ns("tbl_literal_ui")))
     })
+    # Auto-detect the best "Match against" field for the chosen ID column.
+    observeEvent(list(input$tbl_id_col, tbl_data()), {
+      df <- tbl_raw(); idc <- input$tbl_id_col
+      req(df, !is.null(idc), idc %in% names(df), state$working)
+      updateSelectInput(session, "tbl_match_by",
+                        selected = .gs_best_match_field(df[[idc]], state$working))
+    }, ignoreInit = TRUE)
     output$tbl_literal_ui <- renderUI({
       if (!identical(input$tbl_match_by %||% "__rownames__", "__rownames__")) return(NULL)
       bslib::input_switch(ns("tbl_literal"), "Also keep unmatched as literal IDs", value = FALSE)
     })
+    output$tbl_loaded_head <- renderUI({
+      if (is.null(tbl_raw())) return(NULL)
+      tags$div(class = "fw-semibold small mt-2 mb-1", "Loaded data")
+    })
     output$tbl_table <- DT::renderDT({
       df <- tbl_raw(); req(df)
-      dt_table(df, selection = list(mode = "multiple"), page_length = 5L)
+      dt_table(df, selection = list(mode = "multiple"))
     })
     # The rows the user is acting on: the filtered view (_rows_all, across pages)
     # or the explicit selection (_rows_selected).
@@ -402,13 +453,37 @@ mod_geneset_server <- function(id, state) {
     # =====================================================================
     # 2 - Preview of the staged genes.
     # =====================================================================
+    # How many queried ids the active source DROPPED as not-in-dataset (only when
+    # the literal escape hatch is off), + whether that hatch is available here.
+    dropped_info <- function() {
+      src <- input$source %||% "paste"
+      if (identical(src, "paste")) {
+        can <- .paste_literal_ok(input$paste_mode)
+        if (isTRUE(input$paste_literal) && can) return(list(n = 0L, can = can))
+        return(list(n = length(paste_search()$unmatched), can = can))
+      }
+      if (identical(src, "file")) {
+        can <- identical(input$tbl_match_by %||% "__rownames__", "__rownames__")
+        sub <- tbl_resolved(); if (is.null(sub)) return(list(n = 0L, can = can))
+        if (isTRUE(input$tbl_literal) && can) return(list(n = 0L, can = can))
+        return(list(n = sum(is.na(sub$.gs_id)), can = can))
+      }
+      list(n = 0L, can = FALSE)
+    }
     output$preview_head <- renderUI({
       st <- staged(); n <- length(st)
-      if (!n) return(helpText(class = "small text-muted", "Nothing staged yet."))
+      if (!n && !dropped_info()$n)
+        return(helpText(class = "small text-muted", "Nothing staged yet."))
       total <- length(unique(unlist(st, use.names = FALSE)))
-      txt <- if (n == 1L) sprintf("%d gene(s) staged.", total)
+      txt <- if (n <= 1L) sprintf("%d gene(s) staged.", total)
              else sprintf("%d sets staged (%d unique genes).", n, total)
-      tagList(tags$div(class = "small text-muted mb-1", txt),
+      d <- dropped_info()
+      warn <- if (d$n > 0L)
+        tags$div(class = "small text-warning mb-1",
+          sprintf("%d ID(s) not in the dataset were left out.%s", d$n,
+                  if (d$can) " Turn on 'keep unmatched as literal IDs' to include them." else ""))
+      tagList(warn,
+              tags$div(class = "small text-muted mb-1", txt),
               if (n > 1L) selectizeInput(ns("preview_pick"), NULL, choices = names(st)))
     })
     staged_active_ids <- reactive({
@@ -419,7 +494,7 @@ mod_geneset_server <- function(id, state) {
     })
     output$preview_table <- DT::renderDT({
       ids <- staged_active_ids(); req(length(ids))
-      dt_table(members_frame(ids), page_length = 5L)
+      dt_table(members_frame(ids))
     })
     observeEvent(input$clear_staged, {
       switch(input$source %||% "paste",
@@ -428,7 +503,8 @@ mod_geneset_server <- function(id, state) {
                    updateNumericInput(session, "deg_padj", value = 0.05)
                    updateNumericInput(session, "deg_lfc", value = 1) },
         topvar = updateNumericInput(session, "topvar_n", value = 100),
-        file   = { tbl_nonce(shiny::isolate(tbl_nonce()) + 1L)   # rebuild -> resets the file input
+        file   = { tbl_data(NULL)                                # drop the loaded table
+                   tbl_nonce(shiny::isolate(tbl_nonce()) + 1L)   # rebuild -> resets the file input
                    updateSelectizeInput(session, "tbl_anno_cols", selected = character(0)) })
     })
 
@@ -466,14 +542,14 @@ mod_geneset_server <- function(id, state) {
         .gs_pills(ns("multi_mode"), c("Create new sets" = "new", "Add to existing" = "add"),
                   selected = "new"),
         conditionalPanel(
-          cond("multi_mode", "new"),
+          .gs_cond(ns, "multi_mode", "new"),
           textInput(ns("multi_prefix"), "Name prefix (optional)", placeholder = "e.g. res_"),
           uiOutput(ns("multi_conflicts")),
           bslib::input_switch(ns("multi_autoname"), "Auto-rename conflicts", value = FALSE),
           actionButton(ns("multi_create"), "Create sets", class = "btn btn-sm fw-semibold",
                        style = .gs_action_style, icon = shiny::icon("plus"))),
         conditionalPanel(
-          cond("multi_mode", "add"),
+          .gs_cond(ns, "multi_mode", "add"),
           uiOutput(ns("multi_targets_ui")),
           actionButton(ns("multi_add"), "Add to selected", class = "btn btn-sm fw-semibold",
                        style = .gs_action_style, icon = shiny::icon("plus"))))
