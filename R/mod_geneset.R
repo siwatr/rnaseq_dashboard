@@ -60,8 +60,7 @@ mod_geneset_ui <- function(id) {
                          "The most variable endogenous features (VST).")),
               conditionalPanel(
                 cond("source", "file"),
-                fileInput(ns("tbl_file"), "Table file (CSV / TSV / XLSX)",
-                          accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls")),
+                uiOutput(ns("tbl_file_ui")),   # rebuilt on Clear so re-uploading the same file works
                 uiOutput(ns("tbl_controls")),
                 DT::DTOutput(ns("tbl_table")),
                 uiOutput(ns("tbl_stats")))),
@@ -249,12 +248,18 @@ mod_geneset_server <- function(id, state) {
 
     # ---- Table import: an arbitrary sheet (e.g. a DESeq2 result table from
     # another analysis) -> view/filter/select -> one or MANY staged sets. -----
+    # The fileInput is rebuilt under a nonce so Clear truly resets it -- otherwise
+    # re-selecting the SAME file emits no browser change event and the importer
+    # stays stuck (the classic fileInput footgun; there is no updateFileInput).
+    tbl_nonce <- reactiveVal(0L)
+    output$tbl_file_ui <- renderUI({
+      tbl_nonce()
+      fileInput(ns("tbl_file"), "Table file (CSV / TSV / XLSX)",
+                accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls"))
+    })
     # These return NULL (not req()) when unavailable: staged() must always yield a
     # list, so a req cascade must not escape into the Save observers.
-    tbl_cleared <- reactiveVal(FALSE)
-    observeEvent(input$tbl_file, tbl_cleared(FALSE), ignoreInit = TRUE)   # a new upload un-clears
     tbl_raw <- reactive({
-      if (isTRUE(tbl_cleared())) return(NULL)
       f <- input$tbl_file; if (is.null(f)) return(NULL)
       tryCatch(.read_user_table(f$datapath, f$name),
                error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
@@ -262,7 +267,6 @@ mod_geneset_server <- function(id, state) {
     output$tbl_controls <- renderUI({
       df <- tbl_raw(); req(df, ncol(df) > 0, state$working)
       cols <- names(df)
-      # Default the id column to the first one that matches the dataset best.
       tagList(
         bslib::layout_columns(
           col_widths = c(6, 6),
@@ -288,7 +292,7 @@ mod_geneset_server <- function(id, state) {
     })
     output$tbl_table <- DT::renderDT({
       df <- tbl_raw(); req(df)
-      dt_table(df, selection = "multiple", page_length = 5L)
+      dt_table(df, selection = list(mode = "multiple"), page_length = 5L)
     })
     # The rows the user is acting on: the filtered view (_rows_all, across pages)
     # or the explicit selection (_rows_selected).
@@ -304,7 +308,8 @@ mod_geneset_server <- function(id, state) {
       if (is.null(idc) || !(idc %in% names(df))) return(NULL)
       rows <- tbl_rows(); if (!length(rows)) return(NULL)
       sub <- df[rows, , drop = FALSE]
-      raw <- as.character(sub[[idc]])
+      raw <- trimws(as.character(sub[[idc]]))         # ids never carry stray whitespace
+      raw[!nzchar(raw)] <- NA                          # blank cells are not ids
       field <- input$tbl_match_by %||% "__rownames__"
       hit <- lookup_feature(raw, SummarizedExperiment::rowData(state$working),
                             ids = rownames(state$working),
@@ -423,7 +428,7 @@ mod_geneset_server <- function(id, state) {
                    updateNumericInput(session, "deg_padj", value = 0.05)
                    updateNumericInput(session, "deg_lfc", value = 1) },
         topvar = updateNumericInput(session, "topvar_n", value = 100),
-        file   = { tbl_cleared(TRUE)               # drops the imported table
+        file   = { tbl_nonce(shiny::isolate(tbl_nonce()) + 1L)   # rebuild -> resets the file input
                    updateSelectizeInput(session, "tbl_anno_cols", selected = character(0)) })
     })
 

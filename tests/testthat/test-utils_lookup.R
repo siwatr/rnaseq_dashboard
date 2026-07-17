@@ -22,6 +22,15 @@ test_that("unmatched queries yield NA", {
   expect_true(is.na(lookup_feature("Nope", rd, feature_type = "gene")))
 })
 
+test_that("an NA query never resolves to an NA-valued column entry", {
+  # An unannotated feature (gene_name = NA) must NOT be returned for a missing
+  # query -- match(NA, ...) would otherwise hit the first NA value.
+  rd <- data.frame(gene_name = c("Actb", NA), row.names = c("ENSG1", "ENSG2"))
+  expect_true(is.na(lookup_feature(NA_character_, rd, feature_type = "gene")))
+  out <- lookup_feature(c("Actb", NA), rd, feature_type = "gene")
+  expect_equal(out, c("ENSG1", NA_character_))
+})
+
 test_that("lookup_feature can match case-insensitively", {
   rd <- data.frame(gene_name = c("Actb", "Gapdh"), row.names = c("ENSG1", "ENSG2"))
   expect_true(is.na(lookup_feature("actb", rd, feature_type = "gene")))

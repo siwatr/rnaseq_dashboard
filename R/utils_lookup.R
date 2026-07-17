@@ -30,7 +30,9 @@ lookup_feature <- function(query, row_data, ids = rownames(row_data),
   }
   q <- as.character(query); v <- values
   if (isTRUE(case_insensitive)) { q <- tolower(q); v <- tolower(v) }
-  ids[match(q, v)]
+  # incomparables = NA so a missing/NA query never matches an NA value column
+  # (e.g. an unannotated gene_name) and resolves to a real feature id.
+  ids[match(q, v, incomparables = NA)]
 }
 
 #' Resolve a single query to a feature id, with a match count
