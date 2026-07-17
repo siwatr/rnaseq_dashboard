@@ -332,6 +332,8 @@ mod_geneset_server <- function(id, state) {
         uiOutput(ns("tbl_match_opts")))
     })
     # Auto-detect the best "Match against" field for the chosen ID column.
+    # (Re-detects on a header flip indirectly: toggling the header re-renders
+    # tbl_controls and changes the ID-column name, which re-fires input$tbl_id_col.)
     observeEvent(list(input$tbl_id_col, tbl_src()), {
       df <- tbl_raw(); idc <- input$tbl_id_col
       req(df, !is.null(idc), idc %in% names(df), state$working)
@@ -348,7 +350,8 @@ mod_geneset_server <- function(id, state) {
           radioButtons(ns("tbl_multi"), "When a name matches several features",
                        c("Keep all matches" = "all", "First match only" = "first"),
                        selected = "all", inline = TRUE),
-          "A gene name can map to more than one feature (duplicated / paralogous IDs). Keep all adds every matching feature; First only keeps one.")
+          "A gene name can map to more than one feature (duplicated / paralogous IDs). Keep all adds every matching feature; First only keeps one.",
+          placement = "top")
     })
     output$tbl_loaded_head <- renderUI({
       if (is.null(tbl_raw())) return(NULL)
@@ -369,6 +372,16 @@ mod_geneset_server <- function(id, state) {
     # matching a name column with Keep-all (a name can hit several features).
     # Returns per-input-row id vectors + the rows, so the expanded staging frame
     # and the stats both build from it.
+    # value -> all dataset row indices for the chosen match column. Its own
+    # reactive (keyed on the column + dataset) so it isn't rebuilt over all
+    # features on every import-table filter keystroke. NULL for rownames matching.
+    tbl_match_index <- reactive({
+      field <- input$tbl_match_by %||% "__rownames__"
+      if (identical(field, "__rownames__") || is.null(state$working)) return(NULL)
+      vals <- as.character(as.data.frame(
+        SummarizedExperiment::rowData(state$working), optional = TRUE)[[field]])
+      split(seq_along(vals), vals)                        # NA-valued features drop out
+    })
     tbl_match <- reactive({
       df <- tbl_raw(); if (is.null(df) || is.null(state$working)) return(NULL)
       idc <- input$tbl_id_col
@@ -383,9 +396,7 @@ mod_geneset_server <- function(id, state) {
         ids <- lapply(raw, function(x)
           if (is.na(x)) character(0) else if (x %in% rn) x else if (lit) x else character(0))
       } else {
-        vals <- as.character(as.data.frame(
-          SummarizedExperiment::rowData(state$working), optional = TRUE)[[field]])
-        by_val <- split(seq_along(vals), vals)            # value -> dds rows (NA keys dropped)
+        by_val <- tbl_match_index()                       # NULL[[x]] -> NULL, so still safe
         keep_all <- !identical(input$tbl_multi %||% "all", "first")
         ids <- lapply(raw, function(x) {
           if (is.na(x)) return(character(0))
@@ -432,8 +443,10 @@ mod_geneset_server <- function(id, state) {
                   if (identical(input$tbl_multi %||% "all", "first")) "kept the first"
                   else "all their IDs added"))
       tagList(
+        # "resolved" (not "matched") because with the literal switch on some ids
+        # are kept verbatim without being in the dataset.
         tags$div(class = "small text-muted",
-          sprintf("%d rows imported | %d in view | %d selected | %d IDs matched%s.",
+          sprintf("%d rows imported | %d in view | %d selected | %d IDs resolved%s.",
                   nrow(df), n_view, n_sel, n_ids,
                   if (n_miss) sprintf(" (%d unmatched)", n_miss) else "")),
         multi_note, grp)
@@ -636,7 +649,10 @@ mod_geneset_server <- function(id, state) {
         sets <- r$sets; made <- c(made, r$name)
       }
       state$gene_sets <- sets; snapshot_absent()
-      updateTextInput(session, "multi_prefix", value = "")   # avoid an accidental re-create
+      # Reset the prefix + deselect the just-created sets so the conflict banner
+      # doesn't flip to "already taken" right after a successful create.
+      updateTextInput(session, "multi_prefix", value = "")
+      updateSelectizeInput(session, "multi_pick", selected = character(0))
       .log(state, list(action = "gene_set_add_multi", sets = made, source = staged_source(),
                        n = unname(vapply(st[pick], length, integer(1))),
                        params = staged_params()))
