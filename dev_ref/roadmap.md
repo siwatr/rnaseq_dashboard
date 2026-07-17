@@ -196,7 +196,8 @@ overlap UI, a `Palette > Gene Set` sub-tab) is **deferred to P7** with its heatm
   auto-rename, or union-add into existing). `.read_user_table` promoted to `load_helpers.R`. ⬜
 - **P6d** file round-trip — JSON/GMT/TSV serializers + Import-file source + Export block. ⬜
 - **P6e** Compare tab (Stats bar on `dual_plot`; Overlap Euler/Venn via `eulerr` ≤4 sets, UpSet
-  via `ComplexHeatmap`) + doc-sync close-out + propose `v0.4.0`. ⬜
+  via `ComplexHeatmap`) + a final doc consistency pass (doc-sync is now **per-PR**, not deferred
+  here) + propose `v0.4.0`. ⬜
 
 ## Phase 7 — Expression ⬜
 Renamed from "Heatmap": a gene-expression **browsing surface** (more than a heatmap). A
