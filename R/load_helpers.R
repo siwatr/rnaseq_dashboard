@@ -3,6 +3,21 @@
 # Kept free of Shiny so they're unit-testable and reusable. Bulk-first: large
 # single-cell objects are rejected with a clear "pseudobulk required" message.
 
+# Read a user-uploaded table by file extension (csv/tsv/txt/xlsx/xls). Shared by
+# every page that accepts a tabular upload (Input counts/sample sheet, the
+# Sample "Additional metadata" sheet, the Gene Sets table import).
+.read_user_table <- function(path, name) {
+  ext <- tolower(tools::file_ext(name))
+  switch(ext,
+    csv         = as.data.frame(readr::read_csv(path, show_col_types = FALSE)),
+    tsv         = as.data.frame(readr::read_tsv(path, show_col_types = FALSE)),
+    txt         = as.data.frame(readr::read_tsv(path, show_col_types = FALSE)),
+    xlsx        = as.data.frame(readxl::read_excel(path)),
+    xls         = as.data.frame(readxl::read_excel(path)),
+    stop("Unsupported file type '.", ext, "'. Use CSV, TSV, or XLSX.", call. = FALSE)
+  )
+}
+
 .counts_assay <- function(obj) {
   an <- SummarizedExperiment::assayNames(obj)
   nm <- if ("counts" %in% an) "counts" else if (length(an)) an[[1L]] else NA_character_

@@ -152,6 +152,139 @@ test_that("DE DEGs + top-variable sources stage the right ids", {
   })
 })
 
+# --- Table import (P6c) -----------------------------------------------------
+
+# Write a DESeq2-result-shaped CSV and hand it to the module's fileInput.
+.write_import_csv <- function(rn) {
+  path <- withr::local_tempfile(fileext = ".csv", .local_envir = parent.frame())
+  utils::write.csv(
+    data.frame(gene = c(rn[1:2], rn[3:4], "GHOST_ID"),
+               direction = c("up", "up", "down", "down", "up"),
+               padj = 0.001, stringsAsFactors = FALSE),
+    path, row.names = FALSE)
+  path
+}
+
+test_that("table import stages one set; ID column resolves; unmatched excluded", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 8))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    path <- .write_import_csv(rn)
+
+    session$setInputs(source = "file",
+                      tbl_file = list(datapath = path, name = "res.csv"),
+                      tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_rows = "view", tbl_anno_cols = character(0),
+                      tbl_sep = ".", tbl_literal = FALSE)
+    session$flushReact()
+    expect_equal(nrow(tbl_raw()), 5L)
+    # No split -> ONE staged set; the unmatched GHOST_ID is dropped.
+    expect_length(staged(), 1L)
+    expect_setequal(staged()[[1]], rn[1:4])
+
+    # Literal ON (matching against feature ids) keeps the unmatched id.
+    session$setInputs(tbl_literal = TRUE); session$flushReact()
+    expect_setequal(staged()[[1]], c(rn[1:4], "GHOST_ID"))
+  })
+})
+
+test_that("annotation-split stages N sets; multi-save creates one set each", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 9))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    path <- .write_import_csv(rn)
+
+    session$setInputs(source = "file",
+                      tbl_file = list(datapath = path, name = "res.csv"),
+                      tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_rows = "view", tbl_literal = FALSE,
+                      tbl_anno_cols = "direction", tbl_sep = ".")
+    session$flushReact()
+    # Split by direction -> two staged sets.
+    expect_setequal(names(staged()), c("up", "down"))
+    expect_setequal(staged()$up, rn[1:2])
+    expect_setequal(staged()$down, rn[3:4])
+    expect_equal(output$multi_staged, "1")        # the Save section swaps to multi
+
+    # Multi-save: create one session set per staged set, with a prefix.
+    session$setInputs(multi_pick = c("up", "down"), multi_mode = "new",
+                      multi_prefix = "res_", multi_autoname = FALSE)
+    session$flushReact()
+    session$setInputs(multi_create = 1); session$flushReact()
+    expect_setequal(names(state$gene_sets), c("res_up", "res_down"))
+    expect_setequal(state$gene_sets$res_up$ids, rn[1:2])
+    expect_match(state$gene_sets$res_up$source, "^import: res.csv")
+  })
+})
+
+test_that("multi-save blocks name clashes unless auto-rename is on", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 10))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    path <- .write_import_csv(rn)
+    session$setInputs(source = "file",
+                      tbl_file = list(datapath = path, name = "res.csv"),
+                      tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_rows = "view", tbl_literal = FALSE,
+                      tbl_anno_cols = "direction", tbl_sep = ".",
+                      multi_pick = c("up", "down"), multi_mode = "new",
+                      multi_prefix = "", multi_autoname = FALSE)
+    session$flushReact()
+    session$setInputs(multi_create = 1); session$flushReact()
+    expect_setequal(names(state$gene_sets), c("up", "down"))
+
+    # Re-creating the same names is BLOCKED while auto-rename is off.
+    session$setInputs(multi_create = 2); session$flushReact()
+    expect_setequal(names(state$gene_sets), c("up", "down"))
+
+    # With auto-rename on, the clash resolves via the suffix path.
+    session$setInputs(multi_autoname = TRUE); session$flushReact()
+    session$setInputs(multi_create = 3); session$flushReact()
+    expect_setequal(names(state$gene_sets), c("up", "down", "up_2", "down_2"))
+
+    # Multi 'Add to existing' unions ALL picked staged sets into the targets.
+    session$setInputs(multi_mode = "add", multi_targets = "up"); session$flushReact()
+    session$setInputs(multi_add = 1); session$flushReact()
+    expect_setequal(state$gene_sets$up$ids, rn[1:4])
+  })
+})
+
+test_that("table import honours the row scope (filtered view vs selected)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 11))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    path <- .write_import_csv(rn)
+    session$setInputs(source = "file",
+                      tbl_file = list(datapath = path, name = "res.csv"),
+                      tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_anno_cols = character(0), tbl_sep = ".", tbl_literal = FALSE)
+
+    # A filtered view (DT reports the surviving rows) drives the staged set.
+    session$setInputs(tbl_rows = "view", tbl_table_rows_all = c(1L, 2L)); session$flushReact()
+    expect_setequal(staged()[[1]], rn[1:2])
+
+    # Explicit row selection instead.
+    session$setInputs(tbl_rows = "selected", tbl_table_rows_selected = c(3L)); session$flushReact()
+    expect_setequal(staged()[[1]], rn[3])
+  })
+})
+
 test_that("membership is non-destructive across a feature drop; load clears sets", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
