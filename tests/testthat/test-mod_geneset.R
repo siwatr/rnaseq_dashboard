@@ -87,6 +87,41 @@ test_that("literal-add only applies when searching by feature ID", {
     session$setInputs(paste_searchby = "__rownames__", paste_q = paste(r1, "GHOST_ID", sep = ", "))
     session$elapse(300); session$flushReact()
     expect_setequal(staged()[["Pasted genes"]], c(r1, "GHOST_ID"))
+
+    # ...but only in EXACT mode: in contains/regex an unmatched entry is a
+    # PATTERN, not an id, so it must never be committed literally.
+    session$setInputs(paste_mode = "regex", paste_q = "^ZZZ_no_match.*")
+    session$elapse(300); session$flushReact()
+    expect_length(staged(), 0L)
+    session$setInputs(paste_mode = "contains", paste_q = "ZZZ_no_match")
+    session$elapse(300); session$flushReact()
+    expect_length(staged(), 0L)
+  })
+})
+
+test_that("'Use shrunk LFC' falls back to standard LFCs when shrinkage never ran", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 7))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    # A results frame as de_results() builds it with shrink = "none": the
+    # log2FoldChange_shrunk column EXISTS but is all-NA.
+    df <- data.frame(baseMean = 100,
+                     padj = c(0.001, 0.001, rep(0.9, length(rn) - 2)),
+                     log2FoldChange = c(3, -3, rep(0, length(rn) - 2)),
+                     log2FoldChange_shrunk = NA_real_, row.names = rn)
+    de <- state$de; de$results <- list("C1" = df); de$active <- "C1"; state$de <- de
+    session$flushReact()
+
+    session$setInputs(source = "deg", deg_contrast = "C1", deg_dir = "both",
+                      deg_padj = 0.05, deg_lfc = 1, deg_shrunk = TRUE)
+    session$flushReact()
+    expect_false(deg_shrunk_ok())          # column present but no real values
+    expect_equal(deg_col(), "DEG")         # falls back instead of an empty set
+    expect_setequal(staged()[[1]], rn[1:2])
   })
 })
 

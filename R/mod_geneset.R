@@ -138,26 +138,38 @@ mod_geneset_server <- function(id, state) {
     # =====================================================================
     # 1 - Sources: each yields ids; staged() picks the ACTIVE source.
     # =====================================================================
-    # Paste: literal-add is offered ONLY when searching by feature id (rownames),
-    # since literal `feature_class` values like "spike-in" are not ids.
+    # Paste: literal-add is offered ONLY for an EXACT search by feature id
+    # (rownames). Under another column `unmatched` holds names / class values
+    # ("spike-in"), and in contains/regex mode it holds *patterns* ("^ENSMUSG.*")
+    # -- neither are ids, and non-destructive membership would never trim them.
+    .paste_literal_ok <- function(mode) {
+      identical(input$paste_searchby %||% "__rownames__", "__rownames__") &&
+        identical(mode %||% "exact", "exact")
+    }
     output$paste_literal_ui <- renderUI({
-      if (!identical(input$paste_searchby %||% "__rownames__", "__rownames__")) return(NULL)
+      if (!.paste_literal_ok(input$paste_mode)) return(NULL)
       bslib::input_switch(ns("paste_literal"), "Also add unmatched as literal IDs", value = FALSE)
     })
     paste_ids <- reactive({
       r <- paste_search(); ids <- r$ids
-      literal_ok <- identical(input$paste_searchby %||% "__rownames__", "__rownames__")
-      if (isTRUE(input$paste_literal) && literal_ok) ids <- unique(c(ids, r$unmatched))
+      # Guard on the RESOLVED mode (authoritative), not just the input.
+      if (isTRUE(input$paste_literal) && .paste_literal_ok(r$mode))
+        ids <- unique(c(ids, r$unmatched))
       ids
     })
 
-    # DE DEGs.
+    # DE DEGs. Results are marked stale (not cleared) on a data edit, so surface
+    # that here rather than silently seeding a set from a fit computed on a
+    # different feature set (the project's never-reuse-a-stale-artifact rule).
     output$deg_controls <- renderUI({
       res <- (state$de %||% list())$results
       if (!length(res))
         return(helpText(class = "small text-muted",
           "Run DESeq2 (on the DE page) to seed a set from a contrast's DEGs."))
       tagList(
+        if (identical(de_status(state), "stale"))
+          tags$div(class = "small text-warning mb-2",
+            "These DE results are out of date (the data changed since the fit). Re-run DESeq2 on the DE page before seeding a set."),
         selectInput(ns("deg_contrast"), "Contrast", choices = names(res)),
         radioButtons(ns("deg_dir"), "Direction",
                      c("Up" = "up", "Down" = "down", "Both" = "both"),
@@ -174,9 +186,17 @@ mod_geneset_server <- function(id, state) {
       req(length(res), !is.null(lab), lab %in% names(res))
       de_classify_table(res[[lab]], input$deg_padj %||% 0.05, input$deg_lfc %||% log2(2))
     })
+    # de_results() ALWAYS creates log2FoldChange_shrunk -- all-NA when shrinkage
+    # was "none" or every fallback failed. A column-presence check would pass and
+    # DEG_shrunk would be uniformly no_change (an empty set with no explanation),
+    # so test for real shrunk values instead.
+    deg_shrunk_ok <- reactive({
+      df <- tryCatch(deg_classified(), error = function(e) NULL)
+      !is.null(df) && "log2FoldChange_shrunk" %in% names(df) &&
+        any(!is.na(df$log2FoldChange_shrunk))
+    })
     deg_col <- reactive({
-      df <- deg_classified()
-      if (isTRUE(input$deg_shrunk) && "DEG_shrunk" %in% names(df)) "DEG_shrunk" else "DEG"
+      if (isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok())) "DEG_shrunk" else "DEG"
     })
     deg_ids <- reactive({
       df <- deg_classified()
@@ -186,10 +206,14 @@ mod_geneset_server <- function(id, state) {
     output$deg_preview <- renderUI({
       df <- tryCatch(deg_classified(), error = function(e) NULL); req(df)
       tab <- table(factor(as.character(df[[deg_col()]]), levels = c("up", "down", "no_change")))
-      helpText(class = "small text-muted",
-        sprintf("%d up / %d down at padj < %s, |log2FC| >= %s.",
-                tab[["up"]], tab[["down"]], format(input$deg_padj %||% 0.05),
-                format(input$deg_lfc %||% 1)))
+      tagList(
+        if (isTRUE(input$deg_shrunk) && !isTRUE(deg_shrunk_ok()))
+          tags$div(class = "small text-warning",
+            "Shrunken LFCs are not available for this fit -- using standard LFCs."),
+        helpText(class = "small text-muted",
+          sprintf("%d up / %d down at padj < %s, |log2FC| >= %s.",
+                  tab[["up"]], tab[["down"]], format(input$deg_padj %||% 0.05),
+                  format(input$deg_lfc %||% 1))))
     })
 
     # Top-variable: rank once per dataset (cached), slice top-n for the preview.
@@ -210,6 +234,24 @@ mod_geneset_server <- function(id, state) {
     staged_source <- function() switch(input$source %||% "paste",
       paste = "paste", deg = paste0("DE: ", input$deg_contrast %||% ""),
       topvar = "top-variable", "manual")
+    # The parameters that DEFINE the staged set. Because a set is an authored
+    # snapshot (its thresholds are local to this page and the user may move them
+    # afterwards), these are the only record of how it was built -- log them so
+    # the Phase 9 reproducibility export can regenerate the set.
+    staged_params <- function() switch(input$source %||% "paste",
+      paste = list(search_by = input$paste_searchby %||% "__rownames__",
+                   match_mode = input$paste_mode %||% "exact",
+                   case_insensitive = isTRUE(input$paste_ci),
+                   literal_unmatched = isTRUE(input$paste_literal) &&
+                     .paste_literal_ok(input$paste_mode)),
+      deg = list(contrast = input$deg_contrast %||% "",
+                 direction = input$deg_dir %||% "both",
+                 padj = input$deg_padj %||% 0.05,
+                 lfc = input$deg_lfc %||% 1,
+                 shrunk = isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok()),
+                 de_status = de_status(state)),
+      topvar = list(n_top = input$topvar_n %||% 100L, input = "vst (endogenous)"),
+      list())
     staged <- reactive({
       src <- input$source %||% "paste"
       ids <- switch(src,
@@ -286,7 +328,7 @@ mod_geneset_server <- function(id, state) {
       state$gene_sets <- res$sets; snapshot_absent()
       updateTextInput(session, "new_name", value = "")     # prevent an accidental re-add
       .log(state, list(action = "gene_set_add", set = res$name, source = staged_source(),
-                       mode = "new", n = length(ids)))
+                       mode = "new", n = length(ids), params = staged_params()))
       showNotification(sprintf("Created '%s' (%d genes).", res$name, length(ids)),
                        type = "message", duration = 4)
     })
@@ -300,7 +342,7 @@ mod_geneset_server <- function(id, state) {
       for (t in targets) sets <- gene_set_commit(sets, t, ids, "append", source = staged_source())$sets
       state$gene_sets <- sets; snapshot_absent()
       .log(state, list(action = "gene_set_addto", targets = targets, source = staged_source(),
-                       n = length(ids)))
+                       n = length(ids), params = staged_params()))
       showNotification(sprintf("Added %d gene(s) to %d set(s).", length(ids), length(targets)),
                        type = "message", duration = 4)
     })
@@ -388,6 +430,7 @@ mod_geneset_server <- function(id, state) {
         showNotification("A set with that name already exists.", type = "warning"); return() }
       if (!identical(to, nm)) {
         sets <- state$gene_sets; names(sets)[names(sets) == nm] <- to; state$gene_sets <- sets
+        snapshot_absent()   # re-key the absence baseline, else the rename reads as "newly absent"
         .log(state, list(action = "gene_set_rename", from = nm, to = to))
       }
       removeModal()
@@ -395,6 +438,7 @@ mod_geneset_server <- function(id, state) {
     observeEvent(input$delete, {
       nm <- selected_name(); req(!is.null(nm), !is.null(state$gene_sets[[nm]]))
       sets <- state$gene_sets; sets[[nm]] <- NULL; state$gene_sets <- sets
+      snapshot_absent()
       .log(state, list(action = "gene_set_delete", set = nm))
       showNotification(sprintf("Deleted '%s'.", nm), type = "message", duration = 3)
     })
