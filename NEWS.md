@@ -1,6 +1,20 @@
-# ddsdashboard (development version)
+# ddsdashboard 0.4.0
 
-* Phase 6 (Gene Sets) — Compare tab (P6e) next.
+Phase 6 (Gene Sets) complete — adds the **Compare tab** (P6e) alongside the Manage tab.
+
+* Compare tab (a `navset_card_pill` **Stats** | **Overlap**) laid out like the DE Plots tab:
+  the two shared controls — a "Sets to visualize" multiselect and a "Within this dataset only"
+  toggle (`gene_set_present` vs the full authored membership) — live in the tab sidebar and
+  govern both sub-pills.
+* Stats: a present/absent set-size bar on the shared plot engine, with a horizontal/vertical
+  toggle, an "Order by" control (none / size / name), and colours from a new static
+  `other/gene_set_presence` Palette item.
+* Overlap: Euler / Venn / UpSet, where the diagram-type default follows the set count (Euler
+  ≤3, Venn 4, UpSet ≥5) and a type that cannot draw the current count shows a message rather
+  than silently substituting another plot.
+* `eulerr` draws the area-proportional Euler + Venn diagrams (a CRAN install — it has no
+  conda-forge Apple-Silicon build; see `environment.yml`), degrading to `ggVennDiagram` (Venn
+  only) when absent; UpSet uses `ComplexHeatmap`.
 
 # ddsdashboard 0.3.1
 
