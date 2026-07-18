@@ -1,3 +1,7 @@
+# ddsdashboard (development version)
+
+* Phase 6 (Gene Sets) — Compare tab (P6e) next.
+
 # ddsdashboard 0.3.1
 
 Phase 6 (Gene Sets) — the Manage tab (P6a–P6d).
