@@ -172,7 +172,7 @@ app_ui <- function(themer_mode = FALSE) {
     bslib::nav_panel(tags$h2("DimReduc", class = "fs-6 mb-0"),  mod_dimreduc_ui("dimreduc")),
     bslib::nav_panel(tags$h2("DE", class = "fs-6 mb-0"),        mod_de_ui("de")),
     bslib::nav_panel(tags$h2("Gene Sets", class = "fs-6 mb-0"), mod_geneset_ui("geneset")),
-    bslib::nav_panel(tags$h2("Heatmap", class = "fs-6 mb-0"),   mod_heatmap_ui("heatmap")),
+    bslib::nav_panel(tags$h2("Expression", class = "fs-6 mb-0"), mod_expression_ui("expression")),
     bslib::nav_panel(tags$h2("Palette", class = "fs-6 mb-0"),   mod_palette_ui("palette")),
     bslib::nav_panel(tags$h2("Export", class = "fs-6 mb-0"),    mod_export_ui("export")),
     if (isTRUE(themer_mode)) .themer_ui(),
@@ -214,7 +214,7 @@ app_server <- function(input, output, session) {
   mod_dimreduc_server("dimreduc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_de_server("de", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_geneset_server("geneset", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
-  mod_heatmap_server("heatmap", state)
+  mod_expression_server("expression", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_palette_server("palette", state)
   mod_export_server("export", state)
   mod_statusbar_server("statusbar", state)

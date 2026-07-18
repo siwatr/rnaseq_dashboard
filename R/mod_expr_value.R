@@ -25,7 +25,14 @@ expr_value_ui <- function(ns, suffix, assay_label = "Expression value (assay)") 
 # Populate the assay choices from the working dds (default logcounts), auto-pick a
 # sensible transform when the assay changes (none for a log assay, log10 else),
 # and return a reactive spec the caller feeds to de_group_means() / de_transform_matrix().
-expr_value_server <- function(input, output, session, state, suffix) {
+#
+# `include_vst` / `include_norm` prepend synthetic "VST" / "Normalized log-counts"
+# choices (resolved by the caller via expr_value_matrix()/qc_vst()); `default_fn`
+# (a function(dds) -> value key, e.g. expr_default_assay) picks the initial
+# selection. All default off so DE's use is unchanged.
+expr_value_server <- function(input, output, session, state, suffix,
+                              include_vst = FALSE, include_norm = FALSE,
+                              default_fn = NULL) {
   a_id <- paste0(suffix, "_assay")
   t_id <- paste0(suffix, "_transform")
   pc_id <- paste0(suffix, "_pc")
@@ -34,15 +41,26 @@ expr_value_server <- function(input, output, session, state, suffix) {
     dds <- state$working; if (is.null(dds)) return()
     an <- SummarizedExperiment::assayNames(dds)
     if (!length(an)) an <- "counts"
-    sel <- if (!is.null(input[[a_id]]) && input[[a_id]] %in% an) input[[a_id]]
-           else if ("logcounts" %in% an) "logcounts" else an[1]
-    updateSelectInput(session, a_id, choices = an, selected = sel)
+    synth <- c(if (isTRUE(include_vst))  c("VST" = "vst"),
+               if (isTRUE(include_norm)) c("Normalized log-counts" = "norm_logcounts"))
+    extra <- setdiff(an, synth)                  # never duplicate a stored assay
+    choices <- if (length(synth)) c(synth, stats::setNames(extra, extra)) else an
+    keys <- unname(choices)
+    sel <- if (!is.null(input[[a_id]]) && input[[a_id]] %in% keys) input[[a_id]]
+           else if (!is.null(default_fn)) {
+             d <- tryCatch(default_fn(dds), error = function(e) NULL)
+             if (!is.null(d) && d %in% keys) d
+             else if ("logcounts" %in% keys) "logcounts" else keys[1]
+           }
+           else if ("logcounts" %in% keys) "logcounts" else keys[1]
+    updateSelectInput(session, a_id, choices = choices, selected = sel)
   }, ignoreNULL = FALSE)
 
-  # An assay that already looks log-scale defaults to no transform; others to log10.
+  # An assay that already looks log-scale (logcounts, VST, normalized log-counts)
+  # defaults to no transform; linear abundance assays to log10.
   observeEvent(input[[a_id]], {
     a <- input[[a_id]]; if (is.null(a) || !nzchar(a)) return()
-    is_log <- grepl("log", a, ignore.case = TRUE)
+    is_log <- grepl("log|vst", a, ignore.case = TRUE)
     updateSelectInput(session, t_id, selected = if (is_log) "none" else "log10")
   }, ignoreInit = TRUE)
 

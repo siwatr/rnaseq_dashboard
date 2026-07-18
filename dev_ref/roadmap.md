@@ -219,25 +219,40 @@ overlap UI, a `Palette > Gene Set` sub-tab) is **deferred to P7** with its heatm
   **`ggVennDiagram`** is the Venn fallback when eulerr is absent (Euler option hidden), UpSet via
   `ComplexHeatmap`. + doc-sync (per-PR) + propose `v0.4.0`.
 
-## Phase 7 — Expression ⬅️ next ⬜
+## Phase 7 — Expression ⬅️ in progress (sub-PR'd P7a→P7d)
 Renamed from "Heatmap": a gene-expression **browsing surface** (more than a heatmap). A
-`navset_card_tab` with two tabs.
-- **Single genes** — one feature at a time; a layered overlay (back→front: violin → boxplot →
-  dots) reusing the shared plot machinery (`dual_plot` engine, deferred render, `mod_plot_subset`
-  "Showing:", `aes_helpers` colour). Controls: feature search (reuse the PCA gene block); x-axis =
-  a metadata grouping var (default first design var; `group_field_choices()`, colData-only); y-axis
-  assay (default log-norm-counts when size factors exist, else TPM→FPKM→CPM→logcounts→counts via a
-  new `expr_default_assay()`); group/colour-by (independent, `aes_resolve()`); transform+pseudocount
-  (`expr_transform()`); plot-element toggles (`geom_violin`/`geom_boxplot`/`ggbeeswarm::geom_quasirandom`
-  with `geom_jitter` fallback). **Sample guards** (`N` = max samples/group; `G1`/`G2` as `option()`s,
-  proposed 10/50): dots default ON when `N ≤ G1`, never allowed when `N ≥ G2`; violin/box hidden when
-  all groups `N < G1`. (Subsumes the single-gene box/violin panel the old design attached to the PCA
-  multi-panel; *deferred to wishlist:* facet-by-2nd-variable, mean±error overlay.)
-- **Gene sets** — a `ComplexHeatmap` over a named set from Phase 6: default per-gene z-score (toggle
-  raw `log10(TPM/CPM + 0.01)`); row names hidden + `anno_mark()` for genes of interest; column names
-  auto-hidden > 30 samples; top annotation via `aes_annotation()` (default = design column). Default
-  set when none chosen = DEGs (fallback top-variable). **Basic controls in v1**; the shared
-  heatmap-controller refactor + advanced options (row k-means) are Phase 8.
+`navset_card_tab` with two tabs. Full design + rationale in the approved plan:
+`~/.claude/plans/vast-giggling-ripple.md`. **4 sub-PRs** (the heatmap splits into core + k-means;
+the Phase-6-deferred annotated layer + `Palette > Gene Set` land in P7d).
+
+- **P7a ⬅️ (branch `p7a-expression-single-genes`)** — the **Single genes** tab: one feature at a
+  time as a layered overlay (back→front violin → boxplot → dots) reusing the shared plot machinery
+  (`dual_plot` engine, deferred render, `mod_plot_subset` "Showing:", `aes_helpers` colour). New
+  `R/mod_expression.R` (replaces the `mod_heatmap.R` stub; nav renamed Heatmap→**Expression**) +
+  `R/expr_helpers.R` (`expr_default_assay` incl. VST priority, `expr_value_matrix`, `row_zscore`,
+  `expr_geom_availability`, `expr_long_frame`). x-axis = a colData grouping (default first design
+  var, `group_field_choices`); y value via the shared `expr_value` control **extended with an
+  opt-in VST choice** (backward-compatible; DE unchanged) — the value **matrix** is the deferred/
+  cached (VST) part, the per-gene lookup + transform + colour are live re-plots. Colour by any
+  attribute (`aes_resolve`; discrete → violin/box fill + dot colour, continuous → dot colour).
+  **Sample guards** (`expr_geom_availability`, options `dist_min`/`dots_max`/`dots_hard` = 10/100/500):
+  violin/box shown once any group `N ≥ dist_min`; dots default ON when `N < dots_max`, disallowed when
+  `N ≥ dots_hard`. Dots via a **layout selector** — `ggbeeswarm::geom_beeswarm` (cex spacing) /
+  `geom_quasirandom` (width spread) / `geom_jitter` fallback — with per-layer width/opacity/size
+  controls and static Render controls. The **Gene sets** tab is a stub. + tests.
+  (*Deferred to wishlist:* facet-by-2nd-variable, mean±error overlay.)
+- **P7b ⬜** — **Gene sets** heatmap core: a `ComplexHeatmap` over a named Phase-6 set (**blank
+  placeholder until a set is chosen** — no DEG/top-variable auto-default). Per-gene z-score default
+  (toggle raw `log10(assay + pc)`); row names hidden + `anno_mark()` for genes of interest; display
+  toggles (names off > 20, dend off > 100, cluster on); top annotation via `aes_annotation()`
+  (values-snapshot/colours-live). Static (`renderPlot` + `draw()`), deferred gate.
+- **P7c ⬜** — heatmap **k-means** (computed *outside* `Heatmap()` via `expr_kmeans` → `row_split`/
+  `column_split`; **`split_with_counts()`** member-count label standard; seed + Redo; store
+  membership; **save row clusters as gene sets** → portable via the P6d export; column clusters
+  in-session only).
+- **P7d ⬜** — the Phase-6-deferred **annotated layer** (`kind="annotated"`,
+  `combine_gene_set_annotation` with shared-gene **warning**, annotation-driven `row_split` +
+  nested k-means) + the `Palette > Gene Set` per-set-colour domain. Closes Phase 7 → propose `v0.5.0`.
 
 ## Phase 8 — Visualization enhancements ⬜
 The gathered deferred plot/UX items (no home in the build order until now):
