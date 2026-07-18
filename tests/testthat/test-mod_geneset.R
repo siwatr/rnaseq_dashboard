@@ -429,3 +429,130 @@ test_that("rename / delete act on the selected row; members follow selection", {
     expect_length(state$gene_sets, 0L)
   })
 })
+
+test_that("gene-set file import stages the file's named sets, then commits them", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 16))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+
+    # Export a two-set store to a GMT file, then import it back.
+    path <- withr::local_tempfile(fileext = ".gmt")
+    writeLines(gene_sets_to_gmt(list(SetA = new_gene_set(rn[1:3], source = "paste"),
+                                     SetB = new_gene_set(rn[4:5], source = "paste"))), path)
+
+    session$setInputs(source = "gsfile",
+                      gsfile_file = list(datapath = path, name = "mysets.gmt"))
+    session$setInputs(gsfile_load = 1); session$flushReact()
+    expect_setequal(names(staged()), c("SetA", "SetB"))
+    expect_setequal(staged()$SetA, rn[1:3])
+    expect_equal(output$multi_staged, "1")            # file import -> multi-set Save
+
+    session$setInputs(multi_pick = c("SetA", "SetB"), multi_mode = "new",
+                      multi_prefix = "", multi_autoname = FALSE)
+    session$flushReact()
+    session$setInputs(multi_create = 1); session$flushReact()
+    expect_setequal(names(state$gene_sets), c("SetA", "SetB"))
+    expect_setequal(state$gene_sets$SetA$ids, rn[1:3])
+    expect_match(state$gene_sets$SetA$source, "^import: mysets.gmt")
+
+    # A single-set file still routes to the multi-set Save (names come from it).
+    p2 <- withr::local_tempfile(fileext = ".json")
+    writeLines(gene_sets_to_json(list(Solo = new_gene_set(rn[6], source = "paste"))), p2)
+    session$setInputs(gsfile_file = list(datapath = p2, name = "solo.json"))
+    session$setInputs(gsfile_load = 1); session$flushReact()
+    expect_equal(names(staged()), "Solo")
+    expect_equal(output$multi_staged, "1")
+  })
+})
+
+test_that("gene-set file import matches by a name column and honours keep-unmatched", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 18))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    gn <- as.character(SummarizedExperiment::rowData(state$working)$gene_name)
+
+    # A file authored with gene NAMES + one name absent from the dataset.
+    path <- withr::local_tempfile(fileext = ".gmt")
+    writeLines(gene_sets_to_gmt(list(
+      NameSet = new_gene_set(c(gn[1:3], "MISSING_NAME"), source = "paste"))), path)
+    session$setInputs(source = "gsfile",
+                      gsfile_file = list(datapath = path, name = "names.gmt"))
+    session$setInputs(gsfile_load = 1); session$flushReact()
+
+    # Matching against gene_name resolves the names to feature ids; the absent
+    # name is dropped by default (literal off).
+    session$setInputs(gsfile_match_by = "gene_name", gsfile_multi = "all",
+                      gsfile_literal = FALSE)
+    session$flushReact()
+    expect_setequal(staged()$NameSet, rn[1:3])
+    expect_equal(gsfile_resolved()$unmatched, "MISSING_NAME")
+
+    # Keep-unmatched adds the absent id verbatim (non-destructive authorship).
+    session$setInputs(gsfile_literal = TRUE); session$flushReact()
+    expect_setequal(staged()$NameSet, c(rn[1:3], "MISSING_NAME"))
+  })
+})
+
+test_that("the keep-unmatched toggle renders in the Preview accordion per source", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 19))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    html <- function() as.character(output$preview_literal_ui$html)
+
+    # Paste + exact search-by-id -> the paste toggle.
+    session$setInputs(source = "paste", paste_searchby = "__rownames__", paste_mode = "exact")
+    session$flushReact()
+    expect_match(html(), "paste_literal")
+    # A contains search has no literal escape hatch -> no toggle.
+    session$setInputs(paste_mode = "contains"); session$flushReact()
+    expect_true(is.null(output$preview_literal_ui) || !nzchar(html()))
+    # gsfile always offers it.
+    session$setInputs(source = "gsfile"); session$flushReact()
+    expect_match(html(), "gsfile_literal")
+  })
+})
+
+test_that("Export enables only with sets, and exports the selected subset", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 17))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    expect_match(as.character(output$export_ui$html), "enable export")
+
+    rn <- rownames(state$working)
+    stage_paste(session, rn[1]);  session$setInputs(save_mode = "new", new_name = "A")
+    session$setInputs(create = 1); session$flushReact()
+    stage_paste(session, rn[2]);  session$setInputs(new_name = "B")
+    session$setInputs(create = 1); session$flushReact()
+    expect_setequal(names(state$gene_sets), c("A", "B"))
+
+    # The render default selects all (the browser reflects it into input); mirror
+    # that here -> both round-trip through the chosen serializer.
+    session$setInputs(export_fmt = "json", export_which = c("A", "B")); session$flushReact()
+    expect_setequal(names(export_sets()), c("A", "B"))
+    expect_setequal(names(gene_sets_from_json(export_txt())), c("A", "B"))
+    # Selecting a subset limits the export (and thus the download).
+    session$setInputs(export_which = "A"); session$flushReact()
+    expect_equal(names(export_sets()), "A")
+    expect_equal(names(gene_sets_from_json(export_txt())), "A")
+    # An empty selection exports nothing -- an emptied selectize reports NULL, so
+    # the absent-selection path must resolve to empty, NOT to "all".
+    session$setInputs(export_which = character(0)); session$flushReact()
+    expect_length(export_sets(), 0L)
+    session$setInputs(export_which = NULL); session$flushReact()
+    expect_length(export_sets(), 0L)
+  })
+})

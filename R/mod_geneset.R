@@ -60,20 +60,19 @@ mod_geneset_ui <- function(id) {
 
         # ---- LEFT: Build a gene set (title text + one accordion per step) --
         tags$div(
-          tags$h4("Build a gene set", class = "fs-6 mb-2"),
+          tags$h4("Build a gene set", class = "fs-5 mb-2"),
           bslib::accordion(
             open = TRUE,
             bslib::accordion_panel(
               "1 · Select genes",
               .gs_pills(ns("source"),
                         c("Paste" = "paste", "From DE" = "deg", "Top-variable" = "topvar",
-                          "Import table" = "file"),
+                          "Import table" = "file", "Gene set file" = "gsfile"),
                         selected = "paste"),
               conditionalPanel(
                 cond("source", "paste"),
                 gene_search_ui(ns, "paste", multiple = TRUE,
-                               search_modes = c("exact", "contains", "regex")),
-                uiOutput(ns("paste_literal_ui"))),
+                               search_modes = c("exact", "contains", "regex"))),
               conditionalPanel(cond("source", "deg"), uiOutput(ns("deg_controls"))),
               conditionalPanel(
                 cond("source", "topvar"),
@@ -84,15 +83,29 @@ mod_geneset_ui <- function(id) {
                 cond("source", "file"),
                 uiOutput(ns("tbl_file_ui")),   # rebuilt on Clear so re-uploading the same file works
                 bslib::input_switch(ns("tbl_header"), "File has a header row", value = TRUE),
-                actionButton(ns("tbl_load"), "Load file", class = "btn-sm btn-primary",
-                             icon = shiny::icon("upload")),
+                actionButton(ns("tbl_load"), "Load file", class = "btn-sm",
+                             icon = shiny::icon("file-import"), style = .gs_action_style),
                 uiOutput(ns("tbl_controls")),
                 uiOutput(ns("tbl_loaded_head")),
                 DT::DTOutput(ns("tbl_table")),
-                uiOutput(ns("tbl_stats")))),
+                uiOutput(ns("tbl_stats"))),
+              conditionalPanel(
+                cond("source", "gsfile"),
+                uiOutput(ns("gsfile_file_ui")),   # rebuilt on Clear so re-uploading works
+                actionButton(ns("gsfile_load"), "Load file", class = "btn-sm",
+                             icon = shiny::icon("file-import"), style = .gs_action_style),
+                helpText(class = "small text-muted",
+                         "A previously exported JSON, GMT, or long TSV (set / id) file. ",
+                         "Format is detected from the extension. The file's named sets are ",
+                         "staged below -- review, then save."),
+                uiOutput(ns("gsfile_controls")),
+                uiOutput(ns("gsfile_summary")))),
             bslib::accordion_panel(
               "2 · Preview",
               uiOutput(ns("preview_head")),
+              # The keep-unmatched toggle lives here (not with the source) because
+              # it directly changes what enters the set, next to the drop warning.
+              uiOutput(ns("preview_literal_ui")),
               DT::DTOutput(ns("preview_table")),
               tags$div(class = "mt-2",
                 actionButton(ns("clear_staged"), "Clear", class = "btn-sm btn-outline-danger",
@@ -139,7 +152,7 @@ mod_geneset_ui <- function(id) {
           tags$div(
             tags$div(
               class = "mb-2",
-              tags$h4("Your gene sets", class = "fs-6 mb-0 d-inline"),
+              tags$h4("Your gene sets", class = "fs-5 mb-0 d-inline"),
               tags$span(class = "small text-muted ms-2",
                         "Available to the other tabs this session")),
             bslib::accordion(
@@ -159,8 +172,20 @@ mod_geneset_ui <- function(id) {
               bslib::accordion_panel(
                 "Set members",
                 uiOutput(ns("members_header")),
-                DT::DTOutput(ns("members_table"))))
-          )
+                DT::DTOutput(ns("members_table"))))),
+          # ---- Export: its own flex child (own section, gets the gap-3), with a
+          # top divider so it reads as a separate zone from "Your gene sets" -----
+          tags$div(
+            class = "pt-3 border-top",
+            tags$div(
+              class = "mb-2",
+              tags$h4("Export gene sets", class = "fs-5 mb-0 d-inline"),
+              tags$span(class = "small text-muted ms-2",
+                        "Download sets as JSON / GMT / TSV")),
+            bslib::accordion(
+              open = TRUE,
+              bslib::accordion_panel("Export format", uiOutput(ns("export_ui"))),
+              bslib::accordion_panel("Preview", uiOutput(ns("export_preview_ui")))))
         )
       )
     )
@@ -188,9 +213,24 @@ mod_geneset_server <- function(id, state) {
       identical(input$paste_searchby %||% "__rownames__", "__rownames__") &&
         identical(mode %||% "exact", "exact")
     }
-    output$paste_literal_ui <- renderUI({
-      if (!.paste_literal_ok(input$paste_mode)) return(NULL)
-      bslib::input_switch(ns("paste_literal"), "Also add unmatched as literal IDs", value = FALSE)
+    # The active source's "keep unmatched" toggle, rendered in the Preview
+    # accordion (next to the drop warning). It keeps each source's own input id
+    # (paste_literal / tbl_literal / gsfile_literal), so all resolution logic is
+    # unchanged -- only WHERE the switch is drawn moved. isolate() preserves the
+    # value across re-renders (a match-field / mode change), without self-looping.
+    output$preview_literal_ui <- renderUI({
+      mk <- function(id, label)
+        bslib::input_switch(ns(id), label, value = isTRUE(shiny::isolate(input[[id]])))
+      sw <- switch(input$source %||% "paste",
+        paste = if (.paste_literal_ok(input$paste_mode))
+          mk("paste_literal", "Also add unmatched as literal IDs"),
+        file = if (identical(input$tbl_match_by %||% "__rownames__", "__rownames__"))
+          mk("tbl_literal", "Also keep unmatched as literal IDs"),
+        gsfile = mk("gsfile_literal",
+          if (identical(input$gsfile_match_by %||% "__rownames__", "__rownames__"))
+            "Keep IDs not in the dataset" else "Keep unmatched IDs (not in the dataset)"),
+        NULL)
+      if (is.null(sw)) NULL else tags$div(class = "mb-2", sw)
     })
     paste_ids <- reactive({
       r <- paste_search(); ids <- r$ids
@@ -340,18 +380,17 @@ mod_geneset_server <- function(id, state) {
       updateSelectInput(session, "tbl_match_by",
                         selected = .gs_best_match_field(df[[idc]], state$working))
     }, ignoreInit = TRUE)
-    # Field-dependent options: literal-add for feature-id matching, else keep-all
-    # vs first-only for a name column that can match several features.
+    # Keep-all vs first-only for a name column that can match several features.
+    # (The literal-add toggle moved to the Preview accordion.)
     output$tbl_match_opts <- renderUI({
       if (identical(input$tbl_match_by %||% "__rownames__", "__rownames__"))
-        bslib::input_switch(ns("tbl_literal"), "Also keep unmatched as literal IDs", value = FALSE)
-      else
-        bslib::tooltip(
-          radioButtons(ns("tbl_multi"), "When a name matches several features",
-                       c("Keep all matches" = "all", "First match only" = "first"),
-                       selected = "all", inline = TRUE),
-          "A gene name can map to more than one feature (duplicated / paralogous IDs). Keep all adds every matching feature; First only keeps one.",
-          placement = "top")
+        return(NULL)
+      bslib::tooltip(
+        radioButtons(ns("tbl_multi"), "When a name matches several features",
+                     c("Keep all matches" = "all", "First match only" = "first"),
+                     selected = "all", inline = TRUE),
+        "A gene name can map to more than one feature (duplicated / paralogous IDs). Keep all adds every matching feature; First only keeps one.",
+        placement = "top")
     })
     output$tbl_loaded_head <- renderUI({
       if (is.null(tbl_raw())) return(NULL)
@@ -452,11 +491,125 @@ mod_geneset_server <- function(id, state) {
         multi_note, grp)
     })
 
+    # ---- Gene set file import (P6d): a serialized JSON / GMT / TSV file ------
+    # A file already carries complete NAMED sets, so it stages them directly (the
+    # Preview shows them) and flows into the multi-set Save UI (New / Add) -- the
+    # same non-destructive path the annotation-split import uses. Like tbl, the
+    # fileInput is rebuilt under a nonce so re-selecting the same file re-fires.
+    gsfile_nonce <- reactiveVal(0L)
+    output$gsfile_file_ui <- renderUI({
+      gsfile_nonce()
+      fileInput(ns("gsfile_file"), "Gene set file (JSON / GMT / TSV)",
+                accept = c(".json", ".gmt", ".tsv", ".txt", ".csv"))
+    })
+    # Parsed store: list(recs = named gene-set records, name = source file name).
+    gsfile_parsed <- reactiveVal(NULL)
+    observeEvent(input$gsfile_load, {
+      f <- input$gsfile_file
+      if (is.null(f)) { showNotification("Choose a file first.", type = "warning"); return() }
+      recs <- tryCatch(gene_sets_from_file(f$datapath, name = f$name),
+                       error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
+      if (is.null(recs)) return()
+      if (!length(recs)) {
+        showNotification("No gene sets found in that file.", type = "warning")
+        gsfile_parsed(NULL); return()
+      }
+      gsfile_parsed(list(recs = recs, name = f$name))
+    })
+    # A file may use a DIFFERENT id scheme than this dataset's rownames (e.g. a
+    # gene_name column from another pipeline), so the same match-field scheme as
+    # the table import applies: pick what the file's IDs match against, keep-all
+    # vs first when a name hits several features, and a "keep IDs not in the
+    # dataset" escape hatch. The match field is auto-detected on load.
+    output$gsfile_controls <- renderUI({
+      p <- gsfile_parsed(); req(p, state$working)
+      q <- unique(unlist(lapply(p$recs, `[[`, "ids"), use.names = FALSE))
+      det <- .gs_best_match_field(q, state$working)
+      tagList(
+        bslib::tooltip(
+          selectInput(ns("gsfile_match_by"), "Match against (dataset)",
+                      choices = feature_search_choices(
+                        SummarizedExperiment::rowData(state$working)),
+                      selected = det),
+          "Which part of the dataset the file's IDs match -- the feature IDs (row names) or a rowData column such as gene_name. Auto-detected from the file; override if needed.",
+          placement = "right"),
+        uiOutput(ns("gsfile_match_opts")))
+    })
+    # Keep-all vs first-only for a name column. (The keep-unmatched toggle moved
+    # to the Preview accordion.)
+    output$gsfile_match_opts <- renderUI({
+      if (identical(input$gsfile_match_by %||% "__rownames__", "__rownames__"))
+        return(NULL)
+      bslib::tooltip(
+        radioButtons(ns("gsfile_multi"), "When a name matches several features",
+                     c("Keep all matches" = "all", "First match only" = "first"),
+                     selected = "all", inline = TRUE),
+        "A gene name can map to several features. Keep all adds every match; First only keeps one.",
+        placement = "top")
+    })
+    # dataset-value -> row indices for the chosen match column (NULL for rownames).
+    # trimws both sides (file ids are trimmed at resolve time) so a rowData value
+    # with stray whitespace still matches a clean file id.
+    gsfile_match_index <- reactive({
+      field <- input$gsfile_match_by %||% "__rownames__"
+      if (identical(field, "__rownames__") || is.null(state$working)) return(NULL)
+      vals <- trimws(as.character(as.data.frame(
+        SummarizedExperiment::rowData(state$working), optional = TRUE)[[field]]))
+      split(seq_along(vals), vals)                      # NA-valued features drop out
+    })
+    # Resolve each set's file IDs -> dataset ids (1:many keep-all, or first), with
+    # the literal escape hatch. Returns per-set resolved ids + the pooled misses.
+    gsfile_resolved <- reactive({
+      p <- gsfile_parsed()
+      if (is.null(p) || !length(p$recs) || is.null(state$working)) return(NULL)
+      field <- input$gsfile_match_by %||% "__rownames__"
+      rn <- rownames(state$working)
+      keep_all <- !identical(input$gsfile_multi %||% "all", "first")
+      literal  <- isTRUE(input$gsfile_literal)
+      idx <- gsfile_match_index()
+      resolve_one <- function(raw) {                    # one file id -> dataset id(s)
+        if (identical(field, "__rownames__"))
+          return(if (raw %in% rn) raw else character(0))
+        h <- rn[idx[[raw]] %||% integer(0)]
+        if (!length(h) || keep_all) h else h[1]
+      }
+      per <- lapply(p$recs, function(r) {
+        raw  <- unique(trimws(as.character(r$ids))); raw <- raw[nzchar(raw)]
+        hits <- lapply(raw, resolve_one)
+        miss <- raw[lengths(hits) == 0L]
+        ids  <- unique(unlist(hits, use.names = FALSE))
+        if (literal) ids <- unique(c(ids, miss))
+        list(ids = ids, miss = miss)
+      })
+      list(sets = lapply(per, `[[`, "ids"),
+           unmatched = unique(unlist(lapply(per, `[[`, "miss"), use.names = FALSE)))
+    })
+    # Resolved id-vectors only (the staged() contract). A file's kind/annotation
+    # aren't carried and its source is relabelled "import: <file>" on commit --
+    # lossless for P6's simple sets; TODO(P7): an annotated import would downgrade
+    # to simple here, so the annotated layer must resolve records, not just ids.
+    gsfile_staged <- reactive({
+      r <- gsfile_resolved(); if (is.null(r)) return(list())
+      r$sets[lengths(r$sets) > 0L]                      # drop sets that resolved empty
+    })
+    output$gsfile_summary <- renderUI({
+      p <- gsfile_parsed(); if (is.null(p)) return(NULL)
+      r <- gsfile_resolved()
+      tot   <- length(unique(unlist(lapply(p$recs, `[[`, "ids"), use.names = FALSE)))
+      n_res <- if (is.null(r)) 0L else length(unique(unlist(r$sets, use.names = FALSE)))
+      n_mis <- if (is.null(r)) 0L else length(r$unmatched)
+      tags$div(class = "small text-muted mt-2",
+               sprintf("Loaded %d set(s), %d unique gene(s) from '%s'. %d ID(s) resolved%s.",
+                       length(p$recs), tot, p$name, n_res,
+                       if (n_mis) sprintf(" (%d unmatched)", n_mis) else ""))
+    })
+
     # The active source's provenance label + its staged sets (named list).
     staged_source <- function() switch(input$source %||% "paste",
       paste = "paste", deg = paste0("DE: ", input$deg_contrast %||% ""),
       topvar = "top-variable",
       file = paste0("import: ", (tbl_src() %||% list(name = "table"))$name),
+      gsfile = paste0("import: ", (gsfile_parsed() %||% list(name = "file"))$name),
       "manual")
     # The parameters that DEFINE the staged set. Because a set is an authored
     # snapshot (its thresholds are local to this page and the user may move them
@@ -485,12 +638,18 @@ mod_geneset_server <- function(id, state) {
                   sep = input$tbl_sep %||% ".",
                   literal_unmatched = isTRUE(input$tbl_literal) &&
                     identical(input$tbl_match_by %||% "__rownames__", "__rownames__")),
+      gsfile = list(file = (gsfile_parsed() %||% list(name = ""))$name,
+                    match_by = input$gsfile_match_by %||% "__rownames__",
+                    multi = if (identical(input$gsfile_match_by %||% "__rownames__", "__rownames__"))
+                      NA_character_ else (input$gsfile_multi %||% "all"),
+                    literal_unmatched = isTRUE(input$gsfile_literal)),
       list())
     # The staged sets: a NAMED LIST, so a source may stage one set (paste / DE /
     # top-variable) or many (an annotation-split import).
     staged <- reactive({
       src <- input$source %||% "paste"
       if (identical(src, "file")) return(tbl_staged())
+      if (identical(src, "gsfile")) return(gsfile_staged())
       ids <- switch(src,
         paste  = paste_ids(),
         deg    = tryCatch(deg_ids(), error = function(e) character(0)),
@@ -521,6 +680,11 @@ mod_geneset_server <- function(id, state) {
         if (isTRUE(input$tbl_literal) && can) return(list(n = 0L, can = can))
         return(list(n = sum(is.na(sub$.gs_id)), can = can))
       }
+      if (identical(src, "gsfile")) {
+        if (isTRUE(input$gsfile_literal)) return(list(n = 0L, can = TRUE))
+        r <- gsfile_resolved()
+        return(list(n = if (is.null(r)) 0L else length(r$unmatched), can = TRUE))
+      }
       list(n = 0L, can = FALSE)
     }
     output$preview_head <- renderUI({
@@ -534,7 +698,7 @@ mod_geneset_server <- function(id, state) {
       warn <- if (d$n > 0L)
         tags$div(class = "small text-warning mb-1",
           sprintf("%d ID(s) not in the dataset were left out.%s", d$n,
-                  if (d$can) " Turn on 'keep unmatched as literal IDs' to include them." else ""))
+                  if (d$can) " Turn on the 'keep unmatched IDs' option to include them." else ""))
       tagList(warn,
               tags$div(class = "small text-muted mb-1", txt),
               if (n > 1L) selectizeInput(ns("preview_pick"), NULL, choices = names(st)))
@@ -558,7 +722,9 @@ mod_geneset_server <- function(id, state) {
         topvar = updateNumericInput(session, "topvar_n", value = 100),
         file   = { tbl_src(NULL)                                 # drop the loaded table
                    tbl_nonce(shiny::isolate(tbl_nonce()) + 1L)   # rebuild -> resets the file input
-                   updateSelectizeInput(session, "tbl_anno_cols", selected = character(0)) })
+                   updateSelectizeInput(session, "tbl_anno_cols", selected = character(0)) },
+        gsfile = { gsfile_parsed(NULL)                           # drop the loaded sets
+                   gsfile_nonce(shiny::isolate(gsfile_nonce()) + 1L) })   # reset the file input
     })
 
     # =====================================================================
@@ -569,7 +735,10 @@ mod_geneset_server <- function(id, state) {
     # An explicit renderText (not a bare reactive) so the value is a plain "1"/"0"
     # for the conditionalPanel JS; suspendWhenHidden = FALSE keeps it live while
     # the panel it drives is hidden.
-    output$multi_staged <- renderText(if (length(staged()) > 1L) "1" else "0")
+    # A gene-set file already carries named sets, so it always uses the multi-set
+    # Save UI (which commits under those names) even when it holds a single set.
+    output$multi_staged <- renderText(
+      if (length(staged()) > 1L || identical(input$source %||% "paste", "gsfile")) "1" else "0")
     outputOptions(output, "multi_staged", suspendWhenHidden = FALSE)
 
     output$save_note <- renderUI({
@@ -588,7 +757,11 @@ mod_geneset_server <- function(id, state) {
       if (!identical(nms, shiny::isolate(staged_names_rv()))) staged_names_rv(nms)
     })
     output$multi_save <- renderUI({
-      nms <- staged_names_rv(); if (length(nms) <= 1L) return(NULL)
+      # >1 staged set, or a gene-set-file import of any size (names come from it).
+      nms <- staged_names_rv()
+      if (!length(nms) ||
+          (length(nms) == 1L && !identical(input$source %||% "paste", "gsfile")))
+        return(NULL)
       pick_id <- ns("multi_pick")
       tagList(
         # Cap the selected-items box height so many staged sets don't grow the UI
@@ -598,6 +771,9 @@ mod_geneset_server <- function(id, state) {
           pick_id))),
         selectizeInput(pick_id, "Staged sets to save", choices = nms,
                        selected = nms, multiple = TRUE),
+        tags$div(class = "d-flex gap-2 mb-2",
+          actionButton(ns("multi_all"), "Select all", class = "btn-sm btn-outline-secondary"),
+          actionButton(ns("multi_none"), "Deselect all", class = "btn-sm btn-outline-secondary")),
         .gs_pills(ns("multi_mode"), c("Create new sets" = "new", "Add to existing" = "add"),
                   selected = "new"),
         conditionalPanel(
@@ -614,6 +790,10 @@ mod_geneset_server <- function(id, state) {
                        style = .gs_action_style, icon = shiny::icon("plus"))))
     })
     multi_pick <- reactive(intersect(input$multi_pick %||% character(0), names(staged())))
+    observeEvent(input$multi_all,
+      updateSelectizeInput(session, "multi_pick", selected = names(staged())))
+    observeEvent(input$multi_none,
+      updateSelectizeInput(session, "multi_pick", selected = character(0)))
     multi_final_names <- reactive(paste0(trimws(input$multi_prefix %||% ""), multi_pick()))
     output$multi_conflicts <- renderUI({
       clash <- intersect(multi_final_names(), names(state$gene_sets))
@@ -780,6 +960,76 @@ mod_geneset_server <- function(id, state) {
       nm <- selected_name(); req(!is.null(nm), !is.null(state$gene_sets[[nm]]))
       dt_table(members_frame(state$gene_sets[[nm]]$ids), page_length = 10L)
     })
+
+    # --- Export: write a SELECTED subset of the store to JSON / GMT / TSV ----
+    # JSON is the faithful mirror (round-trips source/kind); GMT and TSV are
+    # interchange formats. The Import source pill reads any of them back. A live,
+    # capped preview shows exactly what will download (mirrors the Palette tab).
+    output$export_ui <- renderUI({
+      nms <- names(state$gene_sets)                     # re-renders on add/delete/rename
+      if (!length(nms))
+        return(helpText(class = "small text-muted", "Create a gene set to enable export."))
+      cur <- shiny::isolate(input$export_which)
+      sel <- if (!is.null(cur)) intersect(cur, nms) else nms
+      tagList(
+        # Cap the selected-items box height so many sets don't grow the UI.
+        tags$style(HTML(sprintf(
+          "#%s + .selectize-control .selectize-input { max-height: 110px; overflow-y: auto; }",
+          ns("export_which")))),
+        selectInput(ns("export_fmt"), "Format",
+                    c("JSON (faithful, recommended)" = "json",
+                      "GMT (MSigDB)" = "gmt", "TSV (long: set / id)" = "tsv"),
+                    selected = shiny::isolate(input$export_fmt) %||% "json"),
+        selectizeInput(ns("export_which"), "Sets to export", choices = nms,
+                       selected = sel, multiple = TRUE),
+        tags$div(class = "d-flex gap-2 mb-2",
+          actionButton(ns("export_all"), "Select all", class = "btn-sm btn-outline-secondary"),
+          actionButton(ns("export_none"), "Deselect all", class = "btn-sm btn-outline-secondary")),
+        downloadButton(ns("export_dl"), "Download", class = "btn btn-sm fw-semibold",
+                       style = .gs_action_style))
+    })
+    observeEvent(input$export_all,
+      updateSelectizeInput(session, "export_which", selected = names(state$gene_sets)))
+    observeEvent(input$export_none,
+      updateSelectizeInput(session, "export_which", selected = character(0)))
+    # The selected sets. An emptied `selectize` reports NULL (not character(0)),
+    # so treat absent selection as "nothing selected" -- the initial all-selected
+    # state comes from the render default (`selected = sel`), which the browser
+    # reflects into input on first paint. (Mirrors the Palette export selector;
+    # using NULL as an "all" sentinel would make Deselect-all silently export all.)
+    export_sets <- reactive({
+      nms <- names(state$gene_sets); if (!length(nms)) return(list())
+      state$gene_sets[intersect(input$export_which %||% character(0), nms)]
+    })
+    export_txt <- reactive({
+      switch(input$export_fmt %||% "json",
+        json = gene_sets_to_json(export_sets()),
+        gmt  = gene_sets_to_gmt(export_sets()),
+        tsv  = gene_sets_to_tsv(export_sets()))
+    })
+    output$export_preview_ui <- renderUI({
+      if (!length(state$gene_sets))
+        return(helpText(class = "small text-muted", "Create a gene set to preview the export."))
+      # Cap the previewed text (not just its box height) so a large store doesn't
+      # push thousands of lines into the DOM; the full content still downloads.
+      lines <- strsplit(export_txt(), "\n", fixed = TRUE)[[1]]
+      cap <- 300L
+      shown <- if (length(lines) > cap)
+        paste0(paste(utils::head(lines, cap), collapse = "\n"),
+               sprintf("\n... (%d more lines; full content downloads)", length(lines) - cap))
+      else export_txt()
+      tagList(
+        helpText(class = "small text-muted mb-1",
+                 sprintf("%d of %d set(s) selected.",
+                         length(export_sets()), length(state$gene_sets))),
+        tags$pre(class = "border rounded p-2 mb-0",
+                 style = "max-height: 240px; overflow: auto; font-size: 0.8em; white-space: pre;",
+                 shown))
+    })
+    output$export_dl <- downloadHandler(
+      filename = function()
+        sprintf("ddsdashboard-gene-sets-%s.%s", Sys.Date(), input$export_fmt %||% "json"),
+      content = function(file) writeLines(export_txt(), file))
 
     # --- Rename / Delete / Clear -------------------------------------------
     observeEvent(input$rename, {
