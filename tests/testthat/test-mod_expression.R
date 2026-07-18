@@ -31,6 +31,15 @@ test_that("single-gene plot builds; value matrix caches; gene id drives the sig"
     # value matrix cached in derived under expr_value_mat, keyed on the assay
     expect_equal(get("expr_value_mat", envir = state$derived)$params, list("logcounts"))
     expect_s3_class(build_gene_gg(FALSE), "ggplot")
+
+    # per-layer styling controls feed the plot (live re-plot, no deferred re-run)
+    session$setInputs(violin_width = 1.2, violin_alpha = 0.5, box_width = 0.3,
+                      box_alpha = 0.6, dot_size = 3, dot_method = "quasirandom",
+                      dot_width = 0.2, dot_cex = 1.5)
+    session$flushReact()
+    expect_silent(ggplot2::ggplot_build(build_gene_gg(FALSE)))   # quasirandom: no warning
+    session$setInputs(dot_method = "beeswarm"); session$flushReact()
+    expect_silent(ggplot2::ggplot_build(build_gene_gg(FALSE)))   # beeswarm + cex: no warning
   })
 })
 

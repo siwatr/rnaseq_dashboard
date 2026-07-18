@@ -17,6 +17,10 @@
                               show_violin = TRUE, show_box = TRUE, show_dots = TRUE,
                               disc_colour = FALSE, colour_lab = NULL,
                               fill_scale = NULL, colour_scale = NULL,
+                              violin_width = 0.9, violin_alpha = 0.35,
+                              box_width = 0.18, box_alpha = 0.7,
+                              dot_method = "quasirandom", dot_size = 1.9,
+                              dot_width = 0.4, dot_cex = 1,
                               legend_pos = "right", dark_theme = FALSE,
                               interactive = FALSE) {
   p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$group, y = .data$value))
@@ -24,12 +28,12 @@
   colour_map <- if (!is.null(df$colour)) ggplot2::aes(colour = .data$colour) else NULL
 
   if (isTRUE(show_violin))
-    p <- p + ggplot2::geom_violin(mapping = fill_map, alpha = 0.35,
-                                  colour = NA, scale = "width",
+    p <- p + ggplot2::geom_violin(mapping = fill_map, alpha = violin_alpha,
+                                  colour = NA, scale = "width", width = violin_width,
                                   show.legend = disc_colour)
   if (isTRUE(show_box))
-    p <- p + ggplot2::geom_boxplot(mapping = fill_map, width = 0.18,
-                                   alpha = 0.7, outlier.shape = NA,
+    p <- p + ggplot2::geom_boxplot(mapping = fill_map, width = box_width,
+                                   alpha = box_alpha, outlier.shape = NA,
                                    show.legend = FALSE)
   if (isTRUE(show_dots)) {
     dot_aes <- colour_map
@@ -37,12 +41,17 @@
       dot_aes <- if (is.null(dot_aes)) ggplot2::aes(text = .data$text)
                  else utils::modifyList(dot_aes, ggplot2::aes(text = .data$text))
     }
-    dot_args <- list(mapping = dot_aes, size = 1.9, alpha = 0.9)
-    p <- p + if (requireNamespace("ggbeeswarm", quietly = TRUE)) {
-      do.call(ggbeeswarm::geom_quasirandom, dot_args)
+    dot_args <- list(mapping = dot_aes, size = dot_size, alpha = 0.9)
+    # cex (point spacing) is native to the beeswarm layout; width (max spread) to
+    # quasirandom / jitter. Keeping each control on its own method avoids the
+    # ggbeeswarm "duplicated size" warning that cex + a grouping aesthetic trips.
+    have_bees <- requireNamespace("ggbeeswarm", quietly = TRUE)
+    p <- p + if (have_bees && identical(dot_method, "beeswarm")) {
+      do.call(ggbeeswarm::geom_beeswarm, c(dot_args, list(cex = dot_cex)))
+    } else if (have_bees) {
+      do.call(ggbeeswarm::geom_quasirandom, c(dot_args, list(width = dot_width)))
     } else {
-      do.call(ggplot2::geom_jitter,
-              c(dot_args, list(width = 0.18, height = 0)))
+      do.call(ggplot2::geom_jitter, c(dot_args, list(width = dot_width, height = 0)))
     }
   }
 
@@ -71,6 +80,11 @@ mod_expression_ui <- function(id) {
       bslib::layout_sidebar(
         sidebar = bslib::sidebar(
           title = tags$h3("Single gene", class = "fs-6 mb-0"), width = 340,
+          # Render controls stay static above the accordions (not tucked away).
+          tags$div(class = "d-flex align-items-center gap-2 mb-1",
+                   tags$div(class = "flex-grow-1", uiOutput(ns("auto_ui"))),
+                   actionButton(ns("render"), "Render", icon = icon("play"),
+                                class = "btn-primary")),
           bslib::accordion(
             open = c("Gene", "Grouping & colour"),
             bslib::accordion_panel(
@@ -89,10 +103,24 @@ mod_expression_ui <- function(id) {
               uiOutput(ns("geom_ui"))
             ),
             bslib::accordion_panel(
-              "Render", icon = icon("play"),
-              uiOutput(ns("auto_ui")),
-              actionButton(ns("render"), "Render", icon = icon("play"),
-                           class = "btn-primary")
+              "Layer styling", icon = icon("sliders"),
+              tags$div(class = "small fw-semibold mb-1", "Violin"),
+              sliderInput(ns("violin_width"), "Width", 0.2, 1.5, 0.9, 0.05),
+              sliderInput(ns("violin_alpha"), "Opacity", 0, 1, 0.35, 0.05),
+              tags$hr(class = "my-2"),
+              tags$div(class = "small fw-semibold mb-1", "Boxplot"),
+              sliderInput(ns("box_width"), "Width", 0.05, 0.8, 0.18, 0.01),
+              sliderInput(ns("box_alpha"), "Opacity", 0, 1, 0.7, 0.05),
+              tags$hr(class = "my-2"),
+              tags$div(class = "small fw-semibold mb-1", "Data points"),
+              sliderInput(ns("dot_size"), "Size", 0.25, 5, 1.9, 0.25),
+              uiOutput(ns("dot_method_ui")),
+              conditionalPanel(
+                sprintf("input['%s'] != 'beeswarm'", ns("dot_method")),
+                sliderInput(ns("dot_width"), "Spread (width)", 0, 0.5, 0.4, 0.05)),
+              conditionalPanel(
+                sprintf("input['%s'] == 'beeswarm'", ns("dot_method")),
+                sliderInput(ns("dot_cex"), "Point spacing (cex)", 0.2, 3, 1, 0.1))
             )
           ),
           plot_subset_ui(ns, "expr")
@@ -163,6 +191,18 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
     output$auto_ui <- renderUI({
       req(state$working)
       checkboxInput(ns("auto"), "Auto-render", value = TRUE)
+    })
+    # Dot layout: beeswarm (cex spacing) vs quasirandom (width spread); jitter when
+    # ggbeeswarm is absent (a fixed note + a hidden method so the width control shows).
+    output$dot_method_ui <- renderUI({
+      # No ggbeeswarm -> jittered points; leave dot_method unset so the width
+      # (spread) control still shows via its conditionalPanel.
+      if (!requireNamespace("ggbeeswarm", quietly = TRUE))
+        return(helpText(class = "small text-muted",
+                        "ggbeeswarm not installed - using jittered points."))
+      selectInput(ns("dot_method"), "Layout",
+                  c("Quasirandom" = "quasirandom", "Beeswarm" = "beeswarm"),
+                  selected = "quasirandom")
     })
 
     # The shared gene-search + expr-value controls.
@@ -287,6 +327,11 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
         disc_colour = disc, colour_lab = if (!is.null(cr)) cr$lab else NULL,
         fill_scale = if (!is.null(cr)) cr$fill_scale else NULL,
         colour_scale = if (!is.null(cr)) cr$colour_scale else NULL,
+        violin_width = input$violin_width %||% 0.9, violin_alpha = input$violin_alpha %||% 0.35,
+        box_width = input$box_width %||% 0.18, box_alpha = input$box_alpha %||% 0.7,
+        dot_method = input$dot_method %||% "quasirandom",
+        dot_size = input$dot_size %||% 1.9, dot_width = input$dot_width %||% 0.4,
+        dot_cex = input$dot_cex %||% 1,
         dark_theme = dark(), interactive = interactive)
     }
     dual_plot("gene", build_gene_gg, n_elements = reactive({
