@@ -22,6 +22,7 @@ dependencies:
   # Plotting / data wrangling / IO
   - r-ggplot2
   - r-ggrepel            # non-overlapping gene labels on DE plots (MA/volcano)
+  - r-ggbeeswarm         # dot swarm on the Expression single-gene plot (geom_jitter fallback)
   - r-plotly             # optional interactive plot engine (ggplotly); QC toggle
   - r-rcolorbrewer       # palette catalogue (Palette page: qual/seq/div)
   - r-viridislite        # viridis palette catalogue (Palette page)

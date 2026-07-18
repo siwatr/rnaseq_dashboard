@@ -37,6 +37,7 @@ Suggests:
     edgeR,
     eulerr,
     GenomicRanges,
+    ggbeeswarm,
     ggrepel,
     ggVennDiagram,
     IRanges,
