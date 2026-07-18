@@ -429,3 +429,61 @@ test_that("rename / delete act on the selected row; members follow selection", {
     expect_length(state$gene_sets, 0L)
   })
 })
+
+test_that("gene-set file import stages the file's named sets, then commits them", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 16))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+
+    # Export a two-set store to a GMT file, then import it back.
+    path <- withr::local_tempfile(fileext = ".gmt")
+    writeLines(gene_sets_to_gmt(list(SetA = new_gene_set(rn[1:3], source = "paste"),
+                                     SetB = new_gene_set(rn[4:5], source = "paste"))), path)
+
+    session$setInputs(source = "gsfile",
+                      gsfile_file = list(datapath = path, name = "mysets.gmt"))
+    session$setInputs(gsfile_load = 1); session$flushReact()
+    expect_setequal(names(staged()), c("SetA", "SetB"))
+    expect_setequal(staged()$SetA, rn[1:3])
+    expect_equal(output$multi_staged, "1")            # file import -> multi-set Save
+
+    session$setInputs(multi_pick = c("SetA", "SetB"), multi_mode = "new",
+                      multi_prefix = "", multi_autoname = FALSE)
+    session$flushReact()
+    session$setInputs(multi_create = 1); session$flushReact()
+    expect_setequal(names(state$gene_sets), c("SetA", "SetB"))
+    expect_setequal(state$gene_sets$SetA$ids, rn[1:3])
+    expect_match(state$gene_sets$SetA$source, "^import: mysets.gmt")
+
+    # A single-set file still routes to the multi-set Save (names come from it).
+    p2 <- withr::local_tempfile(fileext = ".json")
+    writeLines(gene_sets_to_json(list(Solo = new_gene_set(rn[6], source = "paste"))), p2)
+    session$setInputs(gsfile_file = list(datapath = p2, name = "solo.json"))
+    session$setInputs(gsfile_load = 1); session$flushReact()
+    expect_equal(names(staged()), "Solo")
+    expect_equal(output$multi_staged, "1")
+  })
+})
+
+test_that("the Export panel enables only when sets exist", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 17))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    # No sets -> placeholder (no format control).
+    expect_match(as.character(output$export_ui$html %||% output$export_ui), "enable export")
+
+    stage_paste(session, rownames(state$working)[1])
+    session$setInputs(save_mode = "new", new_name = "s"); session$setInputs(create = 1)
+    session$flushReact()
+    # Store round-trips through the chosen serializer.
+    js <- gene_sets_to_json(state$gene_sets)
+    expect_equal(gene_sets_from_json(js)$s$ids, rownames(state$working)[1])
+  })
+})

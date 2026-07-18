@@ -78,3 +78,78 @@ test_that("gene_set_present / gene_set_absent derive the live view (order-preser
   expect_equal(gene_set_present(c("g1", "gX"), feats), "g1")
   expect_equal(gene_set_absent(c("g1", "gX"), feats), "gX")
 })
+
+# ---- File round-trip (P6d): JSON / GMT / TSV serializers ------------------
+
+test_that("JSON round-trips ids, names, kind, source (faithful)", {
+  sets <- list(Up   = new_gene_set(c("g1", "g2", "g3"), source = "DE: A_vs_B"),
+               Solo = new_gene_set("g9", source = "paste"))
+  rt <- gene_sets_from_json(gene_sets_to_json(sets))
+  expect_equal(names(rt), names(sets))
+  expect_equal(lapply(rt, `[[`, "ids"), lapply(sets, `[[`, "ids"))
+  expect_equal(rt$Up$source, "DE: A_vs_B")            # source survives
+  expect_equal(rt$Solo$ids, "g9")                      # a 1-gene set stays an array
+  expect_equal(rt$Up$kind, "simple")
+})
+
+test_that("gene_sets_to_json emits an empty object for an empty store", {
+  js <- gene_sets_to_json(list())
+  expect_match(js, "\"gene_sets\": \\{\\}")
+  expect_length(gene_sets_from_json(js), 0L)
+})
+
+test_that("gene_sets_from_json tolerates a bare {name: [ids]} object", {
+  rt <- gene_sets_from_json('{"S1": ["a", "b"], "S2": ["c"]}')
+  expect_equal(names(rt), c("S1", "S2"))
+  expect_equal(rt$S1$ids, c("a", "b"))
+  expect_equal(rt$S1$kind, "simple")
+})
+
+test_that("GMT round-trips ids/names; source goes to the description field", {
+  sets <- list(Up = new_gene_set(c("g1", "g2"), source = "DE: A_vs_B"),
+               Dn = new_gene_set("g3", source = "paste"))
+  gmt <- gene_sets_to_gmt(sets)
+  expect_match(strsplit(gmt, "\n")[[1]][1], "^Up\tDE: A_vs_B\tg1\tg2$")
+  rt <- gene_sets_from_gmt(gmt)
+  expect_equal(names(rt), names(sets))
+  expect_equal(lapply(rt, `[[`, "ids"), lapply(sets, `[[`, "ids"))
+  expect_equal(rt$Up$source, "DE: A_vs_B")             # description -> source
+})
+
+test_that("gene_sets_from_gmt reads a description-less line and skips blanks", {
+  rt <- gene_sets_from_gmt(c("SetA\t\tg1\tg2", "", "SetB\tmy desc\tg3"))
+  expect_equal(names(rt), c("SetA", "SetB"))
+  expect_equal(rt$SetA$ids, c("g1", "g2"))
+  expect_equal(rt$SetA$source, "import: gmt")           # blank desc -> default label
+  expect_equal(rt$SetB$source, "my desc")
+})
+
+test_that("TSV round-trips ids/names via the long set/id form", {
+  sets <- list(Up = new_gene_set(c("g1", "g2")), Dn = new_gene_set("g3"))
+  tsv <- gene_sets_to_tsv(sets)
+  expect_match(strsplit(tsv, "\n")[[1]][1], "^set\tid\tannotation$")
+  rt <- gene_sets_from_tsv(tsv)
+  expect_equal(names(rt), names(sets))
+  expect_equal(lapply(rt, `[[`, "ids"), lapply(sets, `[[`, "ids"))
+})
+
+test_that("gene_sets_from_tsv requires set + id columns", {
+  expect_error(gene_sets_from_tsv("foo\tbar\nx\ty"), "set.*id")
+})
+
+test_that("gene_sets_from_file auto-detects format by extension", {
+  sets <- list(Up = new_gene_set(c("g1", "g2"), source = "paste"))
+  for (fmt in c("json", "gmt", "tsv")) {
+    tf <- tempfile(fileext = paste0(".", fmt))
+    writeLines(get(paste0("gene_sets_to_", fmt))(sets), tf)
+    rt <- gene_sets_from_file(tf)
+    expect_equal(names(rt), "Up", info = fmt)
+    expect_equal(rt$Up$ids, c("g1", "g2"), info = fmt)
+  }
+})
+
+test_that("gene_sets_from_file sniffs content when the extension is unknown", {
+  sets <- list(Up = new_gene_set(c("g1", "g2")))
+  tf <- tempfile(fileext = ".dat"); writeLines(gene_sets_to_json(sets), tf)
+  expect_equal(gene_sets_from_file(tf)$Up$ids, c("g1", "g2"))
+})

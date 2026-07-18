@@ -190,11 +190,16 @@ overlap UI, a `Palette > Gene Set` sub-tab) is **deferred to P7** with its heatm
   its **staging** Manage tab — "Build a gene set" (source pills → live Preview → New/Add Save,
   New rejects a name clash) beside "Your gene sets"; `staged()` = a named list following the
   active source, so the P6c import reuses the layout. + nav wiring. [PR #37]
-- **P6c ⬅️** rich tabular import (CSV/TSV/XLSX `dt_table` view/filter/select, ID-column pick +
-  `lookup_feature` matching, add-filtered / add-selected, annotation-split → N staged sets, live
-  stats) **+ the multi-set Save UI** (staged > 1: pick sets, name prefix, conflict resolver /
-  auto-rename, or union-add into existing). `.read_user_table` promoted to `load_helpers.R`. ⬜
-- **P6d** file round-trip — JSON/GMT/TSV serializers + Import-file source + Export block. ⬜
+- **P6c ✅** rich tabular import (CSV/TSV/XLSX `dt_table` view/filter/select, ID-column pick +
+  a **1:many keep-all** resolver — *not* `lookup_feature`, see the ID-match convention —
+  add-filtered / add-selected, annotation-split → N staged sets, live stats) **+ the multi-set
+  Save UI** (staged > 1: pick sets, name prefix, conflict resolver / auto-rename, or union-add
+  into existing). `.read_user_table` promoted to `load_helpers.R`. Doc-sync changed to per-PR. [PR #38]
+- **P6d ✅** file round-trip — `gene_sets_to_json`/`_gmt`/`_tsv` + inverses + a
+  `gene_sets_from_file()` extension/sniff dispatcher (JSON faithful — `source`/`kind`, 1-gene
+  array via `I()`; GMT `source`→description; long TSV `set`/`id`/`annotation`) + a **"Gene set
+  file" source pill** (named sets stage → the existing multi-set Save, non-destructive) + an
+  **Export** block (format selectize + download) in *Your gene sets*.
 - **P6e** Compare tab (Stats bar on `dual_plot`; Overlap Euler/Venn via `eulerr` ≤4 sets, UpSet
   via `ComplexHeatmap`) + a final doc consistency pass (doc-sync is now **per-PR**, not deferred
   here) + propose `v0.4.0`. ⬜

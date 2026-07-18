@@ -67,7 +67,7 @@ mod_geneset_ui <- function(id) {
               "1 · Select genes",
               .gs_pills(ns("source"),
                         c("Paste" = "paste", "From DE" = "deg", "Top-variable" = "topvar",
-                          "Import table" = "file"),
+                          "Import table" = "file", "Gene set file" = "gsfile"),
                         selected = "paste"),
               conditionalPanel(
                 cond("source", "paste"),
@@ -89,7 +89,17 @@ mod_geneset_ui <- function(id) {
                 uiOutput(ns("tbl_controls")),
                 uiOutput(ns("tbl_loaded_head")),
                 DT::DTOutput(ns("tbl_table")),
-                uiOutput(ns("tbl_stats")))),
+                uiOutput(ns("tbl_stats"))),
+              conditionalPanel(
+                cond("source", "gsfile"),
+                uiOutput(ns("gsfile_file_ui")),   # rebuilt on Clear so re-uploading works
+                actionButton(ns("gsfile_load"), "Load file", class = "btn-sm btn-primary",
+                             icon = shiny::icon("upload")),
+                helpText(class = "small text-muted",
+                         "A previously exported JSON, GMT, or long TSV (set / id) file. ",
+                         "Format is detected from the extension. The file's named sets are ",
+                         "staged below -- review, then save."),
+                uiOutput(ns("gsfile_summary")))),
             bslib::accordion_panel(
               "2 · Preview",
               uiOutput(ns("preview_head")),
@@ -159,7 +169,10 @@ mod_geneset_ui <- function(id) {
               bslib::accordion_panel(
                 "Set members",
                 uiOutput(ns("members_header")),
-                DT::DTOutput(ns("members_table"))))
+                DT::DTOutput(ns("members_table"))),
+              bslib::accordion_panel(
+                "Export gene sets",
+                uiOutput(ns("export_ui"))))
           )
         )
       )
@@ -452,11 +465,49 @@ mod_geneset_server <- function(id, state) {
         multi_note, grp)
     })
 
+    # ---- Gene set file import (P6d): a serialized JSON / GMT / TSV file ------
+    # A file already carries complete NAMED sets, so it stages them directly (the
+    # Preview shows them) and flows into the multi-set Save UI (New / Add) -- the
+    # same non-destructive path the annotation-split import uses. Like tbl, the
+    # fileInput is rebuilt under a nonce so re-selecting the same file re-fires.
+    gsfile_nonce <- reactiveVal(0L)
+    output$gsfile_file_ui <- renderUI({
+      gsfile_nonce()
+      fileInput(ns("gsfile_file"), "Gene set file (JSON / GMT / TSV)",
+                accept = c(".json", ".gmt", ".tsv", ".txt", ".csv"))
+    })
+    # Parsed store: list(recs = named gene-set records, name = source file name).
+    gsfile_parsed <- reactiveVal(NULL)
+    observeEvent(input$gsfile_load, {
+      f <- input$gsfile_file
+      if (is.null(f)) { showNotification("Choose a file first.", type = "warning"); return() }
+      recs <- tryCatch(gene_sets_from_file(f$datapath, name = f$name),
+                       error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
+      if (is.null(recs)) return()
+      if (!length(recs)) {
+        showNotification("No gene sets found in that file.", type = "warning")
+        gsfile_parsed(NULL); return()
+      }
+      gsfile_parsed(list(recs = recs, name = f$name))
+    })
+    gsfile_staged <- reactive({
+      p <- gsfile_parsed(); if (is.null(p) || !length(p$recs)) return(list())
+      lapply(p$recs, function(r) r$ids)
+    })
+    output$gsfile_summary <- renderUI({
+      p <- gsfile_parsed(); if (is.null(p)) return(NULL)
+      tot <- length(unique(unlist(lapply(p$recs, `[[`, "ids"), use.names = FALSE)))
+      tags$div(class = "small text-muted mt-2",
+               sprintf("Loaded %d set(s), %d unique gene(s) from '%s'.",
+                       length(p$recs), tot, p$name))
+    })
+
     # The active source's provenance label + its staged sets (named list).
     staged_source <- function() switch(input$source %||% "paste",
       paste = "paste", deg = paste0("DE: ", input$deg_contrast %||% ""),
       topvar = "top-variable",
       file = paste0("import: ", (tbl_src() %||% list(name = "table"))$name),
+      gsfile = paste0("import: ", (gsfile_parsed() %||% list(name = "file"))$name),
       "manual")
     # The parameters that DEFINE the staged set. Because a set is an authored
     # snapshot (its thresholds are local to this page and the user may move them
@@ -485,12 +536,14 @@ mod_geneset_server <- function(id, state) {
                   sep = input$tbl_sep %||% ".",
                   literal_unmatched = isTRUE(input$tbl_literal) &&
                     identical(input$tbl_match_by %||% "__rownames__", "__rownames__")),
+      gsfile = list(file = (gsfile_parsed() %||% list(name = ""))$name),
       list())
     # The staged sets: a NAMED LIST, so a source may stage one set (paste / DE /
     # top-variable) or many (an annotation-split import).
     staged <- reactive({
       src <- input$source %||% "paste"
       if (identical(src, "file")) return(tbl_staged())
+      if (identical(src, "gsfile")) return(gsfile_staged())
       ids <- switch(src,
         paste  = paste_ids(),
         deg    = tryCatch(deg_ids(), error = function(e) character(0)),
@@ -558,7 +611,9 @@ mod_geneset_server <- function(id, state) {
         topvar = updateNumericInput(session, "topvar_n", value = 100),
         file   = { tbl_src(NULL)                                 # drop the loaded table
                    tbl_nonce(shiny::isolate(tbl_nonce()) + 1L)   # rebuild -> resets the file input
-                   updateSelectizeInput(session, "tbl_anno_cols", selected = character(0)) })
+                   updateSelectizeInput(session, "tbl_anno_cols", selected = character(0)) },
+        gsfile = { gsfile_parsed(NULL)                           # drop the loaded sets
+                   gsfile_nonce(shiny::isolate(gsfile_nonce()) + 1L) })   # reset the file input
     })
 
     # =====================================================================
@@ -569,7 +624,10 @@ mod_geneset_server <- function(id, state) {
     # An explicit renderText (not a bare reactive) so the value is a plain "1"/"0"
     # for the conditionalPanel JS; suspendWhenHidden = FALSE keeps it live while
     # the panel it drives is hidden.
-    output$multi_staged <- renderText(if (length(staged()) > 1L) "1" else "0")
+    # A gene-set file already carries named sets, so it always uses the multi-set
+    # Save UI (which commits under those names) even when it holds a single set.
+    output$multi_staged <- renderText(
+      if (length(staged()) > 1L || identical(input$source %||% "paste", "gsfile")) "1" else "0")
     outputOptions(output, "multi_staged", suspendWhenHidden = FALSE)
 
     output$save_note <- renderUI({
@@ -588,7 +646,11 @@ mod_geneset_server <- function(id, state) {
       if (!identical(nms, shiny::isolate(staged_names_rv()))) staged_names_rv(nms)
     })
     output$multi_save <- renderUI({
-      nms <- staged_names_rv(); if (length(nms) <= 1L) return(NULL)
+      # >1 staged set, or a gene-set-file import of any size (names come from it).
+      nms <- staged_names_rv()
+      if (!length(nms) ||
+          (length(nms) == 1L && !identical(input$source %||% "paste", "gsfile")))
+        return(NULL)
       pick_id <- ns("multi_pick")
       tagList(
         # Cap the selected-items box height so many staged sets don't grow the UI
@@ -780,6 +842,35 @@ mod_geneset_server <- function(id, state) {
       nm <- selected_name(); req(!is.null(nm), !is.null(state$gene_sets[[nm]]))
       dt_table(members_frame(state$gene_sets[[nm]]$ids), page_length = 10L)
     })
+
+    # --- Export: write the store to a JSON / GMT / TSV file -----------------
+    # JSON is the faithful mirror (round-trips source/kind); GMT and TSV are
+    # interchange formats. The Import source pill reads any of them back.
+    output$export_ui <- renderUI({
+      if (!length(state$gene_sets))
+        return(helpText(class = "small text-muted",
+                        "Create a gene set to enable export."))
+      tagList(
+        selectInput(ns("export_fmt"), "Format",
+                    c("JSON (faithful, recommended)" = "json",
+                      "GMT (MSigDB)" = "gmt", "TSV (long: set / id)" = "tsv"),
+                    selected = "json"),
+        helpText(class = "small text-muted",
+                 sprintf("%d set(s) will be written.", length(state$gene_sets))),
+        downloadButton(ns("export_dl"), "Download", class = "btn btn-sm fw-semibold",
+                       style = .gs_action_style))
+    })
+    output$export_dl <- downloadHandler(
+      filename = function()
+        sprintf("ddsdashboard-gene-sets-%s.%s", Sys.Date(), input$export_fmt %||% "json"),
+      content = function(file) {
+        sets <- state$gene_sets
+        txt <- switch(input$export_fmt %||% "json",
+          json = gene_sets_to_json(sets),
+          gmt  = gene_sets_to_gmt(sets),
+          tsv  = gene_sets_to_tsv(sets))
+        writeLines(txt, file)
+      })
 
     # --- Rename / Delete / Clear -------------------------------------------
     observeEvent(input$rename, {
