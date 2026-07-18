@@ -288,7 +288,8 @@ mod_geneset_ui <- function(id) {
                             "Decreasing size" = "dec", "Name (A-Z)" = "az",
                             "Name (Z-A)" = "za"), width = "170px"),
               bslib::input_switch(ns("stats_vertical"), "Vertical bars", value = FALSE),
-              tags$div(
+              tags$div(                                    # render controls: right side
+                class = "ms-auto",
                 checkboxInput(ns("stats_auto"), "Auto-render", value = TRUE),
                 actionButton(ns("stats_render"), "Render", icon = icon("play"),
                              class = "btn-primary btn-sm"))),
@@ -297,12 +298,14 @@ mod_geneset_ui <- function(id) {
           bslib::nav_panel(
             "Overlap",
             tags$div(
-              class = "d-flex flex-wrap align-items-end gap-3 mb-2",
+              class = "d-flex flex-wrap align-items-end gap-3 mb-1",
               uiOutput(ns("overlap_type_ui")),
-              tags$div(
+              tags$div(                                    # render controls: right side
+                class = "ms-auto",
                 checkboxInput(ns("overlap_auto"), "Auto-render", value = TRUE),
                 actionButton(ns("overlap_render"), "Render", icon = icon("play"),
                              class = "btn-primary btn-sm"))),
+            uiOutput(ns("overlap_eulerr_note")),           # its own line below the row
             uiOutput(ns("overlap_stale")),
             shinycssloaders::withSpinner(
               plotOutput(ns("overlap_plot"), height = "440px")))))
@@ -1279,11 +1282,12 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cur <- shiny::isolate(input$overlap_type)
       sel <- if (!is.null(cur) && cur %in% ch) cur
              else .gs_first_suitable_type(length(shiny::isolate(overlap_lst())), have_eulerr())
-      tagList(
-        selectInput(ns("overlap_type"), "Diagram type", choices = ch, selected = sel,
-                    width = "190px"),
-        if (!have_eulerr())
-          helpText(class = "small text-muted", "Install eulerr for Euler diagrams."))
+      selectInput(ns("overlap_type"), "Diagram type", choices = ch, selected = sel,
+                  width = "190px")
+    })
+    output$overlap_eulerr_note <- renderUI({
+      if (have_eulerr()) return(NULL)
+      tags$div(class = "small text-muted mb-2", "Install eulerr for Euler diagrams.")
     })
     # Default-follow-count until the user picks a type. prog_update marks OUR own
     # updateSelectInput so the touched-flag observer ignores it (vs a real pick).
