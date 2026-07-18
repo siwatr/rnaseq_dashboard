@@ -198,8 +198,10 @@ overlap UI, a `Palette > Gene Set` sub-tab) is **deferred to P7** with its heatm
 - **P6d ✅** file round-trip — `gene_sets_to_json`/`_gmt`/`_tsv` + inverses + a
   `gene_sets_from_file()` extension/sniff dispatcher (JSON faithful — `source`/`kind`, 1-gene
   array via `I()`; GMT `source`→description; long TSV `set`/`id`/`annotation`) + a **"Gene set
-  file" source pill** (named sets stage → the existing multi-set Save, non-destructive) + an
-  **Export** block (format selectize + download) in *Your gene sets*.
+  file" source pill** (named sets stage → the existing multi-set Save, non-destructive; reuses
+  the table-import ID-match scheme — match field auto-detect, keep-all/first, keep-unmatched — so
+  a foreign id scheme like `gene_name` resolves) + a standalone **Export** section (selective set
+  multi-selector + Select/Deselect all + format selectize + a live capped Preview).
 - **P6e** Compare tab (Stats bar on `dual_plot`; Overlap Euler/Venn via `eulerr` ≤4 sets, UpSet
   via `ComplexHeatmap`) + a final doc consistency pass (doc-sync is now **per-PR**, not deferred
   here) + propose `v0.4.0`. ⬜

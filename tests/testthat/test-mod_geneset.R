@@ -469,21 +469,63 @@ test_that("gene-set file import stages the file's named sets, then commits them"
   })
 })
 
-test_that("the Export panel enables only when sets exist", {
+test_that("gene-set file import matches by a name column and honours keep-unmatched", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 18))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    gn <- as.character(SummarizedExperiment::rowData(state$working)$gene_name)
+
+    # A file authored with gene NAMES + one name absent from the dataset.
+    path <- withr::local_tempfile(fileext = ".gmt")
+    writeLines(gene_sets_to_gmt(list(
+      NameSet = new_gene_set(c(gn[1:3], "MISSING_NAME"), source = "paste"))), path)
+    session$setInputs(source = "gsfile",
+                      gsfile_file = list(datapath = path, name = "names.gmt"))
+    session$setInputs(gsfile_load = 1); session$flushReact()
+
+    # Matching against gene_name resolves the names to feature ids; the absent
+    # name is dropped by default (literal off).
+    session$setInputs(gsfile_match_by = "gene_name", gsfile_multi = "all",
+                      gsfile_literal = FALSE)
+    session$flushReact()
+    expect_setequal(staged()$NameSet, rn[1:3])
+    expect_equal(gsfile_resolved()$unmatched, "MISSING_NAME")
+
+    # Keep-unmatched adds the absent id verbatim (non-destructive authorship).
+    session$setInputs(gsfile_literal = TRUE); session$flushReact()
+    expect_setequal(staged()$NameSet, c(rn[1:3], "MISSING_NAME"))
+  })
+})
+
+test_that("Export enables only with sets, and exports the selected subset", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
   shiny::testServer(mod_geneset_server, args = list(state = state), {
     dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 17))
     state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
     session$flushReact()
-    # No sets -> placeholder (no format control).
-    expect_match(as.character(output$export_ui$html %||% output$export_ui), "enable export")
+    expect_match(as.character(output$export_ui$html), "enable export")
 
-    stage_paste(session, rownames(state$working)[1])
-    session$setInputs(save_mode = "new", new_name = "s"); session$setInputs(create = 1)
-    session$flushReact()
-    # Store round-trips through the chosen serializer.
-    js <- gene_sets_to_json(state$gene_sets)
-    expect_equal(gene_sets_from_json(js)$s$ids, rownames(state$working)[1])
+    rn <- rownames(state$working)
+    stage_paste(session, rn[1]);  session$setInputs(save_mode = "new", new_name = "A")
+    session$setInputs(create = 1); session$flushReact()
+    stage_paste(session, rn[2]);  session$setInputs(new_name = "B")
+    session$setInputs(create = 1); session$flushReact()
+    expect_setequal(names(state$gene_sets), c("A", "B"))
+
+    # Default: all sets selected -> both round-trip.
+    expect_setequal(names(export_sets()), c("A", "B"))
+    # Selecting a subset limits the export (and thus the download).
+    session$setInputs(export_fmt = "json", export_which = "A"); session$flushReact()
+    expect_equal(names(export_sets()), "A")
+    expect_equal(names(gene_sets_from_json(export_txt())), "A")
+    # An empty selection exports nothing (updateSelectizeInput doesn't round-trip
+    # into input under testServer, so set the empty selection directly).
+    session$setInputs(export_which = character(0)); session$flushReact()
+    expect_length(export_sets(), 0L)
   })
 })
