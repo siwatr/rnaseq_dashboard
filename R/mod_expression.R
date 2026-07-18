@@ -1,17 +1,24 @@
 # Page 7: Expression. A gene-expression browsing surface (renamed from the old
 # "Heatmap" stub). A navset_card_tab with two tabs:
 #   Single genes - one feature at a time as a layered violin -> box -> dots overlay,
-#                  grouped by a colData variable, reusing the shared plot machinery
-#                  (gene search, expr-value control, plot engine + deferred render,
-#                  "Showing" subset, aes_helpers colour).
-#   Gene sets    - a ComplexHeatmap over a named gene set (built in P7b).
+#                  grouped by a colData variable.
+#   Gene sets    - a navset_card_pill of:
+#                    Aggregate expression - the SAME layered overlay, but the y value
+#                      is a per-sample gene-set score (mean/median across the set's
+#                      genes; z-scored by default so highly-expressed genes do not
+#                      dominate). Source = a saved set or a quick (uncommitted) search.
+#                    Heatmap - a ComplexHeatmap over the set (built in P7c).
 #
-# Single-gene value extraction (esp. VST) is cached in `derived` and gated behind
-# the deferred Render button; geom toggles + colour are cheap live re-plots.
+# The single-gene and aggregate pills share the plot machinery (gene/set source,
+# expr-value control, plot engine + deferred render, "Showing" subset, aes_helpers
+# colour) via `.expr_dist_server()`: the (expensive) value matrix is cached in
+# `derived` behind the Render button, keyed on the assay; the per-gene lookup / the
+# set aggregation, grouping, colour, and geom toggles are cheap live re-plots.
 
-# Colour/fill scale + layered plot for one gene. `df` carries sample/group/value
-# (+ optional `colour`). Distribution geoms fill by a discrete colour attribute;
-# dots colour by it. ggbeeswarm draws the dots (geom_jitter fallback).
+# Colour/fill scale + layered plot for one value vector. `df` carries
+# sample/group/value (+ optional `colour`). Distribution geoms fill by a discrete
+# colour attribute; dots colour by it. ggbeeswarm draws the dots (geom_jitter
+# fallback). Shared by the single-gene and gene-set-aggregate pills.
 #' @importFrom ggplot2 .data
 .expr_single_plot <- function(df, x_lab, y_lab, title, subtitle = NULL,
                               show_violin = TRUE, show_box = TRUE, show_dots = TRUE,
@@ -69,84 +76,332 @@
   p
 }
 
+# --- Shared sidebar UI pieces (parameterized by a prefix so the single-gene and
+# gene-set pills get distinct, non-colliding input ids) ----------------------
+
+# The auto-render checkbox + Render button row.
+.expr_render_bar <- function(ns, prefix) {
+  nid <- function(x) ns(paste0(prefix, x))
+  tags$div(class = "d-flex align-items-center gap-2 mb-1",
+           tags$div(class = "flex-grow-1", uiOutput(nid("auto_ui"))),
+           actionButton(nid("render"), "Render", icon = icon("play"),
+                        class = "btn-primary"))
+}
+
+# The "Grouping & colour" accordion panel.
+.expr_grouping_panel <- function(ns, prefix) {
+  nid <- function(x) ns(paste0(prefix, x))
+  bslib::accordion_panel(
+    "Grouping & colour", icon = icon("layer-group"),
+    uiOutput(nid("x_group_ui")),
+    uiOutput(nid("colour_ui")))
+}
+
+# The "Plot elements" + "Layer styling" accordion panels (returned as a list so
+# the caller can splice them into an accordion via do.call).
+.expr_style_panels <- function(ns, prefix) {
+  nid <- function(x) ns(paste0(prefix, x))
+  list(
+    bslib::accordion_panel(
+      "Plot elements", icon = icon("chart-simple"),
+      uiOutput(nid("geom_ui"))),
+    bslib::accordion_panel(
+      "Layer styling", icon = icon("sliders"),
+      tags$h6(class = "fs-4 mb-1", "Violin"),
+      sliderInput(nid("violin_width"), "Width", 0.2, 1.5, 0.9, 0.05),
+      sliderInput(nid("violin_alpha"), "Opacity", 0, 1, 0.35, 0.05),
+      tags$hr(class = "my-2"),
+      tags$h6(class = "fs-4 mb-1", "Boxplot"),
+      sliderInput(nid("box_width"), "Width", 0.05, 0.8, 0.18, 0.01),
+      sliderInput(nid("box_alpha"), "Opacity", 0, 1, 0.7, 0.05),
+      tags$hr(class = "my-2"),
+      tags$h6(class = "fs-4 mb-1", "Data points"),
+      sliderInput(nid("dot_size"), "Size", 0.25, 5, 1.9, 0.25),
+      sliderInput(nid("dot_alpha"), "Opacity", 0, 1, 0.9, 0.05),
+      uiOutput(nid("dot_method_ui")),
+      conditionalPanel(
+        sprintf("input['%s'] != 'beeswarm'", nid("dot_method")),
+        sliderInput(nid("dot_width"), "Spread (width)", 0, 0.5, 0.4, 0.05)),
+      conditionalPanel(
+        sprintf("input['%s'] == 'beeswarm'", nid("dot_method")),
+        sliderInput(nid("dot_cex"), "Point spacing (cex)", 0.2, 3, 1, 0.1))))
+}
+
 mod_expression_ui <- function(id) {
   ns <- NS(id)
-  bslib::navset_card_tab(
-    id = ns("tabs"),
-    title = tags$h2("Expression", class = "fs-6 mb-0"),
 
-    # --- Single genes -------------------------------------------------------
-    bslib::nav_panel(
-      "Single genes",
-      bslib::layout_sidebar(
-        sidebar = bslib::sidebar(
-          title = tags$h3("Single gene", class = "fs-6 mb-0"), width = 340,
-          # Render controls stay static above the accordions (not tucked away).
-          tags$div(class = "d-flex align-items-center gap-2 mb-1",
-                   tags$div(class = "flex-grow-1", uiOutput(ns("auto_ui"))),
-                   actionButton(ns("render"), "Render", icon = icon("play"),
-                                class = "btn-primary")),
-          bslib::accordion(
-            open = c("Gene", "Grouping & colour"),
-            bslib::accordion_panel(
-              "Gene", icon = icon("magnifying-glass"),
-              gene_search_ui(ns, "gene", multiple = FALSE, dup_toggle = TRUE,
-                             placeholder = "e.g. Gene1"),
-              expr_value_ui(ns, "val")
-            ),
-            bslib::accordion_panel(
-              "Grouping & colour", icon = icon("layer-group"),
-              uiOutput(ns("x_group_ui")),
-              uiOutput(ns("colour_ui"))
-            ),
-            bslib::accordion_panel(
-              "Plot elements", icon = icon("chart-simple"),
-              uiOutput(ns("geom_ui"))
-            ),
-            bslib::accordion_panel(
-              "Layer styling", icon = icon("sliders"),
-              tags$h6(class = "fs-4 mb-1", "Violin"),
-              sliderInput(ns("violin_width"), "Width", 0.2, 1.5, 0.9, 0.05),
-              sliderInput(ns("violin_alpha"), "Opacity", 0, 1, 0.35, 0.05),
-              tags$hr(class = "my-2"),
-              tags$h6(class = "fs-4 mb-1", "Boxplot"),
-              sliderInput(ns("box_width"), "Width", 0.05, 0.8, 0.18, 0.01),
-              sliderInput(ns("box_alpha"), "Opacity", 0, 1, 0.7, 0.05),
-              tags$hr(class = "my-2"),
-              tags$h6(class = "fs-4 mb-1", "Data points"),
-              sliderInput(ns("dot_size"), "Size", 0.25, 5, 1.9, 0.25),
-              sliderInput(ns("dot_alpha"), "Opacity", 0, 1, 0.9, 0.05),
-              uiOutput(ns("dot_method_ui")),
-              conditionalPanel(
-                sprintf("input['%s'] != 'beeswarm'", ns("dot_method")),
-                sliderInput(ns("dot_width"), "Spread (width)", 0, 0.5, 0.4, 0.05)),
-              conditionalPanel(
-                sprintf("input['%s'] == 'beeswarm'", ns("dot_method")),
-                sliderInput(ns("dot_cex"), "Point spacing (cex)", 0.2, 3, 1, 0.1))
-            )
-          ),
-          plot_subset_ui(ns, "expr")
-        ),
-        bslib::card(
-          bslib::card_header(tags$h3("Single-gene expression", class = "fs-6 mb-0")),
-          uiOutput(ns("gene_stale")),
-          shinycssloaders::withSpinner(.plot_dual(ns("gene_container")),
-                                       proxy.height = "400px")
-        )
-      )
-    ),
-
-    # --- Gene sets (P7b) ----------------------------------------------------
-    bslib::nav_panel(
-      "Gene sets",
+  # --- Single genes -------------------------------------------------------
+  single_tab <- bslib::nav_panel(
+    "Single genes",
+    bslib::layout_sidebar(
+      sidebar = bslib::sidebar(
+        title = tags$h3("Single gene", class = "fs-6 mb-0"), width = 340,
+        .expr_render_bar(ns, ""),
+        do.call(bslib::accordion, c(
+          list(open = c("Gene", "Grouping & colour"),
+               bslib::accordion_panel(
+                 "Gene", icon = icon("magnifying-glass"),
+                 gene_search_ui(ns, "gene", multiple = FALSE, dup_toggle = TRUE,
+                                placeholder = "e.g. Gene1"),
+                 expr_value_ui(ns, "val")),
+               .expr_grouping_panel(ns, "")),
+          .expr_style_panels(ns, ""))),
+        plot_subset_ui(ns, "expr")
+      ),
       bslib::card(
-        bslib::card_body(
-          tags$p(class = "text-muted",
-                 "The gene-set expression heatmap is coming in the next update (P7b).")
-        )
+        bslib::card_header(tags$h3("Single-gene expression", class = "fs-6 mb-0")),
+        uiOutput(ns("gene_stale")),
+        shinycssloaders::withSpinner(.plot_dual(ns("gene_container")),
+                                     proxy.height = "400px")
       )
     )
   )
+
+  # --- Gene sets > Aggregate expression -----------------------------------
+  aggregate_pill <- bslib::nav_panel(
+    "Aggregate expression",
+    bslib::layout_sidebar(
+      sidebar = bslib::sidebar(
+        title = tags$h3("Gene-set score", class = "fs-6 mb-0"), width = 340,
+        .expr_render_bar(ns, "set_"),
+        do.call(bslib::accordion, c(
+          list(open = c("Gene set", "Aggregation"),
+               bslib::accordion_panel(
+                 "Gene set", icon = icon("magnifying-glass"),
+                 radioButtons(ns("set_source"), "Source",
+                              c("Saved set" = "saved", "Quick search" = "search"),
+                              inline = TRUE),
+                 conditionalPanel(
+                   sprintf("input['%s'] == 'saved'", ns("set_source")),
+                   uiOutput(ns("set_pick_ui"))),
+                 conditionalPanel(
+                   sprintf("input['%s'] == 'search'", ns("set_source")),
+                   gene_search_ui(ns, "setsearch", multiple = TRUE,
+                                  search_modes = c("exact", "contains", "regex"),
+                                  placeholder = "e.g. Actb, Gapdh, ENSG...")),
+                 expr_value_ui(ns, "set_val")),
+               bslib::accordion_panel(
+                 "Aggregation", icon = icon("calculator"),
+                 radioButtons(ns("set_method"), "Average across genes",
+                              c("Mean" = "mean", "Median" = "median"), inline = TRUE),
+                 bslib::input_switch(
+                   ns("set_zscore"),
+                   bslib::tooltip(
+                     tags$span("Z-score each gene"),
+                     "Standardize every gene across samples before averaging, so highly-expressed genes don't dominate the score. Recommended."),
+                   value = TRUE),
+                 bslib::input_switch(
+                   ns("set_only_expr"),
+                   bslib::tooltip(
+                     tags$span("Only genes with expression"),
+                     "Drop genes with zero counts in every sample before averaging."),
+                   value = TRUE)),
+               .expr_grouping_panel(ns, "set_")),
+          .expr_style_panels(ns, "set_"))),
+        plot_subset_ui(ns, "expr_set")
+      ),
+      bslib::card(
+        bslib::card_header(tags$h3("Gene-set aggregate expression", class = "fs-6 mb-0")),
+        uiOutput(ns("geneset_stale")),
+        shinycssloaders::withSpinner(.plot_dual(ns("geneset_container")),
+                                     proxy.height = "400px")
+      )
+    )
+  )
+
+  # --- Gene sets > Heatmap (P7c) ------------------------------------------
+  heatmap_pill <- bslib::nav_panel(
+    "Heatmap",
+    bslib::card(
+      bslib::card_body(
+        tags$p(class = "text-muted",
+               "The gene-set expression heatmap is coming in the next update (P7c).")
+      )
+    )
+  )
+
+  bslib::navset_card_tab(
+    id = ns("tabs"),
+    title = tags$h2("Expression", class = "fs-6 mb-0"),
+    single_tab,
+    bslib::nav_panel(
+      "Gene sets",
+      bslib::navset_card_pill(aggregate_pill, heatmap_pill)
+    )
+  )
+}
+
+# Shared server for a distribution-overlay pill (single gene OR gene-set score).
+# Wires grouping / colour / geom availability + toggles / layer styling, the
+# deferred (cached) value matrix, and the dual plot -- all keyed off `cfg$prefix`
+# so two instances coexist in one module. `cfg$reduce_factory(val_spec)` returns a
+# `function(mm)` turning the cached value matrix into the per-sample vector to plot
+# (`list(values, y_lab, title, subtitle, hover)`), or aborting via validate().
+# Returns the reactive handles the page (and tests) need.
+.expr_dist_server <- function(input, output, session, state, cfg) {
+  ns <- session$ns
+  P <- cfg$prefix
+  pid <- function(x) paste0(P, x)                 # module-relative input/output id
+  dark <- cfg$dark; eng <- cfg$engine
+  showing_samples <- cfg$showing_samples
+
+  val_spec <- expr_value_server(input, output, session, state, cfg$val_suffix,
+                                include_vst = TRUE, include_norm = TRUE,
+                                default_fn = expr_default_assay)
+  reduce <- cfg$reduce_factory(val_spec)
+
+  coldata <- function() as.data.frame(SummarizedExperiment::colData(state$working))
+  discrete_cols <- function() {
+    cd <- coldata()
+    if (!ncol(cd)) return(character(0))
+    names(cd)[vapply(cd, function(x) is.factor(x) || is.character(x) || is.logical(x),
+                     logical(1))]
+  }
+  default_x <- function() {
+    disc <- discrete_cols()
+    dv <- tryCatch(all.vars(DESeq2::design(state$working)), error = function(e) character(0))
+    if (length(dv) && dv[1] %in% disc) return(dv[1])
+    if (length(disc)) disc[1] else "__none__"
+  }
+
+  output[[pid("x_group_ui")]] <- renderUI({
+    req(state$working)
+    selectInput(ns(pid("x_group")), "Group by (x-axis)",
+                choices = group_field_choices(discrete_cols(), none = FALSE),
+                selected = default_x())
+  })
+  output[[pid("colour_ui")]] <- renderUI({
+    req(state$working)
+    selectInput(ns(pid("colour_by")), "Colour by",
+                choices = aes_choices(aes_catalog(state), none = TRUE),
+                selected = default_x())
+  })
+  output[[pid("auto_ui")]] <- renderUI({
+    req(state$working)
+    checkboxInput(ns(pid("auto")), "Auto-render", value = TRUE)
+  })
+  output[[pid("dot_method_ui")]] <- renderUI({
+    if (!requireNamespace("ggbeeswarm", quietly = TRUE))
+      return(helpText(class = "small text-muted",
+                      "ggbeeswarm not installed - using jittered points."))
+    selectInput(ns(pid("dot_method")), "Layout",
+                c("Quasirandom" = "quasirandom", "Beeswarm" = "beeswarm",
+                  "Jitter" = "jitter"),
+                selected = "quasirandom")
+  })
+
+  group_sizes <- reactive({
+    req(state$working, input[[pid("x_group")]])
+    cd <- coldata()
+    if (!input[[pid("x_group")]] %in% names(cd)) return(integer(0))
+    shown <- intersect(rownames(cd), showing_samples())
+    g <- cd[shown, input[[pid("x_group")]]]
+    tab <- table(g[!is.na(g)])
+    as.integer(tab[tab > 0])            # drop empty groups (e.g. filtered by "Showing")
+  })
+  geom_avail <- reactive(expr_geom_availability(group_sizes()))
+
+  output[[pid("geom_ui")]] <- renderUI({
+    av <- geom_avail()
+    dist <- isTRUE(av$dist_shown)
+    keep <- function(x, default) {
+      v <- shiny::isolate(input[[pid(x)]]); if (is.null(v)) default else isTRUE(v)
+    }
+    tagList(
+      if (dist) bslib::input_switch(ns(pid("show_violin")), "Violin",
+                                    value = keep("show_violin", TRUE))
+      else helpText(class = "small text-muted",
+                    "Violin / box hidden: groups are too small to summarize."),
+      if (dist) bslib::input_switch(ns(pid("show_box")), "Boxplot",
+                                    value = keep("show_box", TRUE)),
+      if (isTRUE(av$dots_allowed))
+        bslib::input_switch(ns(pid("show_dots")), "Data points",
+                            value = keep("show_dots", av$dots_default))
+      else helpText(class = "small text-muted",
+                    sprintf("Data points hidden: a group has %d+ samples (overplotting).",
+                            av$n_max))
+    )
+  })
+  on_flag <- function(x, allowed, default) {
+    if (!isTRUE(allowed)) return(FALSE)
+    v <- input[[pid(x)]]; if (is.null(v)) default else isTRUE(v)
+  }
+
+  colour_resolve <- function(samples) {
+    sel <- input[[pid("colour_by")]] %||% "__none__"
+    if (identical(sel, "__none__")) return(NULL)
+    res <- aes_resolve(state, sel, samples)
+    if (is.null(res)) return(NULL)
+    disc <- identical(res$kind, "discrete")
+    list(values = res$values, discrete = disc, lab = res$label,
+         fill_scale = if (disc) aes_ggplot_scale(res, "fill") else NULL,
+         colour_scale = aes_ggplot_scale(res, "colour"))
+  }
+
+  # Only the (expensive) value matrix is gated/cached behind Render, keyed on the
+  # assay. The per-gene / per-set reduction, grouping, and colour are cheap live
+  # re-plots; a not-in-matrix message surfaces in the plot builder (the deferred
+  # spec would swallow a validate()).
+  mat_spec <- reactive({
+    req(state$working)
+    assay <- val_spec()$assay
+    state_derive(state, cfg$derive_key, params = list(assay),
+                 expr = function() expr_value_matrix(state$working, assay))
+  })
+  mat_shown <- eng$deferred(pid("auto"), pid("render"), mat_spec,
+    sig = reactive(list(val_spec()$assay, state$data_version)))
+  output[[cfg$stale_id]] <- eng$stale_note(mat_shown)
+
+  build_gg <- function(interactive) {
+    mm <- mat_shown$value()
+    validate(need(!is.null(mm),
+                  "Click Render (or enable auto-render) to draw the plot."))
+    req(input[[pid("x_group")]])
+    red <- reduce(mm)
+    cd <- coldata()
+    validate(need(input[[pid("x_group")]] %in% names(cd), "Pick a grouping variable."))
+    shown <- intersect(names(red$values), showing_samples())
+    shown <- intersect(shown, rownames(cd))
+    validate(need(length(shown) > 0, "No samples in the current 'Showing' selection."))
+    groups <- cd[shown, input[[pid("x_group")]]]
+    cr <- colour_resolve(shown)
+    df <- expr_long_frame(red$values[shown], groups, shown,
+                          colour = if (!is.null(cr)) cr$values else NULL)
+    validate(need(nrow(df) > 0, "No samples with a non-missing group."))
+
+    av <- geom_avail()
+    sv <- on_flag("show_violin", av$dist_shown, TRUE)
+    sb <- on_flag("show_box",    av$dist_shown, TRUE)
+    sd <- on_flag("show_dots",   av$dots_allowed, av$dots_default)
+    validate(need(sv || sb || sd, "Enable at least one plot element."))
+    disc <- !is.null(cr) && isTRUE(cr$discrete)
+    if (interactive) df$text <- red$hover(df)
+
+    .expr_single_plot(
+      df, x_lab = input[[pid("x_group")]], y_lab = red$y_lab,
+      title = red$title, subtitle = red$subtitle,
+      show_violin = sv, show_box = sb, show_dots = sd,
+      disc_colour = disc, colour_lab = if (!is.null(cr)) cr$lab else NULL,
+      fill_scale = if (!is.null(cr)) cr$fill_scale else NULL,
+      colour_scale = if (!is.null(cr)) cr$colour_scale else NULL,
+      violin_width = input[[pid("violin_width")]] %||% 0.9,
+      violin_alpha = input[[pid("violin_alpha")]] %||% 0.35,
+      box_width = input[[pid("box_width")]] %||% 0.18,
+      box_alpha = input[[pid("box_alpha")]] %||% 0.7,
+      dot_method = input[[pid("dot_method")]] %||% "quasirandom",
+      dot_size = input[[pid("dot_size")]] %||% 1.9,
+      dot_alpha = input[[pid("dot_alpha")]] %||% 0.9,
+      dot_width = input[[pid("dot_width")]] %||% 0.4,
+      dot_cex = input[[pid("dot_cex")]] %||% 1,
+      dark_theme = dark(), interactive = interactive)
+  }
+  eng$dual_plot(cfg$plot_id, build_gg, n_elements = reactive({
+    mm <- mat_shown$value(); if (is.null(mm)) 0L
+    else length(intersect(colnames(mm$mat), showing_samples()))
+  }), height = "440px")
+
+  list(mat_shown = mat_shown, group_sizes = group_sizes, geom_avail = geom_avail,
+       build_gg = build_gg, reduce = reduce, val_spec = val_spec)
 }
 
 #' @param state the shared app-state object (see [new_app_state()]).
@@ -158,138 +413,17 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
     ns <- session$ns
     dark <- function() isTRUE(dark_mode())
     eng <- plot_engine_server(input, output, session, state)
-    dual_plot <- eng$dual_plot; deferred <- eng$deferred; stale_note <- eng$stale_note
-    showing_samples <- plot_subset_server(input, output, session, state, suffixes = "expr")
+    # One "Showing:" selection shared (synced) across both plot pills.
+    showing_samples <- plot_subset_server(input, output, session, state,
+                                          suffixes = c("expr", "expr_set"))
 
-    coldata <- function() as.data.frame(SummarizedExperiment::colData(state$working))
-    # Columns usable as a grouping x-axis: discrete (factor / character / logical).
-    discrete_cols <- function() {
-      cd <- coldata()
-      if (!ncol(cd)) return(character(0))
-      names(cd)[vapply(cd, function(x) is.factor(x) || is.character(x) || is.logical(x),
-                       logical(1))]
-    }
-    # Default grouping: first design variable if discrete, else first discrete col.
-    default_x <- function() {
-      disc <- discrete_cols()
-      dv <- tryCatch(all.vars(DESeq2::design(state$working)), error = function(e) character(0))
-      if (length(dv) && dv[1] %in% disc) return(dv[1])
-      if (length(disc)) disc[1] else "__none__"
-    }
-
-    # --- Sidebar controls ---------------------------------------------------
-    output$x_group_ui <- renderUI({
-      req(state$working)
-      selectInput(ns("x_group"), "Group by (x-axis)",
-                  choices = group_field_choices(discrete_cols(), none = FALSE),
-                  selected = default_x())
-    })
-    output$colour_ui <- renderUI({
-      req(state$working)
-      selectInput(ns("colour_by"), "Colour by",
-                  choices = aes_choices(aes_catalog(state), none = TRUE),
-                  selected = default_x())
-    })
-    output$auto_ui <- renderUI({
-      req(state$working)
-      checkboxInput(ns("auto"), "Auto-render", value = TRUE)
-    })
-    # Dot layout: beeswarm (cex spacing) vs quasirandom (width spread); jitter when
-    # ggbeeswarm is absent (a fixed note + a hidden method so the width control shows).
-    output$dot_method_ui <- renderUI({
-      # No ggbeeswarm -> jittered points; leave dot_method unset so the width
-      # (spread) control still shows via its conditionalPanel.
-      if (!requireNamespace("ggbeeswarm", quietly = TRUE))
-        return(helpText(class = "small text-muted",
-                        "ggbeeswarm not installed - using jittered points."))
-      selectInput(ns("dot_method"), "Layout",
-                  c("Quasirandom" = "quasirandom", "Beeswarm" = "beeswarm",
-                    "Jitter" = "jitter"),
-                  selected = "quasirandom")
-    })
-
-    # The shared gene-search + expr-value controls.
+    # ---- Single genes: gene search -> one row of the value matrix ----------
     gene_search <- gene_search_server(input, output, session, state, "gene",
                                       multiple = FALSE)
     gene_resolved <- reactive({
       r <- gene_search(); if (length(r$records)) r$records[[1]] else NULL
     })
-    val_spec <- expr_value_server(input, output, session, state, "val",
-                                  include_vst = TRUE, include_norm = TRUE,
-                                  default_fn = expr_default_assay)
-
-    # Per-group sample counts over the shown samples -> which geoms are offered.
-    group_sizes <- reactive({
-      req(state$working, input$x_group)
-      cd <- coldata()
-      if (!input$x_group %in% names(cd)) return(integer(0))
-      shown <- intersect(rownames(cd), showing_samples())
-      g <- cd[shown, input$x_group]
-      tab <- table(g[!is.na(g)])
-      as.integer(tab[tab > 0])            # drop empty groups (e.g. filtered out by "Showing")
-    })
-    geom_avail <- reactive(expr_geom_availability(group_sizes()))
-
-    # Geom toggles: dots offered always (disabled when the group is too large);
-    # violin/box only when at least one group is large enough to summarize.
-    output$geom_ui <- renderUI({
-      av <- geom_avail()
-      dist <- isTRUE(av$dist_shown)
-      # Preserve the user's current toggle across re-renders (this UI is rebuilt on
-      # a Showing / grouping change); fall back to the availability default.
-      keep <- function(id, default) {
-        v <- shiny::isolate(input[[id]]); if (is.null(v)) default else isTRUE(v)
-      }
-      tagList(
-        if (dist) bslib::input_switch(ns("show_violin"), "Violin", value = keep("show_violin", TRUE))
-        else helpText(class = "small text-muted",
-                      "Violin / box hidden: groups are too small to summarize."),
-        if (dist) bslib::input_switch(ns("show_box"), "Boxplot", value = keep("show_box", TRUE)),
-        if (isTRUE(av$dots_allowed))
-          bslib::input_switch(ns("show_dots"), "Data points",
-                              value = keep("show_dots", av$dots_default))
-        else helpText(class = "small text-muted",
-                      sprintf("Data points hidden: a group has %d+ samples (overplotting).",
-                              av$n_max))
-      )
-    })
-    # Resolve a toggle whose UI may be absent (dist hidden -> violin/box off;
-    # dots not allowed -> off), falling back to the availability default.
-    on_flag <- function(id, allowed, default) {
-      if (!isTRUE(allowed)) return(FALSE)
-      v <- input[[id]]; if (is.null(v)) default else isTRUE(v)
-    }
-
-    # --- Deferred value matrix (caches the assay matrix incl. VST) ----------
-    # Only the (expensive) value matrix is gated/cached behind Render, keyed on the
-    # assay. The per-gene lookup + transform + grouping + colour are cheap live
-    # re-plots on top (so changing the gene doesn't need a Render click), and any
-    # gene-not-in-matrix message surfaces in the plot builder (a deferred spec would
-    # swallow it).
-    mat_spec <- reactive({
-      req(state$working)
-      assay <- val_spec()$assay
-      state_derive(state, "expr_value_mat", params = list(assay),
-                   expr = function() expr_value_matrix(state$working, assay))
-    })
-    mat_shown <- deferred("auto", "render", mat_spec,
-      sig = reactive(list(val_spec()$assay, state$data_version)))
-    output$gene_stale <- stale_note(mat_shown)
-
-    # Colour aesthetic (discrete -> fill + colour; continuous -> dot colour only).
-    colour_resolve <- function(samples) {
-      sel <- input$colour_by %||% "__none__"
-      if (identical(sel, "__none__")) return(NULL)
-      res <- aes_resolve(state, sel, samples)
-      if (is.null(res)) return(NULL)
-      disc <- identical(res$kind, "discrete")
-      list(values = res$values, discrete = disc, lab = res$label,
-           fill_scale = if (disc) aes_ggplot_scale(res, "fill") else NULL,
-           colour_scale = aes_ggplot_scale(res, "colour"))
-    }
-
-    # Extract one gene's per-sample values from the cached matrix + spec transform.
-    gene_values <- function(mm) {
+    reduce_single_factory <- function(val_spec) function(mm) {
       rf <- gene_resolved()
       validate(need(!is.null(rf) && !is.na(rf$id), "Enter a feature to plot."))
       validate(need(rf$id %in% rownames(mm$mat),
@@ -299,54 +433,84 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       raw <- as.numeric(mm$mat[rf$id, ]); names(raw) <- colnames(mm$mat)
       list(values = expr_transform(raw, spec$transform, spec$pseudocount),
            y_lab = if (identical(spec$transform, "none")) mm$label else spec$label,
-           gene_id = rf$id, gene_label = rf$match)
+           title = sprintf("%s (%s)", rf$match, rf$id), subtitle = NULL,
+           gene_id = rf$id, gene_label = rf$match,
+           hover = function(df) sprintf("%s\n%s: %.3g", df$sample, rf$match, df$value))
     }
+    single <- .expr_dist_server(input, output, session, state, cfg = list(
+      prefix = "", val_suffix = "val", derive_key = "expr_value_mat",
+      plot_id = "gene", stale_id = "gene_stale",
+      dark = dark, engine = eng, showing_samples = showing_samples,
+      reduce_factory = reduce_single_factory))
+    # Expose single-gene handles at module scope (testServer reads these).
+    mat_shown     <- single$mat_shown
+    group_sizes   <- single$group_sizes
+    geom_avail    <- single$geom_avail
+    build_gene_gg <- single$build_gg
+    gene_values   <- single$reduce
 
-    # --- The plot (live re-plot from the cached value matrix) ---------------
-    build_gene_gg <- function(interactive) {
-      mm <- mat_shown$value()
-      validate(need(!is.null(mm),
-                    "Click Render (or enable auto-render) to plot the gene."))
-      req(input$x_group)
-      v <- gene_values(mm)
-      cd <- coldata()
-      validate(need(input$x_group %in% names(cd), "Pick a grouping variable."))
-      shown <- intersect(names(v$values), showing_samples())
-      shown <- intersect(shown, rownames(cd))
-      validate(need(length(shown) > 0, "No samples in the current 'Showing' selection."))
-      groups <- cd[shown, input$x_group]
-      cr <- colour_resolve(shown)
-      df <- expr_long_frame(v$values[shown], groups, shown,
-                            colour = if (!is.null(cr)) cr$values else NULL)
-      validate(need(nrow(df) > 0, "No samples with a non-missing group."))
+    # ---- Gene sets > Aggregate expression: a set -> one score per sample ---
+    set_search <- gene_search_server(input, output, session, state, "setsearch",
+                                     multiple = TRUE,
+                                     search_modes = c("exact", "contains", "regex"))
+    set_ids <- reactive({
+      if (identical(input$set_source %||% "saved", "search")) set_search()$ids
+      else {
+        gs <- state$gene_sets %||% list(); nm <- input$set_pick
+        if (is.null(nm) || !nm %in% names(gs)) character(0)
+        else gene_set_ids_for(gs[[nm]])                 # full authored membership
+      }
+    })
+    set_title <- reactive({
+      if (identical(input$set_source %||% "saved", "search")) {
+        n <- length(set_ids())
+        sprintf("Custom search (%d gene%s)", n, if (n == 1L) "" else "s")
+      } else input$set_pick %||% "Gene set"
+    })
+    output$set_pick_ui <- renderUI({
+      gs <- state$gene_sets %||% list()
+      if (!length(gs))
+        return(helpText(class = "small text-muted",
+          "No saved gene sets yet - define one on Gene Sets > Manage, or use Quick search."))
+      cur <- shiny::isolate(input$set_pick)
+      sel <- if (!is.null(cur) && cur %in% names(gs)) cur else names(gs)[1]
+      selectInput(ns("set_pick"), "Saved gene set", choices = names(gs), selected = sel)
+    })
 
-      av <- geom_avail()
-      sv <- on_flag("show_violin", av$dist_shown, TRUE)
-      sb <- on_flag("show_box",    av$dist_shown, TRUE)
-      sd <- on_flag("show_dots",   av$dots_allowed, av$dots_default)
-      validate(need(sv || sb || sd, "Enable at least one plot element."))
-      disc <- !is.null(cr) && isTRUE(cr$discrete)
-      if (interactive)
-        df$text <- sprintf("%s\n%s: %.3g", df$sample, v$gene_label, df$value)
-
-      .expr_single_plot(
-        df, x_lab = input$x_group, y_lab = v$y_lab,
-        title = sprintf("%s (%s)", v$gene_label, v$gene_id),
-        show_violin = sv, show_box = sb, show_dots = sd,
-        disc_colour = disc, colour_lab = if (!is.null(cr)) cr$lab else NULL,
-        fill_scale = if (!is.null(cr)) cr$fill_scale else NULL,
-        colour_scale = if (!is.null(cr)) cr$colour_scale else NULL,
-        violin_width = input$violin_width %||% 0.9, violin_alpha = input$violin_alpha %||% 0.35,
-        box_width = input$box_width %||% 0.18, box_alpha = input$box_alpha %||% 0.7,
-        dot_method = input$dot_method %||% "quasirandom",
-        dot_size = input$dot_size %||% 1.9, dot_alpha = input$dot_alpha %||% 0.9,
-        dot_width = input$dot_width %||% 0.4, dot_cex = input$dot_cex %||% 1,
-        dark_theme = dark(), interactive = interactive)
+    reduce_set_factory <- function(val_spec) function(mm) {
+      ids <- set_ids()
+      validate(need(length(ids) > 0, "Pick a saved set or search genes to plot."))
+      spec <- val_spec()
+      zsc <- isTRUE(input$set_zscore %||% TRUE)
+      meth <- input$set_method %||% "mean"
+      agg <- expr_set_aggregate(
+        mm$mat, ids, counts = DESeq2::counts(state$working),
+        method = meth, zscore = zsc,
+        only_expressed = isTRUE(input$set_only_expr %||% TRUE),
+        transform = spec$transform, pseudocount = spec$pseudocount)
+      validate(need(!is.null(agg$values) && agg$n_used > 0, sprintf(
+        "No genes to plot: 0 of %d gene%s survive the present / expression filter.",
+        agg$n_total, if (agg$n_total == 1L) "" else "s")))
+      meth_lab <- if (identical(agg$method, "median")) "Median" else "Mean"
+      base_lab <- if (identical(spec$transform, "none")) mm$label else spec$label
+      y_lab <- sprintf("%s %s%s", meth_lab, if (zsc) "z-scored " else "", base_lab)
+      pct <- if (agg$n_total) round(100 * agg$n_used / agg$n_total) else 0L
+      sub <- sprintf("%s expression of %d of %d genes (%d%%) within the set",
+                     meth_lab, agg$n_used, agg$n_total, pct)
+      if (zsc && agg$n_nonvar > 0L)
+        sub <- paste0(sub, sprintf("; %d non-varying (z-score 0)", agg$n_nonvar))
+      list(values = agg$values, y_lab = y_lab, title = set_title(), subtitle = sub,
+           accounting = agg,
+           hover = function(df) sprintf("%s\n%s score: %.3g", df$sample, meth_lab, df$value))
     }
-    dual_plot("gene", build_gene_gg, n_elements = reactive({
-      mm <- mat_shown$value(); if (is.null(mm)) 0L
-      else length(intersect(colnames(mm$mat), showing_samples()))
-    }), height = "440px")
+    set <- .expr_dist_server(input, output, session, state, cfg = list(
+      prefix = "set_", val_suffix = "set_val", derive_key = "expr_set_value_mat",
+      plot_id = "geneset", stale_id = "geneset_stale",
+      dark = dark, engine = eng, showing_samples = showing_samples,
+      reduce_factory = reduce_set_factory))
+    set_values    <- set$reduce           # exposed for tests
+    build_set_gg  <- set$build_gg
+    set_mat_shown <- set$mat_shown
 
     invisible(NULL)
   })

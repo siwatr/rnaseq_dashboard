@@ -145,3 +145,71 @@ expr_long_frame <- function(values, groups, samples = names(values), colour = NU
   df$group <- droplevels(df$group)                       # drop groups with no shown samples
   df
 }
+
+#' Aggregate a gene set's expression into one value per sample
+#'
+#' Collapses the value-matrix rows of a gene set to a single per-sample score
+#' (mean or median) -- the basis for the Gene Sets "Aggregate expression" plot.
+#' Genes absent from the dataset are dropped; with `only_expressed = TRUE` genes
+#' with zero counts in every sample are dropped too (needs `counts`). The kept
+#' rows are transformed (`transform`/`pseudocount`), optionally per-gene z-scored
+#' across samples (the default, so highly-expressed genes do not dominate the
+#' average), then averaged down to one vector. All the accounting is returned so
+#' the caller can caption "<n> of <N> genes" and warn about z-scored constant
+#' genes.
+#'
+#' @param mat A numeric genes x samples value matrix (e.g. from
+#'   [expr_value_matrix()]).
+#' @param ids Authored gene-set ids (matched against `rownames(mat)`).
+#' @param counts Optional raw counts matrix for the `only_expressed` filter;
+#'   `NULL` skips that filter (all present genes are used).
+#' @param method `"mean"` (default) or `"median"` across genes, per sample.
+#' @param zscore Per-gene z-score across samples before averaging (default TRUE).
+#' @param only_expressed Drop genes with all-zero counts (default TRUE).
+#' @param transform Passed to [expr_transform()] (`"none"`/`"log2"`/`"log10"`),
+#'   applied to the kept rows before z-scoring / averaging.
+#' @param pseudocount Added before a log transform.
+#' @return A list: `values` (named per-sample numeric, or `NULL` when no gene
+#'   survives), `n_total` (authored ids), `n_present` (in the dataset),
+#'   `n_absent`, `n_used` (genes averaged), `n_nonvar` (kept genes constant
+#'   across samples -> z-score 0), `ids_used`, `method`.
+#' @export
+expr_set_aggregate <- function(mat, ids, counts = NULL,
+                               method = c("mean", "median"),
+                               zscore = TRUE, only_expressed = TRUE,
+                               transform = "none", pseudocount = 1) {
+  method <- match.arg(method)
+  mat <- as.matrix(mat)
+  ids <- unique(as.character(ids)); ids <- ids[!is.na(ids)]
+  n_total <- length(ids)
+  present <- ids[ids %in% rownames(mat)]
+  n_present <- length(present)
+
+  used <- present
+  if (isTRUE(only_expressed) && n_present && !is.null(counts)) {
+    counts <- as.matrix(counts)
+    in_counts <- present[present %in% rownames(counts)]
+    expressed <- in_counts[rowSums(counts[in_counts, , drop = FALSE], na.rm = TRUE) > 0]
+    # genes absent from `counts` can't be judged -> keep them (conservative)
+    keep <- union(expressed, setdiff(present, rownames(counts)))
+    used <- present[present %in% keep]                   # preserve the set's order
+  }
+  n_used <- length(used)
+
+  out <- list(values = NULL, n_total = n_total, n_present = n_present,
+              n_absent = n_total - n_present, n_used = n_used,
+              n_nonvar = 0L, ids_used = used, method = method)
+  if (!n_used) return(out)
+
+  sub <- expr_transform(mat[used, , drop = FALSE], transform, pseudocount)
+  # Genes with no spread across samples become 0 under z-scoring; count them so
+  # the caller can warn (a constant gene contributes nothing to a z-scored score).
+  rng <- apply(sub, 1, function(r) { r <- r[is.finite(r)]; if (!length(r)) 0 else diff(range(r)) })
+  out$n_nonvar <- sum(rng == 0)
+  if (isTRUE(zscore)) sub <- row_zscore(sub)
+  agg <- if (identical(method, "median")) apply(sub, 2, stats::median, na.rm = TRUE)
+         else colMeans(sub, na.rm = TRUE)
+  names(agg) <- colnames(mat)
+  out$values <- agg
+  out
+}

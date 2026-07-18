@@ -9,6 +9,15 @@ test_that("Expression UI mounts the tabs + single-gene containers", {
   expect_match(ui, "Gene sets")
 })
 
+test_that("Expression UI mounts the gene-set aggregate pill", {
+  ui <- as.character(mod_expression_ui("ex"))
+  expect_match(ui, "ex-geneset_container")
+  expect_match(ui, "ex-set_render")
+  expect_match(ui, "ex-set_source")
+  expect_match(ui, "ex-set_method")
+  expect_match(ui, "Aggregate expression")
+})
+
 test_that("single-gene plot builds; value matrix caches; gene id drives the sig", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
@@ -42,6 +51,59 @@ test_that("single-gene plot builds; value matrix caches; gene id drives the sig"
     expect_silent(ggplot2::ggplot_build(build_gene_gg(FALSE)))   # beeswarm + cex: no warning
     session$setInputs(dot_method = "jitter"); session$flushReact()
     expect_s3_class(build_gene_gg(FALSE), "ggplot")              # explicit jitter layout
+  })
+})
+
+test_that("gene-set aggregate builds from a saved set + reports gene accounting", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 100, n_per_group = 6, n_spike = 6, seed = 2)),
+               source = "demo", meta = list(feature_type = "gene"))
+    ids <- rownames(state$working)[1:8]
+    absent <- c("__ghost_a__", "__ghost_b__")            # authored-but-absent members
+    state$gene_sets <- list(SetA = new_gene_set(c(ids, absent)))
+
+    session$setInputs(tabs = "Gene sets", set_source = "saved", set_pick = "SetA",
+                      set_val_assay = "logcounts", set_val_transform = "none",
+                      set_method = "mean", set_zscore = TRUE, set_only_expr = TRUE,
+                      set_auto = TRUE, set_x_group = "condition", set_colour_by = "condition")
+    session$elapse(300); session$flushReact()
+
+    mm <- set_mat_shown$value()
+    expect_false(is.null(mm))
+    red <- set_values(mm)
+    expect_equal(red$accounting$n_total, 10L)            # 8 present + 2 absent
+    expect_equal(red$accounting$n_present, 8L)
+    expect_length(red$values, ncol(state$working))
+    expect_match(red$subtitle, "of 10 genes")
+    expect_s3_class(build_set_gg(FALSE), "ggplot")
+
+    # median + no z-score is also a valid live re-plot
+    session$setInputs(set_method = "median", set_zscore = FALSE)
+    session$flushReact()
+    expect_s3_class(build_set_gg(FALSE), "ggplot")
+  })
+})
+
+test_that("gene-set aggregate builds from a quick (uncommitted) search", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 4, n_spike = 4, seed = 5)),
+               source = "demo", meta = list(feature_type = "gene"))
+    gnames <- SummarizedExperiment::rowData(state$working)$gene_name[1:5]
+    session$setInputs(tabs = "Gene sets", set_source = "search",
+                      setsearch_searchby = "gene_name",
+                      setsearch_q = paste(gnames, collapse = ", "),
+                      set_val_assay = "logcounts", set_val_transform = "none",
+                      set_method = "mean", set_zscore = TRUE, set_only_expr = TRUE,
+                      set_auto = TRUE, set_x_group = "condition", set_colour_by = "condition")
+    session$elapse(400); session$flushReact()
+    mm <- set_mat_shown$value()
+    red <- set_values(mm)
+    expect_equal(red$accounting$n_present, 5L)           # searched ids all resolve
+    expect_s3_class(build_set_gg(FALSE), "ggplot")
   })
 })
 

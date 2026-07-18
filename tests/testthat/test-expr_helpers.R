@@ -66,6 +66,56 @@ test_that("expr_geom_availability splits the distribution + dots thresholds", {
   expect_false(e$dist_shown); expect_true(e$dots_default)
 })
 
+test_that("expr_set_aggregate reduces a set to one value per sample + accounting", {
+  set.seed(11)
+  mat <- matrix(rpois(6 * 5, 20), nrow = 6,
+                dimnames = list(paste0("g", 1:6), paste0("S", 1:5)))
+  counts <- mat
+  counts["g6", ] <- 0                                   # g6 not expressed anywhere
+  ids <- c("g1", "g2", "g3", "g6", "absent1", "absent2")
+
+  a <- expr_set_aggregate(mat, ids, counts = counts, method = "mean",
+                          zscore = FALSE, only_expressed = TRUE)
+  expect_equal(a$n_total, 6L)                           # includes absent + g6
+  expect_equal(a$n_present, 4L)                          # g1,g2,g3,g6
+  expect_equal(a$n_absent, 2L)
+  expect_equal(a$n_used, 3L)                             # g6 dropped by only_expressed
+  expect_false("g6" %in% a$ids_used)
+  expect_length(a$values, 5L)
+  expect_equal(names(a$values), colnames(mat))
+  # mean of the 3 used rows, per column
+  expect_equal(unname(a$values),
+               unname(colMeans(mat[c("g1", "g2", "g3"), ])), tolerance = 1e-8)
+
+  # only_expressed = FALSE keeps g6 (all-zero counts) -> 4 genes used
+  b <- expr_set_aggregate(mat, ids, counts = counts, zscore = FALSE,
+                          only_expressed = FALSE)
+  expect_equal(b$n_used, 4L)
+})
+
+test_that("expr_set_aggregate z-scores per gene and counts non-varying genes", {
+  mat <- rbind(varies = c(1, 2, 3, 4), flat = c(5, 5, 5, 5))
+  colnames(mat) <- paste0("S", 1:4)
+  counts <- matrix(1, nrow = 2, ncol = 4, dimnames = dimnames(mat))
+  a <- expr_set_aggregate(mat, rownames(mat), counts = counts, method = "mean",
+                          zscore = TRUE, only_expressed = TRUE)
+  expect_equal(a$n_used, 2L)
+  expect_equal(a$n_nonvar, 1L)                           # the flat row
+  # z-scored mean: flat -> all 0, varies -> its own z-score; averaged
+  z <- row_zscore(mat)
+  expect_equal(unname(a$values), unname(colMeans(z)), tolerance = 1e-8)
+  expect_equal(unname(mean(a$values)), 0, tolerance = 1e-8)
+})
+
+test_that("expr_set_aggregate returns NULL values when nothing survives", {
+  mat <- matrix(1:4, nrow = 2, dimnames = list(c("g1", "g2"), c("S1", "S2")))
+  a <- expr_set_aggregate(mat, c("nope1", "nope2"), zscore = FALSE)
+  expect_null(a$values)
+  expect_equal(a$n_used, 0L)
+  expect_equal(a$n_total, 2L)
+  expect_equal(a$n_present, 0L)
+})
+
 test_that("expr_long_frame joins values/groups and drops missing groups", {
   vals <- c(S1 = 1, S2 = 2, S3 = 3, S4 = 4)
   grp  <- factor(c("a", "a", "b", NA), levels = c("a", "b"))
