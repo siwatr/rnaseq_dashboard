@@ -167,7 +167,7 @@ DE statistics + DEG plots (the heatmap split out to Phase 7). Sub-PR'd P5a→P5c
   field-based axis limits → triangles; 1:1 Direct toggle; ggrepel labels) + Results Table (`dt_table`
   DEG-coloured + significant-only) + a **shared "Contrast to view"** selector. [PR #35]
 
-## Phase 6 — Gene Sets ⬅️ next (sub-PR'd P6a→P6e)
+## Phase 6 — Gene Sets ✅ (sub-PR'd P6a→P6e)
 A dedicated page (between DE and Expression, a `navset_card_tab`: **Manage** | **Compare**) to
 *define, record, manage, compare, and share* **named gene sets of interest** — DE *seeds* them,
 the Phase 7 Expression heatmap *consumes* them. Full design + rationale in the approved plan:
@@ -202,11 +202,20 @@ overlap UI, a `Palette > Gene Set` sub-tab) is **deferred to P7** with its heatm
   the table-import ID-match scheme — match field auto-detect, keep-all/first, keep-unmatched — so
   a foreign id scheme like `gene_name` resolves) + a standalone **Export** section (selective set
   multi-selector + Select/Deselect all + format selectize + a live capped Preview).
-- **P6e** Compare tab (Stats bar on `dual_plot`; Overlap Euler/Venn via `eulerr` ≤4 sets, UpSet
-  via `ComplexHeatmap`) + a final doc consistency pass (doc-sync is now **per-PR**, not deferred
-  here) + propose `v0.4.0`. ⬜
+- **P6e ✅** Compare tab (a `navset_card_pill` Stats | Overlap, under a shared **"Sets to
+  visualize"** multiselect — extracted `.gs_set_multiselect_ui/_server`, reused by Export — and a
+  **"Within this dataset only"** toggle governing both, `gene_set_present` vs full `ids`). **Stats**
+  = a present/absent set-size bar on the shared `dual_plot` engine (horizontal default + a Vertical
+  toggle; colours from a new static **`other/gene_set_presence`** Palette item via
+  `gene_set_presence_colors()`). **Overlap** = Euler / Venn / UpSet with a **per-type-cap
+  auto-switch to UpSet** (`.gs_overlap_type`: Euler ≤3, Venn ≤4). Pure helpers `gene_set_size_frame`
+  / `gene_set_overlap_list` / `gene_set_ids_for`. **Dep note:** `eulerr` (area-proportional Euler +
+  Venn) has **no conda-forge osx-arm64 build** and `eulerr >= 7` needs Rust, so it is a CRAN
+  install (documented exception in `environment.yml`); the conda-clean **`ggVennDiagram`** is the
+  Venn fallback when eulerr is absent (Euler option hidden), UpSet via `ComplexHeatmap`. + doc-sync
+  (per-PR) + propose `v0.4.0`.
 
-## Phase 7 — Expression ⬜
+## Phase 7 — Expression ⬅️ next ⬜
 Renamed from "Heatmap": a gene-expression **browsing surface** (more than a heatmap). A
 `navset_card_tab` with two tabs.
 - **Single genes** — one feature at a time; a layered overlay (back→front: violin → boxplot →

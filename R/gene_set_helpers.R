@@ -86,6 +86,81 @@ gene_set_absent <- function(set, feature_ids) {
   ids[!(ids %in% feature_ids)]
 }
 
+# A set's authored ids (record or bare vector).
+.gs_ids <- function(set) if (is.list(set)) as.character(set$ids) else as.character(set)
+
+#' Ids a gene set contributes to a comparison
+#'
+#' The Compare tab's "Within this dataset" toggle chooses whether a set
+#' contributes its full authored membership or only the ids present in the
+#' current dataset. `within = TRUE` -> [gene_set_present()]; else the full ids.
+#' @param within When TRUE, keep only ids in `feature_ids`; else the full
+#'   authored membership.
+#' @rdname gene_set_present
+#' @export
+gene_set_ids_for <- function(set, feature_ids = NULL, within = FALSE) {
+  if (isTRUE(within)) gene_set_present(set, feature_ids) else unique(.gs_ids(set))
+}
+
+#' Per-set size breakdown for the Compare Stats bar
+#'
+#' Powers the Gene Sets Compare tab's set-size bar chart. Non-destructive: sizes
+#' derive live from each set's authored membership against the current dataset.
+#' @param sets A named list of gene-set records (or bare id vectors).
+#' @param feature_ids Current dataset feature ids (`rownames(dds)`).
+#' @param within When TRUE, one "present" row per set (present ids only); else a
+#'   present + absent breakdown of the full authored membership (stacked bar).
+#' @return A long data.frame: `set` (factor, input order), `status`
+#'   (`"present"`/`"absent"`, factor), `n` (integer). Empty when `sets` is empty.
+#' @export
+gene_set_size_frame <- function(sets, feature_ids = NULL, within = FALSE) {
+  if (!length(sets)) {
+    return(data.frame(set = factor(character(0)),
+                      status = factor(character(0), levels = c("present", "absent")),
+                      n = integer(0), stringsAsFactors = FALSE))
+  }
+  nms <- names(sets)
+  present <- vapply(sets, function(s) length(gene_set_present(s, feature_ids)), integer(1))
+  rows <- if (isTRUE(within)) {
+    data.frame(set = nms, status = "present", n = present, stringsAsFactors = FALSE)
+  } else {
+    absent <- vapply(sets, function(s) length(gene_set_absent(s, feature_ids)), integer(1))
+    rbind(data.frame(set = nms, status = "present", n = present, stringsAsFactors = FALSE),
+          data.frame(set = nms, status = "absent",  n = absent,  stringsAsFactors = FALSE))
+  }
+  rows$set    <- factor(rows$set, levels = nms)
+  rows$status <- factor(rows$status, levels = c("present", "absent"))
+  rows
+}
+
+#' Named id-lists for a set-overlap comparison (Euler / Venn / UpSet)
+#'
+#' @inheritParams gene_set_size_frame
+#' @return A named list of unique id vectors, one per set (a set that
+#'   contributes nothing is kept as `character(0)` so callers can report it).
+#' @export
+gene_set_overlap_list <- function(sets, feature_ids = NULL, within = FALSE) {
+  if (!length(sets)) return(list())
+  lapply(sets, gene_set_ids_for, feature_ids = feature_ids, within = within)
+}
+
+# Present / absent stacked-bar colours (present solid, absent a faded tint).
+.gene_set_presence_palette <- c(present = "#8b58db", absent = "#d9cef0")
+
+#' Present / absent colours for the Gene Sets Compare stats bar
+#'
+#' Mirrors [removal_status_colors()]: the default 2-level scheme, overridable by
+#' a Palette `other/gene_set_presence` config (edited on the Palette page).
+#' @param config A palette config `list(name, colors, custom)`, or `NULL` for the
+#'   default scheme.
+#' @return A named character vector `c(present = , absent = )`.
+#' @export
+gene_set_presence_colors <- function(config = NULL) {
+  if (is.null(config)) return(.gene_set_presence_palette)
+  palette_discrete(names(.gene_set_presence_palette), config$colors,
+                   config$name %||% "Custom palette", config$custom)
+}
+
 #' Split feature ids into groups by annotation column(s)
 #'
 #' Powers the Gene Sets table import: an imported table (e.g. a DESeq2 result

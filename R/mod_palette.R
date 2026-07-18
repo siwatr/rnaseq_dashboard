@@ -46,7 +46,9 @@
     list(correlation = list(kind = "continuous", levels = character(0),
                             class = "numeric", label = "Sample correlation"),
          DEG = list(kind = "discrete", levels = c("up", "down", "no_change"),
-                    class = "factor", label = "DEG status")))
+                    class = "factor", label = "DEG status"),
+         gene_set_presence = list(kind = "discrete", levels = c("present", "absent"),
+                                  class = "factor", label = "Gene set presence")))
 }
 .pal_other_items <- function() names(.pal_other_meta())
 .pal_removal_levels <- c("pass", "suggested_other", "suggested_this")
@@ -323,6 +325,8 @@ mod_palette_server <- function(id, state) {
                     reverse = TRUE, custom = NULL))
       if (dom == "other" && item == "DEG")           # default DEG scheme (resolves via the name)
         return(list(name = "DEG: Pink-Blue", colors = NULL))
+      if (dom == "other" && item == "gene_set_presence")   # present solid / absent faded
+        return(list(name = "Custom palette", colors = gene_set_presence_colors()))
       NULL
     }
     # Default config for a freshly added item (preset if it has one).

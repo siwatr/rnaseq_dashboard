@@ -48,6 +48,69 @@
   best
 }
 
+# A "sets to <verb>" multiselect + Select all / Deselect all buttons, height-capped
+# so a large store does not grow the UI. Shared by the Compare "Sets to visualize"
+# control and the Export selector. The buttons wire via .gs_set_multiselect_server
+# (keyed on `<id>_all` / `<id>_none`); `choices`/`selected` are supplied live by the
+# renderUI that draws it (so it re-renders on add/delete, preserving the selection).
+.gs_set_multiselect_ui <- function(ns, id, label, choices, selected = choices) {
+  tagList(
+    tags$style(HTML(sprintf(
+      "#%s + .selectize-control .selectize-input { max-height: 110px; overflow-y: auto; }",
+      ns(id)))),
+    selectizeInput(ns(id), label, choices = choices, selected = selected, multiple = TRUE),
+    tags$div(class = "d-flex gap-2 mb-2",
+      actionButton(ns(paste0(id, "_all")), "Select all", class = "btn-sm btn-outline-secondary"),
+      actionButton(ns(paste0(id, "_none")), "Deselect all", class = "btn-sm btn-outline-secondary")))
+}
+# Wire one .gs_set_multiselect_ui's buttons. Call once per selector in the server.
+.gs_set_multiselect_server <- function(input, output, session, id, choices_fn) {
+  observeEvent(input[[paste0(id, "_all")]],
+    updateSelectizeInput(session, id, selected = choices_fn()))
+  observeEvent(input[[paste0(id, "_none")]],
+    updateSelectizeInput(session, id, selected = character(0)))
+  invisible(NULL)
+}
+
+# The effective Overlap diagram type given the requested type, the number of
+# (non-empty) sets, and eulerr availability. Euler is area-proportional and caps
+# at 3 sets; Venn (non-proportional) caps at 4; above the cap the plot falls back
+# to UpSet, which handles any n. Euler needs eulerr -> degrades to Venn when it is
+# absent (the UI also hides the Euler option then). Pure; returns
+# list(type, switched, reason). Used by the Overlap server + covered by tests.
+.gs_overlap_type <- function(requested, n_sets, have_eulerr = TRUE) {
+  requested <- requested %||% "venn"
+  if (identical(requested, "euler") && !isTRUE(have_eulerr)) requested <- "venn"
+  cap <- switch(requested, euler = 3L, venn = 4L, upset = Inf, 4L)
+  if (n_sets > cap)
+    return(list(type = "upset", switched = TRUE,
+      reason = sprintf("%d sets exceed the %d-set limit for %s -- showing UpSet instead.",
+                       n_sets, cap, if (identical(requested, "euler")) "Euler" else "Venn")))
+  list(type = requested, switched = FALSE, reason = NULL)
+}
+
+# Draw a set-overlap diagram from a named list of id-vectors. eulerr handles
+# Euler (area-proportional) + Venn; UpSet uses ComplexHeatmap::make_comb_mat();
+# when eulerr is unavailable, Venn falls back to ggVennDiagram. Non-ggplot
+# outputs, so this feeds a plain renderPlot (static), NOT the dual_plot engine.
+# Returns the plot object; the caller draws Heatmaps via draw() and prints the rest.
+.gs_overlap_plot <- function(lst, type, fills = NULL) {
+  if (identical(type, "upset")) {
+    if (!requireNamespace("ComplexHeatmap", quietly = TRUE))
+      return(.plot_msg("Install ComplexHeatmap to draw an UpSet plot."))
+    return(ComplexHeatmap::UpSet(ComplexHeatmap::make_comb_mat(lst)))
+  }
+  if (type %in% c("euler", "venn") && requireNamespace("eulerr", quietly = TRUE)) {
+    shape <- if (identical(type, "euler")) eulerr::euler(lst) else eulerr::venn(lst)
+    return(graphics::plot(shape, quantities = TRUE, legend = list(side = "right"),
+                          fills = list(fill = fills, alpha = 0.6)))
+  }
+  if (requireNamespace("ggVennDiagram", quietly = TRUE))   # Venn fallback (no Euler)
+    return(ggVennDiagram::ggVennDiagram(lst) +
+             ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = 0.1)))
+  .plot_msg("Install eulerr or ggVennDiagram to draw set overlaps.")
+}
+
 mod_geneset_ui <- function(id) {
   ns <- NS(id)
   cond <- function(inp, val) .gs_cond(ns, inp, val)
@@ -188,15 +251,62 @@ mod_geneset_ui <- function(id) {
               bslib::accordion_panel("Preview", uiOutput(ns("export_preview_ui")))))
         )
       )
+    ),
+
+    # ===================== COMPARE TAB (P6e) =========================
+    # Compare the sets you built -- sizes (Stats) and overlaps (Overlap). Two
+    # shared controls govern BOTH sub-pills: which sets to visualize, and the
+    # "Within this dataset only" toggle (present ids vs full authored membership).
+    bslib::nav_panel(
+      tags$h3("Compare", class = "fs-6 mb-0"),
+      helpText(class = "small text-muted mb-2",
+               "Compare the sets you have built. Build sets on the Manage tab first."),
+      bslib::layout_columns(
+        fillable = FALSE, col_widths = c(7, 5),
+        uiOutput(ns("cmp_sets_ui")),
+        tags$div(
+          bslib::input_switch(ns("cmp_within"), "Within this dataset only", value = FALSE),
+          helpText(class = "small text-muted",
+                   "On: count only genes present in the dataset. ",
+                   "Off: the full authored membership (present + absent)."))),
+      bslib::navset_card_pill(
+        bslib::nav_panel(
+          "Stats",
+          bslib::layout_sidebar(
+            sidebar = bslib::sidebar(
+              width = 260, open = "desktop",
+              bslib::input_switch(ns("stats_vertical"), "Vertical bars", value = FALSE),
+              checkboxInput(ns("stats_auto"), "Auto-render", value = TRUE),
+              actionButton(ns("stats_render"), "Render", icon = icon("play"),
+                           class = "btn-primary btn-sm")),
+            uiOutput(ns("stats_stale")),
+            .plot_dual(ns("stats_container")))),
+        bslib::nav_panel(
+          "Overlap",
+          bslib::layout_sidebar(
+            sidebar = bslib::sidebar(
+              width = 260, open = "desktop",
+              uiOutput(ns("overlap_type_ui")),
+              checkboxInput(ns("overlap_auto"), "Auto-render", value = TRUE),
+              actionButton(ns("overlap_render"), "Render", icon = icon("play"),
+                           class = "btn-primary btn-sm")),
+            uiOutput(ns("overlap_stale")),
+            uiOutput(ns("overlap_switch")),
+            shinycssloaders::withSpinner(
+              plotOutput(ns("overlap_plot"), height = "440px")))))
     )
   )
 }
 
-mod_geneset_server <- function(id, state) {
+mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     feature_type <- function() (state$meta %||% list())$feature_type %||% "feature"
     working_rn <- function() if (is.null(state$working)) character(0) else rownames(state$working)
+    dark <- function() isTRUE(dark_mode())
+    # The shared plot engine (ggplot<->plotly toggle + deferred render) powers the
+    # Compare > Stats bar; the Overlap diagrams are non-ggplot (static renderPlot).
+    eng <- plot_engine_server(input, output, session, state)
 
     paste_search <- gene_search_server(input, output, session, state, "paste",
                                        multiple = TRUE,
@@ -972,26 +1082,16 @@ mod_geneset_server <- function(id, state) {
       cur <- shiny::isolate(input$export_which)
       sel <- if (!is.null(cur)) intersect(cur, nms) else nms
       tagList(
-        # Cap the selected-items box height so many sets don't grow the UI.
-        tags$style(HTML(sprintf(
-          "#%s + .selectize-control .selectize-input { max-height: 110px; overflow-y: auto; }",
-          ns("export_which")))),
         selectInput(ns("export_fmt"), "Format",
                     c("JSON (faithful, recommended)" = "json",
                       "GMT (MSigDB)" = "gmt", "TSV (long: set / id)" = "tsv"),
                     selected = shiny::isolate(input$export_fmt) %||% "json"),
-        selectizeInput(ns("export_which"), "Sets to export", choices = nms,
-                       selected = sel, multiple = TRUE),
-        tags$div(class = "d-flex gap-2 mb-2",
-          actionButton(ns("export_all"), "Select all", class = "btn-sm btn-outline-secondary"),
-          actionButton(ns("export_none"), "Deselect all", class = "btn-sm btn-outline-secondary")),
+        .gs_set_multiselect_ui(ns, "export_which", "Sets to export", nms, sel),
         downloadButton(ns("export_dl"), "Download", class = "btn btn-sm fw-semibold",
                        style = .gs_action_style))
     })
-    observeEvent(input$export_all,
-      updateSelectizeInput(session, "export_which", selected = names(state$gene_sets)))
-    observeEvent(input$export_none,
-      updateSelectizeInput(session, "export_which", selected = character(0)))
+    .gs_set_multiselect_server(input, output, session, "export_which",
+                               function() names(state$gene_sets))
     # The selected sets. An emptied `selectize` reports NULL (not character(0)),
     # so treat absent selection as "nothing selected" -- the initial all-selected
     # state comes from the render default (`selected = sel`), which the browser
@@ -1097,5 +1197,93 @@ mod_geneset_server <- function(id, state) {
                   paste(newly, collapse = ", ")),
           type = "warning", duration = 7)
     }, ignoreInit = TRUE)
+
+    # =====================================================================
+    # COMPARE TAB (P6e): Stats (set-size bar) + Overlap (Euler/Venn/UpSet).
+    # =====================================================================
+    # Shared "Sets to visualize" multiselect: all selected by default, preserved
+    # across store edits (isolate the current selection on re-render). Feeds both
+    # sub-pills via cmp_selected().
+    output$cmp_sets_ui <- renderUI({
+      nms <- names(state$gene_sets)
+      if (!length(nms))
+        return(helpText(class = "small text-muted",
+                        "No gene sets yet -- build some on the Manage tab."))
+      cur <- shiny::isolate(input$cmp_sets)
+      sel <- if (!is.null(cur)) intersect(cur, nms) else nms
+      .gs_set_multiselect_ui(ns, "cmp_sets", "Sets to visualize", nms, sel)
+    })
+    .gs_set_multiselect_server(input, output, session, "cmp_sets",
+                               function() names(state$gene_sets))
+    cmp_selected <- reactive(intersect(input$cmp_sets %||% character(0), names(state$gene_sets)))
+    have_eulerr <- function() requireNamespace("eulerr", quietly = TRUE)
+
+    # ---- Stats: a present/absent set-size bar on the shared dual_plot engine --
+    stats_frame <- reactive({
+      sel <- cmp_selected()
+      gene_set_size_frame(state$gene_sets[sel], working_rn(), isTRUE(input$cmp_within))
+    })
+    stats_shown <- eng$deferred("stats_auto", "stats_render", stats_frame,
+      sig = reactive(list(cmp_selected(), isTRUE(input$cmp_within), state$data_version)))
+    output$stats_stale <- eng$stale_note(stats_shown)
+    build_stats_gg <- function(interactive) {
+      fr <- stats_shown$value()
+      validate(need(!is.null(fr) && nrow(fr) > 0L, "Select sets to compare, then Render."))
+      cols <- gene_set_presence_colors((state$palette$other %||% list())$gene_set_presence)
+      p <- ggplot2::ggplot(fr, ggplot2::aes(x = .data$set, y = .data$n, fill = .data$status))
+      if (isTRUE(interactive))
+        p <- p + ggplot2::geom_col(ggplot2::aes(
+          text = sprintf("%s\n%s: %d", .data$set, .data$status, .data$n)))
+      else p <- p + ggplot2::geom_col()
+      p <- p +
+        ggplot2::scale_fill_manual(values = cols, drop = FALSE, name = NULL) +
+        ggplot2::labs(x = NULL, y = "Genes",
+                      title = if (isTRUE(input$cmp_within)) "Set sizes (in dataset)"
+                              else "Set sizes (authored)") +
+        .plot_theme(dark())
+      # Default horizontal bars; the toggle flips to vertical.
+      if (!isTRUE(input$stats_vertical)) p <- p + ggplot2::coord_flip()
+      p
+    }
+    eng$dual_plot("stats", build_stats_gg,
+      n_elements = reactive({ fr <- stats_shown$value(); if (is.null(fr)) 0L else nrow(fr) }),
+      height = "380px")
+
+    # ---- Overlap: Euler / Venn / UpSet, per-type-cap auto-switch to UpSet -----
+    output$overlap_type_ui <- renderUI({
+      ch <- c(if (have_eulerr()) c("Euler (area-proportional)" = "euler"),
+              "Venn" = "venn", "UpSet" = "upset")
+      def <- if (have_eulerr()) "euler" else "venn"
+      tagList(
+        selectInput(ns("overlap_type"), "Diagram type", choices = ch,
+                    selected = shiny::isolate(input$overlap_type) %||% def),
+        if (!have_eulerr())
+          helpText(class = "small text-muted",
+                   "Install eulerr for area-proportional Euler diagrams."))
+    })
+    overlap_data <- reactive({
+      sel <- cmp_selected()
+      lst <- gene_set_overlap_list(state$gene_sets[sel], working_rn(), isTRUE(input$cmp_within))
+      lst <- lst[lengths(lst) > 0L]                       # drop sets contributing nothing
+      req_type <- input$overlap_type %||% (if (have_eulerr()) "euler" else "venn")
+      eff <- .gs_overlap_type(req_type, length(lst), have_eulerr())
+      list(lst = lst, type = eff$type, reason = eff$reason)
+    })
+    overlap_shown <- eng$deferred("overlap_auto", "overlap_render", overlap_data,
+      sig = reactive(list(cmp_selected(), isTRUE(input$cmp_within),
+                          input$overlap_type, state$data_version)))
+    output$overlap_stale <- eng$stale_note(overlap_shown)
+    output$overlap_switch <- renderUI({
+      v <- overlap_shown$value()
+      if (is.null(v) || is.null(v$reason)) return(NULL)
+      tags$div(class = "alert alert-info py-1 px-2 small mb-2", v$reason)
+    })
+    output$overlap_plot <- renderPlot({
+      v <- overlap_shown$value()
+      validate(need(!is.null(v), "Select sets to compare, then Render."))
+      validate(need(length(v$lst) >= 2L, "Select at least 2 non-empty sets to compare."))
+      p <- .gs_overlap_plot(v$lst, v$type)
+      if (inherits(p, c("Heatmap", "HeatmapList"))) ComplexHeatmap::draw(p) else print(p)
+    })
   })
 }

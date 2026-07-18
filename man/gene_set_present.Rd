@@ -3,16 +3,22 @@
 \name{gene_set_present}
 \alias{gene_set_present}
 \alias{gene_set_absent}
+\alias{gene_set_ids_for}
 \title{Ids of a set present in / absent from the current dataset}
 \usage{
 gene_set_present(set, feature_ids)
 
 gene_set_absent(set, feature_ids)
+
+gene_set_ids_for(set, feature_ids = NULL, within = FALSE)
 }
 \arguments{
 \item{set}{A gene-set record (or a bare id vector).}
 
 \item{feature_ids}{The current dataset's feature ids (\code{rownames(dds)}).}
+
+\item{within}{When TRUE, keep only ids in \code{feature_ids}; else the full
+authored membership.}
 }
 \value{
 Character vector of ids.
@@ -21,4 +27,8 @@ Character vector of ids.
 Non-destructive: the set keeps its full authored membership; these derive the
 live view against the current feature ids (rownames). \code{present} preserves the
 set's id order.
+
+The Compare tab's "Within this dataset" toggle chooses whether a set
+contributes its full authored membership or only the ids present in the
+current dataset. \code{within = TRUE} -> \code{\link[=gene_set_present]{gene_set_present()}}; else the full ids.
 }

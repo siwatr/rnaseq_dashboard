@@ -174,3 +174,54 @@ test_that("gene_sets_from_file sniffs content when the extension is unknown", {
   tf <- tempfile(fileext = ".dat"); writeLines(gene_sets_to_json(sets), tf)
   expect_equal(gene_sets_from_file(tf)$Up$ids, c("g1", "g2"))
 })
+
+# ---- Compare tab (P6e): size frame / overlap list / presence colours ------
+
+test_that("gene_set_ids_for honours the within-dataset toggle", {
+  s <- new_gene_set(c("g1", "g2", "gX"))
+  feats <- c("g1", "g2", "g3")
+  expect_setequal(gene_set_ids_for(s, feats, within = FALSE), c("g1", "g2", "gX"))
+  expect_setequal(gene_set_ids_for(s, feats, within = TRUE), c("g1", "g2"))
+  # Bare id vector accepted too.
+  expect_setequal(gene_set_ids_for(c("g1", "gX"), feats, within = TRUE), "g1")
+})
+
+test_that("gene_set_size_frame: present+absent (within=FALSE) vs present-only (within=TRUE)", {
+  sets <- list(A = new_gene_set(c("g1", "g2", "gX")),   # 2 present, 1 absent
+               B = new_gene_set(c("g2", "g3")))          # 2 present, 0 absent
+  feats <- c("g1", "g2", "g3")
+  fr <- gene_set_size_frame(sets, feats, within = FALSE)
+  expect_equal(levels(fr$set), c("A", "B"))             # input order preserved
+  expect_equal(levels(fr$status), c("present", "absent"))
+  expect_equal(fr$n[fr$set == "A" & fr$status == "present"], 2L)
+  expect_equal(fr$n[fr$set == "A" & fr$status == "absent"], 1L)
+  expect_equal(fr$n[fr$set == "B" & fr$status == "absent"], 0L)
+  # within=TRUE -> one present row per set (no absent rows).
+  fw <- gene_set_size_frame(sets, feats, within = TRUE)
+  expect_equal(nrow(fw), 2L)
+  expect_true(all(fw$status == "present"))
+  expect_equal(fw$n, c(2L, 2L))
+  # Empty store -> empty (but typed) frame.
+  expect_equal(nrow(gene_set_size_frame(list(), feats)), 0L)
+})
+
+test_that("gene_set_overlap_list keeps unique ids per set + follows the toggle", {
+  sets <- list(A = new_gene_set(c("g1", "g2", "gX")), B = new_gene_set(c("g2", "g3")))
+  feats <- c("g1", "g2", "g3")
+  full <- gene_set_overlap_list(sets, feats, within = FALSE)
+  expect_equal(names(full), c("A", "B"))
+  expect_setequal(full$A, c("g1", "g2", "gX"))
+  within <- gene_set_overlap_list(sets, feats, within = TRUE)
+  expect_setequal(within$A, c("g1", "g2"))              # gX dropped
+  expect_length(gene_set_overlap_list(list()), 0L)
+})
+
+test_that("gene_set_presence_colors: default scheme + config override", {
+  d <- gene_set_presence_colors()
+  expect_named(d, c("present", "absent"))
+  expect_match(d[["present"]], "^#[0-9A-Fa-f]{6}$")
+  ov <- gene_set_presence_colors(list(name = "Custom palette",
+                                      colors = c(present = "#111111", absent = "#eeeeee")))
+  expect_equal(unname(ov[["present"]]), "#111111")
+  expect_equal(unname(toupper(ov[["absent"]])), "#EEEEEE")
+})
