@@ -105,6 +105,13 @@ test_that("gene_sets_from_json tolerates a bare {name: [ids]} object", {
   expect_equal(rt$S1$kind, "simple")
 })
 
+test_that("a bare object with a set named 'gene_sets' is not mistaken for the wrapper", {
+  # The wrapper is detected by the version KEY, not the 'gene_sets' name.
+  rt <- gene_sets_from_json('{"gene_sets": ["a", "b"], "other": ["c"]}')
+  expect_setequal(names(rt), c("gene_sets", "other"))
+  expect_equal(rt$gene_sets$ids, c("a", "b"))
+})
+
 test_that("GMT round-trips ids/names; source goes to the description field", {
   sets <- list(Up = new_gene_set(c("g1", "g2"), source = "DE: A_vs_B"),
                Dn = new_gene_set("g3", source = "paste"))
@@ -135,6 +142,20 @@ test_that("TSV round-trips ids/names via the long set/id form", {
 
 test_that("gene_sets_from_tsv requires set + id columns", {
   expect_error(gene_sets_from_tsv("foo\tbar\nx\ty"), "set.*id")
+})
+
+test_that("TSV round-trip preserves an id literally equal to 'NA'", {
+  sets <- list(S = new_gene_set(c("g1", "NA", "g2")))
+  rt <- gene_sets_from_tsv(gene_sets_to_tsv(sets))
+  expect_equal(rt$S$ids, c("g1", "NA", "g2"))          # the string "NA" is not dropped
+})
+
+test_that("gene_sets_from_file sniffs a GMT saved with a .txt extension", {
+  sets <- list(Up = new_gene_set(c("g1", "g2"), source = "paste"))
+  tf <- tempfile(fileext = ".txt"); writeLines(gene_sets_to_gmt(sets), tf)
+  rt <- gene_sets_from_file(tf)
+  expect_equal(names(rt), "Up")
+  expect_equal(rt$Up$ids, c("g1", "g2"))
 })
 
 test_that("gene_sets_from_file auto-detects format by extension", {

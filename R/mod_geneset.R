@@ -534,11 +534,13 @@ mod_geneset_server <- function(id, state) {
                               value = FALSE))
     })
     # dataset-value -> row indices for the chosen match column (NULL for rownames).
+    # trimws both sides (file ids are trimmed at resolve time) so a rowData value
+    # with stray whitespace still matches a clean file id.
     gsfile_match_index <- reactive({
       field <- input$gsfile_match_by %||% "__rownames__"
       if (identical(field, "__rownames__") || is.null(state$working)) return(NULL)
-      vals <- as.character(as.data.frame(
-        SummarizedExperiment::rowData(state$working), optional = TRUE)[[field]])
+      vals <- trimws(as.character(as.data.frame(
+        SummarizedExperiment::rowData(state$working), optional = TRUE)[[field]]))
       split(seq_along(vals), vals)                      # NA-valued features drop out
     })
     # Resolve each set's file IDs -> dataset ids (1:many keep-all, or first), with
@@ -568,6 +570,10 @@ mod_geneset_server <- function(id, state) {
       list(sets = lapply(per, `[[`, "ids"),
            unmatched = unique(unlist(lapply(per, `[[`, "miss"), use.names = FALSE)))
     })
+    # Resolved id-vectors only (the staged() contract). A file's kind/annotation
+    # aren't carried and its source is relabelled "import: <file>" on commit --
+    # lossless for P6's simple sets; TODO(P7): an annotated import would downgrade
+    # to simple here, so the annotated layer must resolve records, not just ids.
     gsfile_staged <- reactive({
       r <- gsfile_resolved(); if (is.null(r)) return(list())
       r$sets[lengths(r$sets) > 0L]                      # drop sets that resolved empty
@@ -965,13 +971,14 @@ mod_geneset_server <- function(id, state) {
       updateSelectizeInput(session, "export_which", selected = names(state$gene_sets)))
     observeEvent(input$export_none,
       updateSelectizeInput(session, "export_which", selected = character(0)))
-    # The selected sets (NULL = the initial all-selected state). Feeds both the
-    # preview and the download, so the preview is exactly what downloads.
+    # The selected sets. An emptied `selectize` reports NULL (not character(0)),
+    # so treat absent selection as "nothing selected" -- the initial all-selected
+    # state comes from the render default (`selected = sel`), which the browser
+    # reflects into input on first paint. (Mirrors the Palette export selector;
+    # using NULL as an "all" sentinel would make Deselect-all silently export all.)
     export_sets <- reactive({
       nms <- names(state$gene_sets); if (!length(nms)) return(list())
-      which <- input$export_which
-      sel <- if (is.null(which)) nms else intersect(which, nms)
-      state$gene_sets[sel]
+      state$gene_sets[intersect(input$export_which %||% character(0), nms)]
     })
     export_txt <- reactive({
       switch(input$export_fmt %||% "json",
@@ -982,13 +989,21 @@ mod_geneset_server <- function(id, state) {
     output$export_preview_ui <- renderUI({
       if (!length(state$gene_sets))
         return(helpText(class = "small text-muted", "Create a gene set to preview the export."))
+      # Cap the previewed text (not just its box height) so a large store doesn't
+      # push thousands of lines into the DOM; the full content still downloads.
+      lines <- strsplit(export_txt(), "\n", fixed = TRUE)[[1]]
+      cap <- 300L
+      shown <- if (length(lines) > cap)
+        paste0(paste(utils::head(lines, cap), collapse = "\n"),
+               sprintf("\n... (%d more lines; full content downloads)", length(lines) - cap))
+      else export_txt()
       tagList(
         helpText(class = "small text-muted mb-1",
                  sprintf("%d of %d set(s) selected.",
                          length(export_sets()), length(state$gene_sets))),
         tags$pre(class = "border rounded p-2 mb-0",
                  style = "max-height: 240px; overflow: auto; font-size: 0.8em; white-space: pre;",
-                 export_txt()))
+                 shown))
     })
     output$export_dl <- downloadHandler(
       filename = function()

@@ -517,15 +517,20 @@ test_that("Export enables only with sets, and exports the selected subset", {
     session$setInputs(create = 1); session$flushReact()
     expect_setequal(names(state$gene_sets), c("A", "B"))
 
-    # Default: all sets selected -> both round-trip.
+    # The render default selects all (the browser reflects it into input); mirror
+    # that here -> both round-trip through the chosen serializer.
+    session$setInputs(export_fmt = "json", export_which = c("A", "B")); session$flushReact()
     expect_setequal(names(export_sets()), c("A", "B"))
+    expect_setequal(names(gene_sets_from_json(export_txt())), c("A", "B"))
     # Selecting a subset limits the export (and thus the download).
-    session$setInputs(export_fmt = "json", export_which = "A"); session$flushReact()
+    session$setInputs(export_which = "A"); session$flushReact()
     expect_equal(names(export_sets()), "A")
     expect_equal(names(gene_sets_from_json(export_txt())), "A")
-    # An empty selection exports nothing (updateSelectizeInput doesn't round-trip
-    # into input under testServer, so set the empty selection directly).
+    # An empty selection exports nothing -- an emptied selectize reports NULL, so
+    # the absent-selection path must resolve to empty, NOT to "all".
     session$setInputs(export_which = character(0)); session$flushReact()
+    expect_length(export_sets(), 0L)
+    session$setInputs(export_which = NULL); session$flushReact()
     expect_length(export_sets(), 0L)
   })
 })

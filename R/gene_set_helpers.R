@@ -184,7 +184,11 @@ gene_sets_from_json <- function(txt) {
   txt <- paste(.gs_lines(txt), collapse = "\n")
   obj <- jsonlite::fromJSON(txt, simplifyVector = TRUE,
                             simplifyDataFrame = FALSE, simplifyMatrix = FALSE)
-  gs <- if (is.list(obj) && !is.null(obj$gene_sets)) obj$gene_sets else obj
+  # Detect the wrapped form by the version KEY, not the `gene_sets` name -- else a
+  # bare {name: [ids]} object holding a set literally named "gene_sets" would be
+  # misread as the wrapper. The app always writes the version key.
+  gs <- if (is.list(obj) && !is.null(obj[["ddsdashboard_gene_sets_version"]]))
+    obj$gene_sets else obj
   if (!is.list(gs) || !length(gs) || is.null(names(gs)))
     return(stats::setNames(list(), character(0)))
   out <- list()
@@ -284,8 +288,8 @@ gene_sets_from_tsv <- function(txt) {
   txt <- paste(.gs_lines(txt), collapse = "\n")
   if (!nzchar(trimws(txt))) return(stats::setNames(list(), character(0)))
   df <- as.data.frame(readr::read_tsv(
-    I(txt), show_col_types = FALSE,
-    col_types = readr::cols(.default = readr::col_character())))
+    I(txt), show_col_types = FALSE, na = "",           # symmetric with the writer;
+    col_types = readr::cols(.default = readr::col_character())))   # keeps a literal "NA" id
   if (!nrow(df)) return(stats::setNames(list(), character(0)))
   nms <- tolower(names(df))
   sc <- match("set", nms); ic <- match("id", nms)
@@ -318,8 +322,10 @@ gene_sets_from_file <- function(path, format = c("auto", "json", "gmt", "tsv"),
                                 name = path) {
   format <- match.arg(format)
   if (identical(format, "auto")) {
+    # `.txt` is genuinely ambiguous (a GMT or a long TSV both get saved as .txt),
+    # so leave it on "auto" for the content sniff below rather than forcing tsv.
     format <- switch(tolower(tools::file_ext(name)),
-      json = "json", gmt = "gmt", tsv = "tsv", txt = "tsv", csv = "tsv", "auto")
+      json = "json", gmt = "gmt", tsv = "tsv", csv = "tsv", "auto")
   }
   txt <- readLines(path, warn = FALSE)
   if (identical(format, "auto")) {
