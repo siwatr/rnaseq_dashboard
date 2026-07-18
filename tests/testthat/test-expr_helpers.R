@@ -8,17 +8,6 @@ test_that("expr_default_assay prefers norm_logcounts when size factors exist", {
   expect_equal(expr_default_assay(dds2), "norm_logcounts")
 })
 
-test_that("expr_default_assay falls through to stored assays without VST/size factors", {
-  skip_if_not_installed("DESeq2")
-  dds <- ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 2, n_spike = 4, seed = 2))
-  # Monkeypatch is overkill; VST is always attempted first, so just assert the
-  # counts-only fallback path via a bare object with only counts.
-  cnts <- SummarizedExperiment::assay(dds, "counts")
-  bare <- DESeq2::DESeqDataSetFromMatrix(cnts, S4Vectors::DataFrame(
-    condition = SummarizedExperiment::colData(dds)$condition), design = ~1)
-  expect_equal(expr_default_assay(bare), "vst")           # synthetic VST still first
-})
-
 test_that("expr_value_matrix resolves stored, norm_logcounts, and vst", {
   skip_if_not_installed("DESeq2")
   dds <- ensure_logcounts(make_mock_dds(n_genes = 120, n_per_group = 3, n_spike = 8, seed = 3))

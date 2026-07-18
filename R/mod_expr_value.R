@@ -26,12 +26,13 @@ expr_value_ui <- function(ns, suffix, assay_label = "Expression value (assay)") 
 # sensible transform when the assay changes (none for a log assay, log10 else),
 # and return a reactive spec the caller feeds to de_group_means() / de_transform_matrix().
 #
-# `include_vst` prepends a synthetic "VST" choice (resolved by the caller via
-# expr_value_matrix()/qc_vst()); `default_fn` (a function(dds) -> value key, e.g.
-# expr_default_assay) picks the initial selection. Both default off so DE's use is
-# unchanged.
+# `include_vst` / `include_norm` prepend synthetic "VST" / "Normalized log-counts"
+# choices (resolved by the caller via expr_value_matrix()/qc_vst()); `default_fn`
+# (a function(dds) -> value key, e.g. expr_default_assay) picks the initial
+# selection. All default off so DE's use is unchanged.
 expr_value_server <- function(input, output, session, state, suffix,
-                              include_vst = FALSE, default_fn = NULL) {
+                              include_vst = FALSE, include_norm = FALSE,
+                              default_fn = NULL) {
   a_id <- paste0(suffix, "_assay")
   t_id <- paste0(suffix, "_transform")
   pc_id <- paste0(suffix, "_pc")
@@ -40,8 +41,10 @@ expr_value_server <- function(input, output, session, state, suffix,
     dds <- state$working; if (is.null(dds)) return()
     an <- SummarizedExperiment::assayNames(dds)
     if (!length(an)) an <- "counts"
-    choices <- an
-    if (isTRUE(include_vst)) choices <- c("VST" = "vst", stats::setNames(an, an))
+    synth <- c(if (isTRUE(include_vst))  c("VST" = "vst"),
+               if (isTRUE(include_norm)) c("Normalized log-counts" = "norm_logcounts"))
+    extra <- setdiff(an, synth)                  # never duplicate a stored assay
+    choices <- if (length(synth)) c(synth, stats::setNames(extra, extra)) else an
     keys <- unname(choices)
     sel <- if (!is.null(input[[a_id]]) && input[[a_id]] %in% keys) input[[a_id]]
            else if (!is.null(default_fn)) {

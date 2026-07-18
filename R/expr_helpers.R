@@ -8,24 +8,17 @@
 
 #' Default expression value key for a dataset
 #'
-#' Picks the most interpretable value assay for the Expression page. Prefers
-#' size-factor-normalized log-counts when size factors exist, then the
-#' variance-stabilized transform, then the linear abundance assays (which the
-#' plot's transform control can log), then log-counts / counts.
+#' Picks the most interpretable value for the Expression page: size-factor
+#' normalized log-counts when size factors exist, otherwise the variance-
+#' stabilized transform. Both are computed value keys (resolved by
+#' [expr_value_matrix()]); VST is always attemptable with a log-counts fallback
+#' at resolve time, so no stored-assay fallthrough is needed here.
 #'
 #' @param dds A `DESeqDataSet`.
-#' @return A single value key: `"norm_logcounts"`, `"vst"`, or a stored assay name.
+#' @return A single value key: `"norm_logcounts"` or `"vst"`.
 #' @export
 expr_default_assay <- function(dds) {
-  an <- SummarizedExperiment::assayNames(dds)
-  if (!is.null(DESeq2::sizeFactors(dds))) return("norm_logcounts")
-  # No size factors: VST first (always attemptable, with a logcounts fallback at
-  # resolve time), then the stored linear/log assays in preference order.
-  for (a in c("vst", "TPM", "FPKM", "CPM", "logcounts")) {
-    if (identical(a, "vst") || a %in% an) return(a)
-  }
-  if ("counts" %in% an) return("counts")
-  if (length(an)) an[1] else "counts"
+  if (!is.null(DESeq2::sizeFactors(dds))) "norm_logcounts" else "vst"
 }
 
 #' Resolve an Expression value matrix (genes x samples) + an honest label
@@ -81,7 +74,8 @@ row_zscore <- function(mat) {
   if (!nrow(mat) || !ncol(mat)) return(mat)
   mu <- rowMeans(mat, na.rm = TRUE)
   centered <- mat - mu
-  sdv <- sqrt(rowSums(centered^2, na.rm = TRUE) / max(ncol(mat) - 1L, 1L))
+  n_row <- rowSums(!is.na(mat))                          # per-row non-NA count
+  sdv <- sqrt(rowSums(centered^2, na.rm = TRUE) / pmax(n_row - 1L, 1L))
   sdv[!is.finite(sdv) | sdv == 0] <- 1  # constant row -> centered values are 0
   z <- centered / sdv
   z[!is.finite(z)] <- 0
@@ -147,5 +141,7 @@ expr_long_frame <- function(values, groups, samples = names(values), colour = NU
     value  = as.numeric(values),
     stringsAsFactors = FALSE)
   if (!is.null(colour)) df$colour <- colour
-  df[!is.na(df$group), , drop = FALSE]
+  df <- df[!is.na(df$group), , drop = FALSE]
+  df$group <- droplevels(df$group)                       # drop groups with no shown samples
+  df
 }

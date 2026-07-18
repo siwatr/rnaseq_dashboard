@@ -43,6 +43,29 @@ test_that("single-gene plot builds; value matrix caches; gene id drives the sig"
   })
 })
 
+test_that("norm_logcounts is selectable and resolves (not silently downgraded)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    dds <- estimate_size_factors_endogenous(
+      ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 3, n_spike = 4, seed = 9)))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    gname <- SummarizedExperiment::rowData(state$working)$gene_name[5]
+    # norm_logcounts is a computed key (not in assayNames) - it must still resolve.
+    session$setInputs(tabs = "Single genes", val_assay = "norm_logcounts",
+                      val_transform = "none", auto = TRUE, x_group = "condition",
+                      colour_by = "condition", gene_searchby = "gene_name", gene_q = gname)
+    session$elapse(300); session$flushReact()
+    mm <- mat_shown$value()
+    expect_false(is.null(mm))
+    expect_match(mm$label, "normalized")
+    expect_equal(get("expr_value_mat", envir = state$derived)$params, list("norm_logcounts"))
+    expect_s3_class(build_gene_gg(FALSE), "ggplot")
+    # and expr_default_assay picks it when size factors exist
+    expect_equal(expr_default_assay(state$working), "norm_logcounts")
+  })
+})
+
 test_that("VST value is endogenous-only and rejects a spike-in gene", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()

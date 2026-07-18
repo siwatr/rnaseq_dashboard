@@ -10,11 +10,12 @@ expr_default_assay(dds)
 \item{dds}{A \code{DESeqDataSet}.}
 }
 \value{
-A single value key: \code{"norm_logcounts"}, \code{"vst"}, or a stored assay name.
+A single value key: \code{"norm_logcounts"} or \code{"vst"}.
 }
 \description{
-Picks the most interpretable value assay for the Expression page. Prefers
-size-factor-normalized log-counts when size factors exist, then the
-variance-stabilized transform, then the linear abundance assays (which the
-plot's transform control can log), then log-counts / counts.
+Picks the most interpretable value for the Expression page: size-factor
+normalized log-counts when size factors exist, otherwise the variance-
+stabilized transform. Both are computed value keys (resolved by
+\code{\link[=expr_value_matrix]{expr_value_matrix()}}); VST is always attemptable with a log-counts fallback
+at resolve time, so no stored-assay fallthrough is needed here.
 }

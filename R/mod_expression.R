@@ -213,7 +213,8 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       r <- gene_search(); if (length(r$records)) r$records[[1]] else NULL
     })
     val_spec <- expr_value_server(input, output, session, state, "val",
-                                  include_vst = TRUE, default_fn = expr_default_assay)
+                                  include_vst = TRUE, include_norm = TRUE,
+                                  default_fn = expr_default_assay)
 
     # Per-group sample counts over the shown samples -> which geoms are offered.
     group_sizes <- reactive({
@@ -232,14 +233,19 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
     output$geom_ui <- renderUI({
       av <- geom_avail()
       dist <- isTRUE(av$dist_shown)
+      # Preserve the user's current toggle across re-renders (this UI is rebuilt on
+      # a Showing / grouping change); fall back to the availability default.
+      keep <- function(id, default) {
+        v <- shiny::isolate(input[[id]]); if (is.null(v)) default else isTRUE(v)
+      }
       tagList(
-        if (dist) bslib::input_switch(ns("show_violin"), "Violin", value = TRUE)
+        if (dist) bslib::input_switch(ns("show_violin"), "Violin", value = keep("show_violin", TRUE))
         else helpText(class = "small text-muted",
                       "Violin / box hidden: groups are too small to summarize."),
-        if (dist) bslib::input_switch(ns("show_box"), "Boxplot", value = TRUE),
+        if (dist) bslib::input_switch(ns("show_box"), "Boxplot", value = keep("show_box", TRUE)),
         if (isTRUE(av$dots_allowed))
           bslib::input_switch(ns("show_dots"), "Data points",
-                              value = isTRUE(av$dots_default))
+                              value = keep("show_dots", av$dots_default))
         else helpText(class = "small text-muted",
                       sprintf("Data points hidden: a group has %d+ samples (overplotting).",
                               av$n_max))
