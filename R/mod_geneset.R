@@ -60,7 +60,7 @@ mod_geneset_ui <- function(id) {
 
         # ---- LEFT: Build a gene set (title text + one accordion per step) --
         tags$div(
-          tags$h4("Build a gene set", class = "fs-6 mb-2"),
+          tags$h4("Build a gene set", class = "fs-5 mb-2"),
           bslib::accordion(
             open = TRUE,
             bslib::accordion_panel(
@@ -150,7 +150,7 @@ mod_geneset_ui <- function(id) {
           tags$div(
             tags$div(
               class = "mb-2",
-              tags$h4("Your gene sets", class = "fs-6 mb-0 d-inline"),
+              tags$h4("Your gene sets", class = "fs-5 mb-0 d-inline"),
               tags$span(class = "small text-muted ms-2",
                         "Available to the other tabs this session")),
             bslib::accordion(
@@ -170,18 +170,20 @@ mod_geneset_ui <- function(id) {
               bslib::accordion_panel(
                 "Set members",
                 uiOutput(ns("members_header")),
-                DT::DTOutput(ns("members_table")))),
-            # ---- Export (its own section, not part of "Your gene sets") ------
+                DT::DTOutput(ns("members_table"))))),
+          # ---- Export: its own flex child (own section, gets the gap-3), with a
+          # top divider so it reads as a separate zone from "Your gene sets" -----
+          tags$div(
+            class = "pt-3 border-top",
             tags$div(
               class = "mb-2",
-              tags$h4("Export gene sets", class = "fs-6 mb-0 d-inline"),
+              tags$h4("Export gene sets", class = "fs-5 mb-0 d-inline"),
               tags$span(class = "small text-muted ms-2",
                         "Download sets as JSON / GMT / TSV")),
             bslib::accordion(
               open = TRUE,
               bslib::accordion_panel("Export format", uiOutput(ns("export_ui"))),
-              bslib::accordion_panel("Preview", uiOutput(ns("export_preview_ui"))))
-          )
+              bslib::accordion_panel("Preview", uiOutput(ns("export_preview_ui")))))
         )
       )
     )
