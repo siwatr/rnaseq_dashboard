@@ -1,6 +1,21 @@
-# ddsdashboard (development version)
+# ddsdashboard 0.3.1
 
-* Phase 6 (Gene Sets) in progress.
+Phase 6 (Gene Sets) — the Manage tab (P6a–P6d).
+
+* Gene Sets page: define, record, and manage named gene sets of interest (DE seeds them;
+  the Phase 7 Expression heatmap will consume them). Non-destructive storage — a set keeps
+  its full authored membership; "present / absent in the dataset" is a live derived view,
+  so a data edit only notifies about newly-absent ids, never trims the set.
+* Shared free-text gene-search module (`mod_gene_search`) with exact / contains / regex
+  match modes and tiered miss hints, retrofitted into PCA and DE (DE gained the explicit
+  "Search by" column picker).
+* Staging Manage tab: a "Build a gene set" card (Paste / From DE DEGs / Top-variable /
+  Import table / Gene set file → a live Preview → New or Add-to-existing Save) beside a
+  "Your gene sets" store.
+* Tabular import (CSV / TSV / XLSX) with view/filter/select, ID-column + match-field pick
+  (auto-detected), 1:many keep-all/first name matching, and annotation-split into N sets.
+* File round-trip: JSON / GMT / long-TSV import (with the same ID-match scheme) and a
+  selective, previewable export.
 
 # ddsdashboard 0.3.0
 
