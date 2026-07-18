@@ -213,7 +213,7 @@ app_server <- function(input, output, session) {
   mod_qc_server("qc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_dimreduc_server("dimreduc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_de_server("de", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
-  mod_geneset_server("geneset", state)
+  mod_geneset_server("geneset", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_heatmap_server("heatmap", state)
   mod_palette_server("palette", state)
   mod_export_server("export", state)

@@ -25,6 +25,14 @@ dependencies:
   - r-plotly             # optional interactive plot engine (ggplotly); QC toggle
   - r-rcolorbrewer       # palette catalogue (Palette page: qual/seq/div)
   - r-viridislite        # viridis palette catalogue (Palette page)
+  - r-ggvenndiagram      # Venn diagrams (Gene Sets Compare > Overlap); eulerr fallback
+  # eulerr (area-proportional Euler for Compare > Overlap) is NOT on conda-forge
+  # for osx-arm64 (only osx-64 / linux-64 / win-64), so it is installed from CRAN
+  # rather than here -- the one documented exception to the conda-only policy.
+  # eulerr >= 7 needs a Rust toolchain to build; 6.1.1 is the last C++-only
+  # release, so pin that to avoid pulling in rustc:
+  #   Rscript -e 'install.packages(c("polyclip","polylabelr"), repos="https://cloud.r-project.org"); install.packages("https://cran.r-project.org/src/contrib/Archive/eulerr/eulerr_6.1.1.tar.gz", repos=NULL, type="source")'
+  # When eulerr is absent the app degrades to ggVennDiagram (Venn only, no Euler).
   - r-dplyr              # gene-metadata filtering
   - r-matrixstats        # fast rowVars for variable-gene selection
   - r-readr
