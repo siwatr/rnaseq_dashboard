@@ -501,6 +501,28 @@ test_that("gene-set file import matches by a name column and honours keep-unmatc
   })
 })
 
+test_that("the keep-unmatched toggle renders in the Preview accordion per source", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 19))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    html <- function() as.character(output$preview_literal_ui$html)
+
+    # Paste + exact search-by-id -> the paste toggle.
+    session$setInputs(source = "paste", paste_searchby = "__rownames__", paste_mode = "exact")
+    session$flushReact()
+    expect_match(html(), "paste_literal")
+    # A contains search has no literal escape hatch -> no toggle.
+    session$setInputs(paste_mode = "contains"); session$flushReact()
+    expect_true(is.null(output$preview_literal_ui) || !nzchar(html()))
+    # gsfile always offers it.
+    session$setInputs(source = "gsfile"); session$flushReact()
+    expect_match(html(), "gsfile_literal")
+  })
+})
+
 test_that("Export enables only with sets, and exports the selected subset", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
