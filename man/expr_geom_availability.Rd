@@ -6,27 +6,32 @@
 \usage{
 expr_geom_availability(
   group_sizes,
-  g1 = getOption("ddsdashboard.expr_dots_max", 10L),
-  g2 = getOption("ddsdashboard.expr_dots_hard", 50L)
+  dist_min = getOption("ddsdashboard.expr_dist_min", 10L),
+  dots_max = getOption("ddsdashboard.expr_dots_max", 100L),
+  dots_hard = getOption("ddsdashboard.expr_dots_hard", 500L)
 )
 }
 \arguments{
 \item{group_sizes}{Integer vector of per-group sample counts (>= 1 each).}
 
-\item{g1}{Small-group threshold (default \code{getOption("ddsdashboard.expr_dots_max", 10)}).}
+\item{dist_min}{Minimum group size for the violin/box geoms to be offered
+(default \code{getOption("ddsdashboard.expr_dist_min", 10)}).}
 
-\item{g2}{Hard cap above which dots are never drawn
-(default \code{getOption("ddsdashboard.expr_dots_hard", 50)}).}
+\item{dots_max}{Data points default ON when the largest group is below this
+(default \code{getOption("ddsdashboard.expr_dots_max", 100)}).}
+
+\item{dots_hard}{Hard cap above which data points are never drawn
+(default \code{getOption("ddsdashboard.expr_dots_hard", 500)}).}
 }
 \value{
 A list: \code{n_max} (largest group), \code{dots_allowed}, \code{dots_default},
 \code{dist_shown} (whether violin/box are offered).
 }
 \description{
-Given the per-group sample counts and the two thresholds, decides whether dots
-are allowed / on by default and whether the violin/box distributions are shown.
-Dots default on for small groups (individual points are informative) and are
-disallowed once groups get large (overplotting, and the distribution geoms carry
-the signal); the distribution geoms hide only when every group is too small to
-summarize.
+Decides whether data points are allowed / on by default and whether the
+violin/box distributions are shown, from the per-group sample counts. The two
+concerns use separate thresholds: the distribution geoms appear once any group
+is large enough to summarize (\code{dist_min}), while data points default on up to a
+larger group size (\code{dots_max}) and are disallowed only for genuinely overplotted
+groups (\code{dots_hard}).
 }

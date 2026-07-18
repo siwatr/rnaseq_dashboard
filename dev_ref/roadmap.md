@@ -235,9 +235,11 @@ the Phase-6-deferred annotated layer + `Palette > Gene Set` land in P7d).
   opt-in VST choice** (backward-compatible; DE unchanged) — the value **matrix** is the deferred/
   cached (VST) part, the per-gene lookup + transform + colour are live re-plots. Colour by any
   attribute (`aes_resolve`; discrete → violin/box fill + dot colour, continuous → dot colour).
-  **Sample guards** (`expr_geom_availability`, `G1`/`G2` options 10/50): dots default ON when
-  `N ≤ G1`, disallowed when `N ≥ G2`; violin/box hidden when all groups `N < G1`. Dots via
-  `ggbeeswarm::geom_quasirandom` (`geom_jitter` fallback). The **Gene sets** tab is a stub. + tests.
+  **Sample guards** (`expr_geom_availability`, options `dist_min`/`dots_max`/`dots_hard` = 10/100/500):
+  violin/box shown once any group `N ≥ dist_min`; dots default ON when `N < dots_max`, disallowed when
+  `N ≥ dots_hard`. Dots via a **layout selector** — `ggbeeswarm::geom_beeswarm` (cex spacing) /
+  `geom_quasirandom` (width spread) / `geom_jitter` fallback — with per-layer width/opacity/size
+  controls and static Render controls. The **Gene sets** tab is a stub. + tests.
   (*Deferred to wishlist:* facet-by-2nd-variable, mean±error overlay.)
 - **P7b ⬜** — **Gene sets** heatmap core: a `ComplexHeatmap` over a named Phase-6 set (**blank
   placeholder until a set is chosen** — no DEG/top-variable auto-default). Per-gene z-score default

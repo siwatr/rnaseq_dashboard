@@ -51,25 +51,29 @@ test_that("row_zscore centers/scales rows and guards constant rows", {
   expect_equal(stats::sd(z["g1", ]), 1, tolerance = 1e-8)
 })
 
-test_that("expr_geom_availability applies the G1/G2 guards", {
-  # small groups: dots on by default; distributions hidden (all groups < g1)
-  a <- expr_geom_availability(c(4, 5), g1 = 10, g2 = 50)
+test_that("expr_geom_availability splits the distribution + dots thresholds", {
+  # small groups: dots on by default; distributions hidden (all groups < dist_min)
+  a <- expr_geom_availability(c(4, 5), dist_min = 10, dots_max = 100, dots_hard = 500)
   expect_true(a$dots_allowed); expect_true(a$dots_default); expect_false(a$dist_shown)
 
-  # a group at/above g1: distributions shown
-  a2 <- expr_geom_availability(c(4, 12), g1 = 10, g2 = 50)
+  # a group at/above dist_min: distributions shown
+  a2 <- expr_geom_availability(c(4, 12), dist_min = 10)
   expect_true(a2$dist_shown)
 
-  # mid: dots allowed but off by default (n_max between g1 and g2)
-  b <- expr_geom_availability(c(12, 30), g1 = 10, g2 = 50)
-  expect_true(b$dots_allowed); expect_false(b$dots_default); expect_true(b$dist_shown)
+  # groups < dots_max (100): dots still on by default (and distributions shown)
+  b <- expr_geom_availability(c(12, 90), dist_min = 10, dots_max = 100)
+  expect_true(b$dots_allowed); expect_true(b$dots_default); expect_true(b$dist_shown)
 
-  # large: dots disallowed
-  d <- expr_geom_availability(c(60, 70), g1 = 10, g2 = 50)
+  # >= dots_max but < dots_hard: allowed, off by default
+  c1 <- expr_geom_availability(c(120), dots_max = 100, dots_hard = 500)
+  expect_true(c1$dots_allowed); expect_false(c1$dots_default)
+
+  # >= dots_hard: disallowed (overplotted)
+  d <- expr_geom_availability(c(600), dots_hard = 500)
   expect_false(d$dots_allowed); expect_false(d$dots_default)
 
-  # all groups tiny: distributions hidden
-  e <- expr_geom_availability(c(2, 3), g1 = 10, g2 = 50)
+  # all groups tiny: distributions hidden, dots default on
+  e <- expr_geom_availability(c(2, 3))
   expect_false(e$dist_shown); expect_true(e$dots_default)
 })
 

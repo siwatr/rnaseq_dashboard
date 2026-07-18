@@ -20,7 +20,7 @@
                               violin_width = 0.9, violin_alpha = 0.35,
                               box_width = 0.18, box_alpha = 0.7,
                               dot_method = "quasirandom", dot_size = 1.9,
-                              dot_width = 0.4, dot_cex = 1,
+                              dot_alpha = 0.9, dot_width = 0.4, dot_cex = 1,
                               legend_pos = "right", dark_theme = FALSE,
                               interactive = FALSE) {
   p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$group, y = .data$value))
@@ -41,7 +41,7 @@
       dot_aes <- if (is.null(dot_aes)) ggplot2::aes(text = .data$text)
                  else utils::modifyList(dot_aes, ggplot2::aes(text = .data$text))
     }
-    dot_args <- list(mapping = dot_aes, size = dot_size, alpha = 0.9)
+    dot_args <- list(mapping = dot_aes, size = dot_size, alpha = dot_alpha)
     # cex (point spacing) is native to the beeswarm layout; width (max spread) to
     # quasirandom / jitter. Keeping each control on its own method avoids the
     # ggbeeswarm "duplicated size" warning that cex + a grouping aesthetic trips.
@@ -114,6 +114,7 @@ mod_expression_ui <- function(id) {
               tags$hr(class = "my-2"),
               tags$div(class = "small fw-semibold mb-1", "Data points"),
               sliderInput(ns("dot_size"), "Size", 0.25, 5, 1.9, 0.25),
+              sliderInput(ns("dot_alpha"), "Opacity", 0, 1, 0.9, 0.05),
               uiOutput(ns("dot_method_ui")),
               conditionalPanel(
                 sprintf("input['%s'] != 'beeswarm'", ns("dot_method")),
@@ -330,8 +331,8 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
         violin_width = input$violin_width %||% 0.9, violin_alpha = input$violin_alpha %||% 0.35,
         box_width = input$box_width %||% 0.18, box_alpha = input$box_alpha %||% 0.7,
         dot_method = input$dot_method %||% "quasirandom",
-        dot_size = input$dot_size %||% 1.9, dot_width = input$dot_width %||% 0.4,
-        dot_cex = input$dot_cex %||% 1,
+        dot_size = input$dot_size %||% 1.9, dot_alpha = input$dot_alpha %||% 0.9,
+        dot_width = input$dot_width %||% 0.4, dot_cex = input$dot_cex %||% 1,
         dark_theme = dark(), interactive = interactive)
     }
     dual_plot("gene", build_gene_gg, n_elements = reactive({

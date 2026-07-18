@@ -91,31 +91,35 @@ row_zscore <- function(mat) {
 
 #' Which distribution geoms the single-gene plot should offer
 #'
-#' Given the per-group sample counts and the two thresholds, decides whether dots
-#' are allowed / on by default and whether the violin/box distributions are shown.
-#' Dots default on for small groups (individual points are informative) and are
-#' disallowed once groups get large (overplotting, and the distribution geoms carry
-#' the signal); the distribution geoms hide only when every group is too small to
-#' summarize.
+#' Decides whether data points are allowed / on by default and whether the
+#' violin/box distributions are shown, from the per-group sample counts. The two
+#' concerns use separate thresholds: the distribution geoms appear once any group
+#' is large enough to summarize (`dist_min`), while data points default on up to a
+#' larger group size (`dots_max`) and are disallowed only for genuinely overplotted
+#' groups (`dots_hard`).
 #'
 #' @param group_sizes Integer vector of per-group sample counts (>= 1 each).
-#' @param g1 Small-group threshold (default `getOption("ddsdashboard.expr_dots_max", 10)`).
-#' @param g2 Hard cap above which dots are never drawn
-#'   (default `getOption("ddsdashboard.expr_dots_hard", 50)`).
+#' @param dist_min Minimum group size for the violin/box geoms to be offered
+#'   (default `getOption("ddsdashboard.expr_dist_min", 10)`).
+#' @param dots_max Data points default ON when the largest group is below this
+#'   (default `getOption("ddsdashboard.expr_dots_max", 100)`).
+#' @param dots_hard Hard cap above which data points are never drawn
+#'   (default `getOption("ddsdashboard.expr_dots_hard", 500)`).
 #' @return A list: `n_max` (largest group), `dots_allowed`, `dots_default`,
 #'   `dist_shown` (whether violin/box are offered).
 #' @export
 expr_geom_availability <- function(group_sizes,
-                                   g1 = getOption("ddsdashboard.expr_dots_max", 10L),
-                                   g2 = getOption("ddsdashboard.expr_dots_hard", 50L)) {
+                                   dist_min = getOption("ddsdashboard.expr_dist_min", 10L),
+                                   dots_max = getOption("ddsdashboard.expr_dots_max", 100L),
+                                   dots_hard = getOption("ddsdashboard.expr_dots_hard", 500L)) {
   sizes <- as.integer(group_sizes[is.finite(group_sizes)])
   n_max <- if (length(sizes)) max(sizes) else 0L
-  dots_allowed <- n_max < g2
+  dots_allowed <- n_max < dots_hard
   list(
     n_max = n_max,
     dots_allowed = dots_allowed,
-    dots_default = dots_allowed && n_max <= g1,
-    dist_shown = length(sizes) > 0 && any(sizes >= g1)
+    dots_default = dots_allowed && n_max < dots_max,
+    dist_shown = length(sizes) > 0 && any(sizes >= dist_min)
   )
 }
 
