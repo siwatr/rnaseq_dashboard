@@ -1254,10 +1254,13 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
         p <- p + ggplot2::geom_col(ggplot2::aes(
           text = sprintf("%s\n%s: %d", .data$set, .data$status, .data$n)), position = pos)
       else p <- p + ggplot2::geom_col(position = pos)
+      # Title derives from the rendered frame (not the live toggle), so it can't
+      # disagree with the bars when auto-render is off: present-only -> in-dataset.
+      within_view <- !("absent" %in% as.character(fr$status))
       p <- p +
         ggplot2::scale_fill_manual(values = cols, drop = FALSE, name = NULL) +
         ggplot2::labs(x = NULL, y = "Genes",
-                      title = if (isTRUE(input$cmp_within)) "Set sizes (in dataset)"
+                      title = if (within_view) "Set sizes (in dataset)"
                               else "Set sizes (authored)") +
         .plot_theme(dark())
       # Default horizontal bars; the toggle flips to vertical.

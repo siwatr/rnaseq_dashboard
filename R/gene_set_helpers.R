@@ -99,7 +99,7 @@ gene_set_absent <- function(set, feature_ids) {
 #' @rdname gene_set_present
 #' @export
 gene_set_ids_for <- function(set, feature_ids = NULL, within = FALSE) {
-  if (isTRUE(within)) gene_set_present(set, feature_ids) else unique(.gs_ids(set))
+  unique(if (isTRUE(within)) gene_set_present(set, feature_ids) else .gs_ids(set))
 }
 
 #' Per-set size breakdown for the Compare Stats bar
