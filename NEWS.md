@@ -1,3 +1,7 @@
+# ddsdashboard (development version)
+
+* Phase 7 (Expression) — Single genes + Gene sets heatmap next.
+
 # ddsdashboard 0.4.0
 
 Phase 6 (Gene Sets) complete — adds the **Compare tab** (P6e) alongside the Manage tab.
