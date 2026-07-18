@@ -205,6 +205,23 @@ test_that("gene_set_size_frame: present+absent (within=FALSE) vs present-only (w
   expect_equal(nrow(gene_set_size_frame(list(), feats)), 0L)
 })
 
+test_that("gene_set_size_frame orders the set factor by size or name", {
+  sets <- list(mid = new_gene_set(c("g1", "g2")),         # size 2
+               big = new_gene_set(c("g1", "g2", "g3")),   # size 3
+               sm  = new_gene_set("g1"))                   # size 1
+  feats <- c("g1", "g2", "g3")
+  expect_equal(levels(gene_set_size_frame(sets, feats, order = "none")$set),
+               c("mid", "big", "sm"))                      # input order
+  expect_equal(levels(gene_set_size_frame(sets, feats, order = "inc")$set),
+               c("sm", "mid", "big"))
+  expect_equal(levels(gene_set_size_frame(sets, feats, order = "dec")$set),
+               c("big", "mid", "sm"))
+  expect_equal(levels(gene_set_size_frame(sets, feats, order = "az")$set),
+               c("big", "mid", "sm"))
+  expect_equal(levels(gene_set_size_frame(sets, feats, order = "za")$set),
+               c("sm", "mid", "big"))
+})
+
 test_that("gene_set_overlap_list keeps unique ids per set + follows the toggle", {
   sets <- list(A = new_gene_set(c("g1", "g2", "gX")), B = new_gene_set(c("g2", "g3")))
   feats <- c("g1", "g2", "g3")

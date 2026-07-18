@@ -568,15 +568,24 @@ test_that("mod_geneset UI mounts the Compare tab (Stats + Overlap)", {
   expect_match(ui, "gs-overlap_type_ui")
 })
 
-test_that(".gs_overlap_type caps Euler at 3 / Venn at 4, then switches to UpSet", {
-  expect_false(.gs_overlap_type("euler", 3, TRUE)$switched)
-  expect_equal(.gs_overlap_type("euler", 4, TRUE)$type, "upset")
-  expect_true(.gs_overlap_type("euler", 4, TRUE)$switched)
-  expect_false(.gs_overlap_type("venn", 4, TRUE)$switched)
-  expect_equal(.gs_overlap_type("venn", 5, TRUE)$type, "upset")
-  expect_equal(.gs_overlap_type("upset", 99, TRUE)$type, "upset")
-  # Euler needs eulerr: without it, an Euler request degrades to Venn.
-  expect_equal(.gs_overlap_type("euler", 2, FALSE)$type, "venn")
+test_that(".gs_first_suitable_type picks Euler<=3 / Venn=4 / UpSet>4 (Venn<=4 sans eulerr)", {
+  expect_equal(.gs_first_suitable_type(1, TRUE), "euler")
+  expect_equal(.gs_first_suitable_type(3, TRUE), "euler")
+  expect_equal(.gs_first_suitable_type(4, TRUE), "venn")
+  expect_equal(.gs_first_suitable_type(5, TRUE), "upset")
+  # Without eulerr, Euler is unavailable: <=4 -> Venn.
+  expect_equal(.gs_first_suitable_type(2, FALSE), "venn")
+  expect_equal(.gs_first_suitable_type(5, FALSE), "upset")
+})
+
+test_that(".gs_type_valid enforces per-type caps (no silent substitution)", {
+  expect_true(.gs_type_valid("euler", 3, TRUE))
+  expect_false(.gs_type_valid("euler", 4, TRUE))         # over cap -> invalid (message, no plot)
+  expect_false(.gs_type_valid("euler", 2, FALSE))        # needs eulerr
+  expect_true(.gs_type_valid("venn", 4, TRUE))
+  expect_false(.gs_type_valid("venn", 5, TRUE))
+  expect_true(.gs_type_valid("upset", 99, TRUE))
+  expect_false(.gs_type_valid("upset", 0, TRUE))
 })
 
 test_that("Compare: shared selection + Stats frame follow the within-dataset toggle", {
@@ -608,7 +617,7 @@ test_that("Compare: shared selection + Stats frame follow the within-dataset tog
   })
 })
 
-test_that("Compare: Overlap data drops empty sets, switches type by count, builds a plot", {
+test_that("Compare: Overlap drops empty sets, defaults type by count, flags invalid picks", {
   skip_if_not_installed("DESeq2")
   skip_if_not_installed("ComplexHeatmap")
   state <- new_app_state()
@@ -619,23 +628,29 @@ test_that("Compare: Overlap data drops empty sets, switches type by count, build
     state$gene_sets <- list(
       A = new_gene_set(rn[1:12]), B = new_gene_set(rn[8:20]),
       C = new_gene_set(rn[15:25]), D = new_gene_set(rn[1:6]),
+      E = new_gene_set(rn[3:9]),
       Ghost = new_gene_set(c("nope1", "nope2")))          # all-absent -> empty within
-    # 3 real sets -> Venn stays Venn.
-    session$setInputs(cmp_sets = c("A", "B", "C"), cmp_within = FALSE,
-                      overlap_type = "venn", overlap_auto = TRUE)
+    # 3 sets, type not picked -> default follows the count (first suitable).
+    session$setInputs(cmp_sets = c("A", "B", "C"), cmp_within = FALSE, overlap_auto = TRUE)
     session$flushReact()
     od <- overlap_data()
     expect_equal(length(od$lst), 3L)
-    expect_equal(od$type, "venn")
-    expect_null(od$reason)
+    expect_equal(od$type, .gs_first_suitable_type(3, have_eulerr()))
+    expect_true(.gs_type_valid(od$type, 3L, have_eulerr()))
 
     # A within-dataset view drops the all-absent Ghost set from the overlap.
     session$setInputs(cmp_sets = c("A", "Ghost"), cmp_within = TRUE); session$flushReact()
-    expect_equal(length(overlap_data()$lst), 1L)          # Ghost contributes nothing
+    expect_equal(length(overlap_lst()), 1L)               # Ghost contributes nothing
 
-    # 4 sets with UpSet requested builds (any n); plot renders without error.
-    session$setInputs(cmp_sets = c("A", "B", "C", "D"), cmp_within = FALSE,
-                      overlap_type = "upset"); session$flushReact()
+    # User picks Venn, then selects 5 sets -> invalid, so the plot must show the
+    # message (not a substituted UpSet): the validity check is FALSE.
+    session$setInputs(cmp_sets = c("A", "B", "C", "D", "E"), cmp_within = FALSE,
+                      overlap_type = "venn"); session$flushReact()
+    expect_equal(overlap_data()$type, "venn")             # respected, not switched
+    expect_false(.gs_type_valid(overlap_data()$type, length(overlap_lst()), have_eulerr()))
+
+    # UpSet handles any n and builds.
+    session$setInputs(overlap_type = "upset"); session$flushReact()
     expect_equal(overlap_data()$type, "upset")
     p <- .gs_overlap_plot(overlap_data()$lst, "upset")
     expect_true(inherits(p, c("Heatmap", "HeatmapList")))

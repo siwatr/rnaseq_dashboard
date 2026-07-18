@@ -72,21 +72,31 @@
   invisible(NULL)
 }
 
-# The effective Overlap diagram type given the requested type, the number of
-# (non-empty) sets, and eulerr availability. Euler is area-proportional and caps
-# at 3 sets; Venn (non-proportional) caps at 4; above the cap the plot falls back
-# to UpSet, which handles any n. Euler needs eulerr -> degrades to Venn when it is
-# absent (the UI also hides the Euler option then). Pure; returns
-# list(type, switched, reason). Used by the Overlap server + covered by tests.
-.gs_overlap_type <- function(requested, n_sets, have_eulerr = TRUE) {
-  requested <- requested %||% "venn"
-  if (identical(requested, "euler") && !isTRUE(have_eulerr)) requested <- "venn"
-  cap <- switch(requested, euler = 3L, venn = 4L, upset = Inf, 4L)
-  if (n_sets > cap)
-    return(list(type = "upset", switched = TRUE,
-      reason = sprintf("%d sets exceed the %d-set limit for %s -- showing UpSet instead.",
-                       n_sets, cap, if (identical(requested, "euler")) "Euler" else "Venn")))
-  list(type = requested, switched = FALSE, reason = NULL)
+# The first suitable Overlap diagram for n sets: Euler (area-proportional, needs
+# eulerr) for <=3, Venn for <=4, UpSet beyond. Without eulerr, Euler is
+# unavailable so <=4 falls to Venn. Drives the "Diagram type" default (which
+# follows the set count until the user picks a type).
+.gs_first_suitable_type <- function(n, have_eulerr = TRUE) {
+  if (isTRUE(have_eulerr) && n <= 3L) "euler"
+  else if (n <= 4L) "venn"
+  else "upset"
+}
+# Can `type` draw n sets? Euler 1-3 (needs eulerr), Venn 1-4, UpSet any (>=1).
+# When the selected type can't, the Overlap plot shows a message and draws
+# NOTHING (we never silently substitute a different diagram).
+.gs_type_valid <- function(type, n, have_eulerr = TRUE) {
+  isTRUE(switch(type %||% "",
+    euler = isTRUE(have_eulerr) && n >= 1L && n <= 3L,
+    venn  = n >= 1L && n <= 4L,
+    upset = n >= 1L,
+    FALSE))
+}
+# The "pick a suitable type" message shown when the selected type can't draw n.
+.gs_type_invalid_msg <- function(type, n) {
+  cap <- switch(type, euler = 3L, venn = 4L, 0L)
+  alt <- if (n <= 4L) "Venn or UpSet" else "UpSet"
+  sprintf("%s diagrams support up to %d sets, but %d are selected.\nPick %s under 'Diagram type'.",
+          if (identical(type, "euler")) "Euler" else "Venn", cap, n, alt)
 }
 
 # Draw a set-overlap diagram from a named list of id-vectors. eulerr handles
@@ -254,44 +264,46 @@ mod_geneset_ui <- function(id) {
     ),
 
     # ===================== COMPARE TAB (P6e) =========================
-    # Compare the sets you built -- sizes (Stats) and overlaps (Overlap). Two
-    # shared controls govern BOTH sub-pills: which sets to visualize, and the
-    # "Within this dataset only" toggle (present ids vs full authored membership).
+    # Compare the sets you built -- sizes (Stats) and overlaps (Overlap). Following
+    # the DE Plots tab: the two SHARED controls (which sets to visualize + the
+    # "Within this dataset only" toggle) live in the tab sidebar; each sub-pill's
+    # own controls sit above its plot.
     bslib::nav_panel(
       tags$h3("Compare", class = "fs-6 mb-0"),
-      helpText(class = "small text-muted mb-2",
-               "Compare the sets you have built. Build sets on the Manage tab first."),
-      bslib::layout_columns(
-        fillable = FALSE, col_widths = c(7, 5),
-        uiOutput(ns("cmp_sets_ui")),
-        tags$div(
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          title = "Sets to compare", width = 320,
+          uiOutput(ns("cmp_sets_ui")),
           bslib::input_switch(ns("cmp_within"), "Within this dataset only", value = FALSE),
           helpText(class = "small text-muted",
                    "On: count only genes present in the dataset. ",
-                   "Off: the full authored membership (present + absent)."))),
-      bslib::navset_card_pill(
-        bslib::nav_panel(
-          "Stats",
-          bslib::layout_sidebar(
-            sidebar = bslib::sidebar(
-              width = 260, open = "desktop",
+                   "Off: the full authored membership (present + absent).")),
+        bslib::navset_card_pill(
+          bslib::nav_panel(
+            "Stats",
+            tags$div(
+              class = "d-flex flex-wrap align-items-end gap-3 mb-2",
+              selectInput(ns("stats_order"), "Order by",
+                          c("None" = "none", "Increasing size" = "inc",
+                            "Decreasing size" = "dec", "Name (A-Z)" = "az",
+                            "Name (Z-A)" = "za"), width = "170px"),
               bslib::input_switch(ns("stats_vertical"), "Vertical bars", value = FALSE),
-              checkboxInput(ns("stats_auto"), "Auto-render", value = TRUE),
-              actionButton(ns("stats_render"), "Render", icon = icon("play"),
-                           class = "btn-primary btn-sm")),
+              tags$div(
+                checkboxInput(ns("stats_auto"), "Auto-render", value = TRUE),
+                actionButton(ns("stats_render"), "Render", icon = icon("play"),
+                             class = "btn-primary btn-sm"))),
             uiOutput(ns("stats_stale")),
-            .plot_dual(ns("stats_container")))),
-        bslib::nav_panel(
-          "Overlap",
-          bslib::layout_sidebar(
-            sidebar = bslib::sidebar(
-              width = 260, open = "desktop",
+            .plot_dual(ns("stats_container"))),
+          bslib::nav_panel(
+            "Overlap",
+            tags$div(
+              class = "d-flex flex-wrap align-items-end gap-3 mb-2",
               uiOutput(ns("overlap_type_ui")),
-              checkboxInput(ns("overlap_auto"), "Auto-render", value = TRUE),
-              actionButton(ns("overlap_render"), "Render", icon = icon("play"),
-                           class = "btn-primary btn-sm")),
+              tags$div(
+                checkboxInput(ns("overlap_auto"), "Auto-render", value = TRUE),
+                actionButton(ns("overlap_render"), "Render", icon = icon("play"),
+                             class = "btn-primary btn-sm"))),
             uiOutput(ns("overlap_stale")),
-            uiOutput(ns("overlap_switch")),
             shinycssloaders::withSpinner(
               plotOutput(ns("overlap_plot"), height = "440px")))))
     )
@@ -1221,20 +1233,24 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # ---- Stats: a present/absent set-size bar on the shared dual_plot engine --
     stats_frame <- reactive({
       sel <- cmp_selected()
-      gene_set_size_frame(state$gene_sets[sel], working_rn(), isTRUE(input$cmp_within))
+      gene_set_size_frame(state$gene_sets[sel], working_rn(), isTRUE(input$cmp_within),
+                          order = input$stats_order %||% "none")
     })
     stats_shown <- eng$deferred("stats_auto", "stats_render", stats_frame,
-      sig = reactive(list(cmp_selected(), isTRUE(input$cmp_within), state$data_version)))
+      sig = reactive(list(cmp_selected(), isTRUE(input$cmp_within),
+                          input$stats_order, state$data_version)))
     output$stats_stale <- eng$stale_note(stats_shown)
     build_stats_gg <- function(interactive) {
       fr <- stats_shown$value()
       validate(need(!is.null(fr) && nrow(fr) > 0L, "Select sets to compare, then Render."))
       cols <- gene_set_presence_colors((state$palette$other %||% list())$gene_set_presence)
+      # reverse the stack so "present" sits nearest the axis (absent extends past it).
+      pos <- ggplot2::position_stack(reverse = TRUE)
       p <- ggplot2::ggplot(fr, ggplot2::aes(x = .data$set, y = .data$n, fill = .data$status))
       if (isTRUE(interactive))
         p <- p + ggplot2::geom_col(ggplot2::aes(
-          text = sprintf("%s\n%s: %d", .data$set, .data$status, .data$n)))
-      else p <- p + ggplot2::geom_col()
+          text = sprintf("%s\n%s: %d", .data$set, .data$status, .data$n)), position = pos)
+      else p <- p + ggplot2::geom_col(position = pos)
       p <- p +
         ggplot2::scale_fill_manual(values = cols, drop = FALSE, name = NULL) +
         ggplot2::labs(x = NULL, y = "Genes",
@@ -1249,39 +1265,55 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       n_elements = reactive({ fr <- stats_shown$value(); if (is.null(fr)) 0L else nrow(fr) }),
       height = "380px")
 
-    # ---- Overlap: Euler / Venn / UpSet, per-type-cap auto-switch to UpSet -----
+    # ---- Overlap: Euler / Venn / UpSet. The "Diagram type" default follows the
+    # set count (first suitable); once the user picks a type we respect it, and if
+    # it can't draw the current count we show a message and NO plot (never switch).
+    overlap_lst <- reactive({
+      sel <- cmp_selected()
+      lst <- gene_set_overlap_list(state$gene_sets[sel], working_rn(), isTRUE(input$cmp_within))
+      lst[lengths(lst) > 0L]                              # drop sets contributing nothing
+    })
     output$overlap_type_ui <- renderUI({
       ch <- c(if (have_eulerr()) c("Euler (area-proportional)" = "euler"),
               "Venn" = "venn", "UpSet" = "upset")
-      def <- if (have_eulerr()) "euler" else "venn"
+      cur <- shiny::isolate(input$overlap_type)
+      sel <- if (!is.null(cur) && cur %in% ch) cur
+             else .gs_first_suitable_type(length(shiny::isolate(overlap_lst())), have_eulerr())
       tagList(
-        selectInput(ns("overlap_type"), "Diagram type", choices = ch,
-                    selected = shiny::isolate(input$overlap_type) %||% def),
+        selectInput(ns("overlap_type"), "Diagram type", choices = ch, selected = sel,
+                    width = "190px"),
         if (!have_eulerr())
-          helpText(class = "small text-muted",
-                   "Install eulerr for area-proportional Euler diagrams."))
+          helpText(class = "small text-muted", "Install eulerr for Euler diagrams."))
+    })
+    # Default-follow-count until the user picks a type. prog_update marks OUR own
+    # updateSelectInput so the touched-flag observer ignores it (vs a real pick).
+    type_touched <- reactiveVal(FALSE)
+    prog_update  <- reactiveVal(FALSE)
+    observeEvent(input$overlap_type, {
+      if (isTRUE(prog_update())) prog_update(FALSE) else type_touched(TRUE)
+    }, ignoreInit = TRUE)
+    observeEvent(list(length(overlap_lst()), have_eulerr()), {
+      if (isTRUE(type_touched())) return()
+      def <- .gs_first_suitable_type(length(overlap_lst()), have_eulerr())
+      if (!identical(input$overlap_type %||% "", def)) {
+        prog_update(TRUE); updateSelectInput(session, "overlap_type", selected = def)
+      }
     })
     overlap_data <- reactive({
-      sel <- cmp_selected()
-      lst <- gene_set_overlap_list(state$gene_sets[sel], working_rn(), isTRUE(input$cmp_within))
-      lst <- lst[lengths(lst) > 0L]                       # drop sets contributing nothing
-      req_type <- input$overlap_type %||% (if (have_eulerr()) "euler" else "venn")
-      eff <- .gs_overlap_type(req_type, length(lst), have_eulerr())
-      list(lst = lst, type = eff$type, reason = eff$reason)
+      lst <- overlap_lst()
+      list(lst = lst,
+           type = input$overlap_type %||% .gs_first_suitable_type(length(lst), have_eulerr()))
     })
     overlap_shown <- eng$deferred("overlap_auto", "overlap_render", overlap_data,
       sig = reactive(list(cmp_selected(), isTRUE(input$cmp_within),
                           input$overlap_type, state$data_version)))
     output$overlap_stale <- eng$stale_note(overlap_shown)
-    output$overlap_switch <- renderUI({
-      v <- overlap_shown$value()
-      if (is.null(v) || is.null(v$reason)) return(NULL)
-      tags$div(class = "alert alert-info py-1 px-2 small mb-2", v$reason)
-    })
     output$overlap_plot <- renderPlot({
       v <- overlap_shown$value()
       validate(need(!is.null(v), "Select sets to compare, then Render."))
-      validate(need(length(v$lst) >= 2L, "Select at least 2 non-empty sets to compare."))
+      n <- length(v$lst)
+      validate(need(n >= 2L, "Select at least 2 non-empty sets to compare."))
+      validate(need(.gs_type_valid(v$type, n, have_eulerr()), .gs_type_invalid_msg(v$type, n)))
       p <- .gs_overlap_plot(v$lst, v$type)
       if (inherits(p, c("Heatmap", "HeatmapList"))) ComplexHeatmap::draw(p) else print(p)
     })

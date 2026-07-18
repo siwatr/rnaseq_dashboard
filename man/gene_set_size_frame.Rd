@@ -4,7 +4,12 @@
 \alias{gene_set_size_frame}
 \title{Per-set size breakdown for the Compare Stats bar}
 \usage{
-gene_set_size_frame(sets, feature_ids = NULL, within = FALSE)
+gene_set_size_frame(
+  sets,
+  feature_ids = NULL,
+  within = FALSE,
+  order = c("none", "inc", "dec", "az", "za")
+)
 }
 \arguments{
 \item{sets}{A named list of gene-set records (or bare id vectors).}
@@ -13,9 +18,12 @@ gene_set_size_frame(sets, feature_ids = NULL, within = FALSE)
 
 \item{within}{When TRUE, one "present" row per set (present ids only); else a
 present + absent breakdown of the full authored membership (stacked bar).}
+
+\item{order}{Bar order (sets the \code{set} factor levels): \code{"none"} (input order),
+\code{"inc"}/\code{"dec"} (by displayed total size), \code{"az"}/\code{"za"} (by name).}
 }
 \value{
-A long data.frame: \code{set} (factor, input order), \code{status}
+A long data.frame: \code{set} (factor, ordered per \code{order}), \code{status}
 (\code{"present"}/\code{"absent"}, factor), \code{n} (integer). Empty when \code{sets} is empty.
 }
 \description{

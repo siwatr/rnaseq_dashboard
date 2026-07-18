@@ -110,10 +110,14 @@ gene_set_ids_for <- function(set, feature_ids = NULL, within = FALSE) {
 #' @param feature_ids Current dataset feature ids (`rownames(dds)`).
 #' @param within When TRUE, one "present" row per set (present ids only); else a
 #'   present + absent breakdown of the full authored membership (stacked bar).
-#' @return A long data.frame: `set` (factor, input order), `status`
+#' @param order Bar order (sets the `set` factor levels): `"none"` (input order),
+#'   `"inc"`/`"dec"` (by displayed total size), `"az"`/`"za"` (by name).
+#' @return A long data.frame: `set` (factor, ordered per `order`), `status`
 #'   (`"present"`/`"absent"`, factor), `n` (integer). Empty when `sets` is empty.
 #' @export
-gene_set_size_frame <- function(sets, feature_ids = NULL, within = FALSE) {
+gene_set_size_frame <- function(sets, feature_ids = NULL, within = FALSE,
+                                order = c("none", "inc", "dec", "az", "za")) {
+  order <- match.arg(order)
   if (!length(sets)) {
     return(data.frame(set = factor(character(0)),
                       status = factor(character(0), levels = c("present", "absent")),
@@ -128,7 +132,14 @@ gene_set_size_frame <- function(sets, feature_ids = NULL, within = FALSE) {
     rbind(data.frame(set = nms, status = "present", n = present, stringsAsFactors = FALSE),
           data.frame(set = nms, status = "absent",  n = absent,  stringsAsFactors = FALSE))
   }
-  rows$set    <- factor(rows$set, levels = nms)
+  # Order the set factor: by displayed total (inc/dec), name (az/za), or input.
+  lvls <- switch(order,
+    az   = sort(nms),
+    za   = rev(sort(nms)),
+    none = nms,
+    { tot <- vapply(nms, function(s) sum(rows$n[rows$set == s]), integer(1))
+      nms[order(tot, decreasing = identical(order, "dec"))] })
+  rows$set    <- factor(rows$set, levels = lvls)
   rows$status <- factor(rows$status, levels = c("present", "absent"))
   rows
 }
