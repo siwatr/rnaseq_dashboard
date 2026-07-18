@@ -45,10 +45,11 @@
     # cex (point spacing) is native to the beeswarm layout; width (max spread) to
     # quasirandom / jitter. Keeping each control on its own method avoids the
     # ggbeeswarm "duplicated size" warning that cex + a grouping aesthetic trips.
+    # Jitter is an explicit choice AND the fallback when ggbeeswarm is absent.
     have_bees <- requireNamespace("ggbeeswarm", quietly = TRUE)
     p <- p + if (have_bees && identical(dot_method, "beeswarm")) {
       do.call(ggbeeswarm::geom_beeswarm, c(dot_args, list(cex = dot_cex)))
-    } else if (have_bees) {
+    } else if (have_bees && identical(dot_method, "quasirandom")) {
       do.call(ggbeeswarm::geom_quasirandom, c(dot_args, list(width = dot_width)))
     } else {
       do.call(ggplot2::geom_jitter, c(dot_args, list(width = dot_width, height = 0)))
@@ -202,7 +203,8 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
         return(helpText(class = "small text-muted",
                         "ggbeeswarm not installed - using jittered points."))
       selectInput(ns("dot_method"), "Layout",
-                  c("Quasirandom" = "quasirandom", "Beeswarm" = "beeswarm"),
+                  c("Quasirandom" = "quasirandom", "Beeswarm" = "beeswarm",
+                    "Jitter" = "jitter"),
                   selected = "quasirandom")
     })
 

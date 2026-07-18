@@ -40,6 +40,8 @@ test_that("single-gene plot builds; value matrix caches; gene id drives the sig"
     expect_silent(ggplot2::ggplot_build(build_gene_gg(FALSE)))   # quasirandom: no warning
     session$setInputs(dot_method = "beeswarm"); session$flushReact()
     expect_silent(ggplot2::ggplot_build(build_gene_gg(FALSE)))   # beeswarm + cex: no warning
+    session$setInputs(dot_method = "jitter"); session$flushReact()
+    expect_s3_class(build_gene_gg(FALSE), "ggplot")              # explicit jitter layout
   })
 })
 
