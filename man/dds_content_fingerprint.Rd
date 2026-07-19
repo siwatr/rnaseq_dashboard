@@ -10,7 +10,11 @@ dds_content_fingerprint(dds)
 \item{dds}{A \code{DESeqDataSet} (or \code{NULL}).}
 }
 \value{
-A list \code{list(rn, cn, sf)}, or \code{NULL} when \code{dds} is \code{NULL}.
+A list \code{list(rn, cn, sf)}, or \code{NULL} when \code{dds} is \code{NULL}. \code{sf} is the
+\strong{effective} size factors: the stored ones when present, else the endogenous
+estimate the fit/normalization would compute -- so materializing that same
+estimate later (e.g. adding an assay) is not mistaken for a change, while a
+genuinely different size-factor vector is.
 }
 \description{
 The DESeq2 fit and the (blind) VST depend on the count matrix, the sample and

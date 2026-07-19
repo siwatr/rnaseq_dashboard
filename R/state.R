@@ -204,12 +204,19 @@ state_set_design <- function(state, design, relevel = NULL, action = list()) {
 #' structural or size-factor change invalidates them.
 #'
 #' @param dds A `DESeqDataSet` (or `NULL`).
-#' @return A list `list(rn, cn, sf)`, or `NULL` when `dds` is `NULL`.
+#' @return A list `list(rn, cn, sf)`, or `NULL` when `dds` is `NULL`. `sf` is the
+#'   **effective** size factors: the stored ones when present, else the endogenous
+#'   estimate the fit/normalization would compute -- so materializing that same
+#'   estimate later (e.g. adding an assay) is not mistaken for a change, while a
+#'   genuinely different size-factor vector is.
 #' @export
 dds_content_fingerprint <- function(dds) {
   if (is.null(dds)) return(NULL)
-  list(rn = rownames(dds), cn = colnames(dds),
-       sf = tryCatch(DESeq2::sizeFactors(dds), error = function(e) NULL))
+  sf <- tryCatch(DESeq2::sizeFactors(dds), error = function(e) NULL)
+  if (is.null(sf))                                    # NULL == "will estimate endogenous"
+    sf <- tryCatch(DESeq2::sizeFactors(estimate_size_factors_endogenous(dds)),
+                   error = function(e) NULL)
+  list(rn = rownames(dds), cn = colnames(dds), sf = unname(sf))
 }
 
 # The (content-fingerprint, design_version) stamp the DESeq fit + its extracted
