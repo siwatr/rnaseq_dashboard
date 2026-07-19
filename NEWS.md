@@ -1,3 +1,7 @@
+# ddsdashboard (development version)
+
+* DE-staleness fix next, then Phase 7 continues — P7c (Gene sets heatmap core).
+
 # ddsdashboard 0.4.1
 
 Phase 7 (Expression) begins — the **Single genes** tab (P7a) and the **Gene sets > Aggregate
