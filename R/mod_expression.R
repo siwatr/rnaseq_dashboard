@@ -276,6 +276,12 @@ mod_expression_ui <- function(id) {
                 choices = aes_choices(aes_catalog(state), none = TRUE),
                 selected = default_x())
   })
+  # The grouping / colour selectInputs live in an accordion panel that may be
+  # collapsed on load (it is on the aggregate pill). Force these outputs to
+  # initialize while hidden so `input$<x_group>` exists on first entry and the
+  # plot renders without the user having to expand the panel.
+  outputOptions(output, pid("x_group_ui"), suspendWhenHidden = FALSE)
+  outputOptions(output, pid("colour_ui"), suspendWhenHidden = FALSE)
   output[[pid("auto_ui")]] <- renderUI({
     req(state$working)
     bslib::input_switch(ns(pid("auto")), "Auto-render", value = TRUE)
