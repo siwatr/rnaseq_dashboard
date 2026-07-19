@@ -28,8 +28,19 @@
                               box_width = 0.18, box_alpha = 0.7,
                               dot_method = "quasirandom", dot_size = 1.9,
                               dot_alpha = 0.9, dot_width = 0.4, dot_cex = 1,
-                              legend_pos = "right", dark_theme = FALSE,
-                              interactive = FALSE) {
+                              y_range = NULL, legend_pos = "right",
+                              dark_theme = FALSE, interactive = FALSE) {
+  # y-axis clamp: pull out-of-range points to the nearest limit (drawn as
+  # triangles), and zoom every layer to the range via coord_cartesian (so the
+  # violin/box distributions are clipped, not distorted). Points use a clamped y;
+  # the distributions keep the true values (coord crops them at draw).
+  clamp_on <- !is.null(y_range) && any(is.finite(y_range))
+  if (clamp_on) {
+    cl <- de_clamp(df$value, y_range[1], y_range[2])
+    df$value_dot <- cl$value
+    df$oob <- factor(ifelse(cl$clamped, "clamped", "in range"),
+                     levels = c("in range", "clamped"))
+  }
   p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$group, y = .data$value))
   fill_map   <- if (disc_colour) ggplot2::aes(fill = .data$colour) else NULL
   colour_map <- if (!is.null(df$colour)) ggplot2::aes(colour = .data$colour) else NULL
@@ -44,6 +55,10 @@
                                    show.legend = FALSE)
   if (isTRUE(show_dots)) {
     dot_aes <- colour_map
+    if (clamp_on) {                         # dots use the clamped y + triangle shape
+      cmap <- ggplot2::aes(y = .data$value_dot, shape = .data$oob)
+      dot_aes <- if (is.null(dot_aes)) cmap else utils::modifyList(dot_aes, cmap)
+    }
     if (interactive) {
       dot_aes <- if (is.null(dot_aes)) ggplot2::aes(text = .data$text)
                  else utils::modifyList(dot_aes, ggplot2::aes(text = .data$text))
@@ -73,6 +88,12 @@
                    axis.text.x = ggplot2::element_text(angle = 30, hjust = 1))
   if (!is.null(fill_scale))   p <- p + fill_scale
   if (!is.null(colour_scale)) p <- p + colour_scale
+  if (clamp_on) {
+    if (isTRUE(show_dots))
+      p <- p + ggplot2::scale_shape_manual(values = c("in range" = 16, "clamped" = 17),
+                                           drop = FALSE, guide = "none")
+    p <- p + ggplot2::coord_cartesian(ylim = y_range)
+  }
   p
 }
 
@@ -124,7 +145,16 @@
         sliderInput(nid("dot_width"), "Spread (width)", 0, 0.5, 0.4, 0.05)),
       conditionalPanel(
         sprintf("input['%s'] == 'beeswarm'", nid("dot_method")),
-        sliderInput(nid("dot_cex"), "Point spacing (cex)", 0.2, 3, 1, 0.1))))
+        sliderInput(nid("dot_cex"), "Point spacing (cex)", 0.2, 3, 1, 0.1))),
+    bslib::accordion_panel(
+      "Axis limits", icon = icon("up-right-and-down-left-from-center"),
+      helpText(class = "small text-muted",
+               "Blank = auto. Points outside the range draw as triangles at the edge."),
+      tags$div(class = "small text-muted mb-1", "y-axis (expression value)"),
+      bslib::layout_columns(
+        col_widths = c(6, 6),
+        numericInput(nid("ylim_min"), "min", value = NA),
+        numericInput(nid("ylim_max"), "max", value = NA))))
 }
 
 mod_expression_ui <- function(id) {
@@ -333,6 +363,13 @@ mod_expression_ui <- function(id) {
     v <- input[[pid(x)]]; if (is.null(v)) default else isTRUE(v)
   }
 
+  # y-axis clamp (blank = auto); a live display input, not part of the render gate.
+  y_range <- reactive({
+    lo <- suppressWarnings(as.numeric(input[[pid("ylim_min")]] %||% NA))
+    hi <- suppressWarnings(as.numeric(input[[pid("ylim_max")]] %||% NA))
+    if (is.na(lo) && is.na(hi)) NULL else c(lo, hi)
+  })
+
   colour_resolve <- function(samples) {
     sel <- input[[pid("colour_by")]] %||% "__none__"
     if (identical(sel, "__none__")) return(NULL)
@@ -403,7 +440,7 @@ mod_expression_ui <- function(id) {
       dot_alpha = input[[pid("dot_alpha")]] %||% 0.9,
       dot_width = input[[pid("dot_width")]] %||% 0.4,
       dot_cex = input[[pid("dot_cex")]] %||% 1,
-      dark_theme = dark(), interactive = interactive)
+      y_range = y_range(), dark_theme = dark(), interactive = interactive)
   }
   eng$dual_plot(cfg$plot_id, build_gg, n_elements = reactive({
     got <- out$value(); if (is.null(got)) 0L

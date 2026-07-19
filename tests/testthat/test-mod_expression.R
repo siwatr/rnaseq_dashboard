@@ -5,8 +5,27 @@ test_that("Expression UI mounts the tabs + single-gene containers", {
   expect_match(ui, "ex-tabs")
   expect_match(ui, "ex-gene_container")
   expect_match(ui, "ex-render")
+  expect_match(ui, "ex-ylim_min")
+  expect_match(ui, "ex-ylim_max")
   expect_match(ui, "Single genes")
   expect_match(ui, "Gene sets")
+})
+
+test_that(".expr_single_plot clamps out-of-range points to boundary triangles", {
+  df <- data.frame(sample = paste0("S", 1:6),
+                   group = factor(rep(c("a", "b"), each = 3)),
+                   value = c(1, 2, 50, 1, 2, 3))            # 50 is the outlier
+  p <- .expr_single_plot(df, "grp", "val", "t",
+                         show_violin = FALSE, show_box = FALSE, show_dots = TRUE,
+                         y_range = c(NA, 10))
+  expect_s3_class(p, "ggplot")
+  b <- ggplot2::ggplot_build(p)
+  ys <- unlist(lapply(b$data, function(d) d$y))
+  expect_lte(max(ys, na.rm = TRUE), 10)                     # clamped to the max
+  # the clamped point renders as a triangle (shape 17); in-range as circles (16)
+  shapes <- unlist(lapply(b$data, function(d) d$shape))
+  expect_true(any(shapes == 17, na.rm = TRUE))
+  expect_true(any(shapes == 16, na.rm = TRUE))
 })
 
 test_that("Expression UI mounts the gene-set aggregate pill", {
@@ -51,6 +70,10 @@ test_that("single-gene plot builds; value matrix caches; gene id drives the sig"
     expect_silent(ggplot2::ggplot_build(build_gene_gg(FALSE)))   # beeswarm + cex: no warning
     session$setInputs(dot_method = "jitter"); session$flushReact()
     expect_s3_class(build_gene_gg(FALSE), "ggplot")              # explicit jitter layout
+
+    # y-axis limit is a live display input (no re-render needed)
+    session$setInputs(ylim_min = 0, ylim_max = 5); session$flushReact()
+    expect_s3_class(build_gene_gg(FALSE), "ggplot")
   })
 })
 
