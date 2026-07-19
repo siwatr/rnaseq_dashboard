@@ -58,3 +58,7 @@ CLAUDE.local.md
 # testthat failure artifacts
 tests/testthat/_problems/
 tests/testthat/testthat-problems.rds
+
+# Stray plot device artifacts from headless test/R runs
+Rplots.pdf
+**/Rplots.pdf

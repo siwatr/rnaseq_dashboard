@@ -219,13 +219,15 @@ overlap UI, a `Palette > Gene Set` sub-tab) is **deferred to P7** with its heatm
   **`ggVennDiagram`** is the Venn fallback when eulerr is absent (Euler option hidden), UpSet via
   `ComplexHeatmap`. + doc-sync (per-PR) + propose `v0.4.0`.
 
-## Phase 7 — Expression ⬅️ in progress (sub-PR'd P7a→P7d)
+## Phase 7 — Expression ⬅️ in progress (sub-PR'd P7a→P7e)
 Renamed from "Heatmap": a gene-expression **browsing surface** (more than a heatmap). A
-`navset_card_tab` with two tabs. Full design + rationale in the approved plan:
-`~/.claude/plans/vast-giggling-ripple.md`. **4 sub-PRs** (the heatmap splits into core + k-means;
-the Phase-6-deferred annotated layer + `Palette > Gene Set` land in P7d).
+`navset_card_tab` — **Single genes** + **Gene sets** (the latter a `navset_card_pill`: *Aggregate
+expression* + *Heatmap*). Full design + rationale in the approved plan:
+`~/.claude/plans/vast-giggling-ripple.md`. **5 sub-PRs** (a gene-set **aggregate** pill was inserted
+after P7a; the heatmap splits into core + k-means; the Phase-6-deferred annotated layer +
+`Palette > Gene Set` land last).
 
-- **P7a ⬅️ (branch `p7a-expression-single-genes`)** — the **Single genes** tab: one feature at a
+- **P7a ✅ (v0.4.0.9000, PR #41)** — the **Single genes** tab: one feature at a
   time as a layered overlay (back→front violin → boxplot → dots) reusing the shared plot machinery
   (`dual_plot` engine, deferred render, `mod_plot_subset` "Showing:", `aes_helpers` colour). New
   `R/mod_expression.R` (replaces the `mod_heatmap.R` stub; nav renamed Heatmap→**Expression**) +
@@ -241,16 +243,27 @@ the Phase-6-deferred annotated layer + `Palette > Gene Set` land in P7d).
   `geom_quasirandom` (width spread) / `geom_jitter` fallback — with per-layer width/opacity/size
   controls and static Render controls. The **Gene sets** tab is a stub. + tests.
   (*Deferred to wishlist:* facet-by-2nd-variable, mean±error overlay.)
-- **P7b ⬜** — **Gene sets** heatmap core: a `ComplexHeatmap` over a named Phase-6 set (**blank
+- **P7b ⬅️ (branch `p7b-geneset-aggregate`)** — **Gene sets > Aggregate expression**: the SAME
+  layered violin→box→dots overlay, but the y value is a per-sample **gene-set score** (mean/median
+  across the set's genes). Source = a **saved set** *or* a **quick uncommitted search** (the shared
+  `mod_gene_search`, multi). New pure `expr_set_aggregate()` (drop absent + optional all-zero-count
+  genes, transform, **per-gene z-score default**, mean/median down to one vector, full accounting);
+  controls: average (mean/median), **Z-score each gene** (default on — comparable across TPM/VST),
+  **Only genes with expression** (default on). Default value **TPM when `feature_length` exists, else
+  VST** (via `expr_default_assay`/`expr_value_matrix`). Plot subtitle always reports **"<Mean/Median>
+  expression of n of N genes (x%) within the set"** (+ a non-varying warning); no plot when 0 survive.
+  Factored `.expr_dist_server()` shares grouping/colour/geoms/styling/deferred-matrix between the
+  single-gene and aggregate pills. + tests.
+- **P7c ⬜** — **Gene sets** heatmap core: a `ComplexHeatmap` over a named Phase-6 set (**blank
   placeholder until a set is chosen** — no DEG/top-variable auto-default). Per-gene z-score default
   (toggle raw `log10(assay + pc)`); row names hidden + `anno_mark()` for genes of interest; display
   toggles (names off > 20, dend off > 100, cluster on); top annotation via `aes_annotation()`
   (values-snapshot/colours-live). Static (`renderPlot` + `draw()`), deferred gate.
-- **P7c ⬜** — heatmap **k-means** (computed *outside* `Heatmap()` via `expr_kmeans` → `row_split`/
+- **P7d ⬜** — heatmap **k-means** (computed *outside* `Heatmap()` via `expr_kmeans` → `row_split`/
   `column_split`; **`split_with_counts()`** member-count label standard; seed + Redo; store
   membership; **save row clusters as gene sets** → portable via the P6d export; column clusters
   in-session only).
-- **P7d ⬜** — the Phase-6-deferred **annotated layer** (`kind="annotated"`,
+- **P7e ⬜** — the Phase-6-deferred **annotated layer** (`kind="annotated"`,
   `combine_gene_set_annotation` with shared-gene **warning**, annotation-driven `row_split` +
   nested k-means) + the `Palette > Gene Set` per-set-colour domain. Closes Phase 7 → propose `v0.5.0`.
 

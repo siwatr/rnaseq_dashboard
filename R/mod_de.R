@@ -193,7 +193,7 @@
       uiOutput(ns("plots_deg_summary")),
       # Render controls above the plot; button on its own line under the toggle.
       tags$div(class = "mb-2",
-        checkboxInput(ns("plot_auto"), "Auto-render", value = TRUE),
+        bslib::input_switch(ns("plot_auto"), "Auto-render", value = TRUE),
         actionButton(ns("plot_render"), "Render", icon = icon("play"),
                      class = "btn-sm btn-primary")),
       uiOutput(ns("de_plot_stale")),

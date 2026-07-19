@@ -781,7 +781,7 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
         list(state$samp_pool, state$samp_flags) else NULL
     auto_box <- function(input_id) renderUI({
       req(state$working)
-      checkboxInput(ns(input_id), "Auto-render", value = ncol(state$working) <= 150L)
+      bslib::input_switch(ns(input_id), "Auto-render", value = ncol(state$working) <= 150L)
     })
 
     output$dtype_badge <- renderUI(.dtype_badge_ui(state))
