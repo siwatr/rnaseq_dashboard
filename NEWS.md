@@ -1,6 +1,24 @@
-# ddsdashboard (development version)
+# ddsdashboard 0.4.1
 
-* Phase 7 (Expression) — Single genes + Gene sets heatmap next.
+Phase 7 (Expression) begins — the **Single genes** tab (P7a) and the **Gene sets > Aggregate
+expression** pill (P7b). The old "Heatmap" nav entry is renamed **Expression** (a
+`navset_card_tab`: *Single genes* + *Gene sets*, the latter a pill group of *Aggregate
+expression* + a *Heatmap* stub).
+
+* **Single genes**: one feature at a time as a layered violin → boxplot → dots overlay, grouped
+  by a colData variable and coloured by any attribute (the shared `aes_helpers` resolver). The
+  expression value control gains opt-in **VST** and **normalized log-counts** choices; the value
+  matrix is cached behind a deferred Render gate. Sample-count guards decide which geoms are
+  offered; a dot-layout selector (`ggbeeswarm` beeswarm/quasirandom, `geom_jitter` fallback) plus
+  per-layer width/opacity/size controls and a **y-axis limit** (out-of-range points draw as
+  boundary triangles).
+* **Gene sets > Aggregate expression**: the same overlay, but the y value is a per-sample
+  **gene-set score** (`expr_set_aggregate()`) — drop absent + optionally all-zero-count genes,
+  transform, **per-gene z-score by default**, then mean/median down to one vector. Source = a
+  saved set or a quick uncommitted search; the subtitle reports how many of the set's genes were
+  used. Default value = TPM when feature lengths exist, else VST.
+* **Auto-render** controls are now toggles (`bslib::input_switch`) app-wide; the Expression pills
+  gate the gene/set source behind the Render button when auto-render is off.
 
 # ddsdashboard 0.4.0
 
