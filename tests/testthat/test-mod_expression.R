@@ -31,12 +31,12 @@ test_that("single-gene plot builds; value matrix caches; gene id drives the sig"
                       gene_searchby = "gene_name", gene_q = gname)
     session$elapse(300); session$flushReact()
 
-    mm <- mat_shown$value()
-    expect_false(is.null(mm))
-    expect_true(is.matrix(mm$mat))
-    gv <- gene_values(mm)
-    expect_equal(gv$gene_id, gid)
-    expect_length(gv$values, ncol(state$working))
+    got <- gene_out$value()                          # gated: list(mat_cols, red)
+    expect_false(is.null(got))
+    red <- got$red
+    expect_true(red$ok)
+    expect_equal(red$gene_id, gid)
+    expect_length(red$values, ncol(state$working))
     # value matrix cached in derived under expr_value_mat, keyed on the assay
     expect_equal(get("expr_value_mat", envir = state$derived)$params, list("logcounts"))
     expect_s3_class(build_gene_gg(FALSE), "ggplot")
@@ -70,9 +70,10 @@ test_that("gene-set aggregate builds from a saved set + reports gene accounting"
                       set_auto = TRUE, set_x_group = "condition", set_colour_by = "condition")
     session$elapse(300); session$flushReact()
 
-    mm <- set_mat_shown$value()
-    expect_false(is.null(mm))
-    red <- set_values(mm)
+    got <- set_out$value()
+    expect_false(is.null(got))
+    red <- got$red
+    expect_true(red$ok)
     expect_equal(red$accounting$n_total, 10L)            # 8 present + 2 absent
     expect_equal(red$accounting$n_present, 8L)
     expect_length(red$values, ncol(state$working))
@@ -100,10 +101,38 @@ test_that("gene-set aggregate builds from a quick (uncommitted) search", {
                       set_method = "mean", set_zscore = TRUE, set_only_expr = TRUE,
                       set_auto = TRUE, set_x_group = "condition", set_colour_by = "condition")
     session$elapse(400); session$flushReact()
-    mm <- set_mat_shown$value()
-    red <- set_values(mm)
+    red <- set_out$value()$red
+    expect_true(red$ok)
     expect_equal(red$accounting$n_present, 5L)           # searched ids all resolve
     expect_s3_class(build_set_gg(FALSE), "ggplot")
+  })
+})
+
+test_that("gene-set aggregate respects the Render gate when auto-render is off", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 4, n_spike = 4, seed = 8)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:6]), SetB = new_gene_set(rn[10:20]))
+    session$setInputs(tabs = "Gene sets", set_source = "saved", set_pick = "SetA",
+                      set_val_assay = "logcounts", set_val_transform = "none",
+                      set_method = "mean", set_zscore = TRUE, set_only_expr = TRUE,
+                      set_auto = FALSE, set_x_group = "condition", set_colour_by = "condition",
+                      set_render = 1)
+    session$flushReact()
+    expect_equal(set_out$value()$red$accounting$n_present, 6L)   # SetA rendered
+
+    # Switch set with auto-render OFF -> gated: the rendered result does NOT change
+    session$setInputs(set_pick = "SetB"); session$flushReact()
+    expect_equal(set_out$value()$red$accounting$n_present, 6L)   # still SetA
+    expect_true(set_out$stale())                                 # stale banner would show
+
+    # Click Render -> now reflects SetB (rn[10:20] = 11 genes)
+    session$setInputs(set_render = 2); session$flushReact()
+    expect_equal(set_out$value()$red$accounting$n_present, 11L)
+    expect_false(set_out$stale())
   })
 })
 
@@ -120,9 +149,9 @@ test_that("norm_logcounts is selectable and resolves (not silently downgraded)",
                       val_transform = "none", auto = TRUE, x_group = "condition",
                       colour_by = "condition", gene_searchby = "gene_name", gene_q = gname)
     session$elapse(300); session$flushReact()
-    mm <- mat_shown$value()
-    expect_false(is.null(mm))
-    expect_match(mm$label, "normalized")
+    red <- gene_out$value()$red
+    expect_true(red$ok)
+    expect_match(red$y_lab, "normalized")
     expect_equal(get("expr_value_mat", envir = state$derived)$params, list("norm_logcounts"))
     expect_s3_class(build_gene_gg(FALSE), "ggplot")
     # and expr_default_assay picks it when size factors exist

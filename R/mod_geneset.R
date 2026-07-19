@@ -290,7 +290,7 @@ mod_geneset_ui <- function(id) {
               bslib::input_switch(ns("stats_vertical"), "Vertical bars", value = FALSE),
               tags$div(                                    # render controls: right side
                 class = "ms-auto",
-                checkboxInput(ns("stats_auto"), "Auto-render", value = TRUE),
+                bslib::input_switch(ns("stats_auto"), "Auto-render", value = TRUE),
                 actionButton(ns("stats_render"), "Render", icon = icon("play"),
                              class = "btn-primary btn-sm"))),
             uiOutput(ns("stats_stale")),
@@ -302,7 +302,7 @@ mod_geneset_ui <- function(id) {
               uiOutput(ns("overlap_type_ui")),
               tags$div(                                    # render controls: right side
                 class = "ms-auto",
-                checkboxInput(ns("overlap_auto"), "Auto-render", value = TRUE),
+                bslib::input_switch(ns("overlap_auto"), "Auto-render", value = TRUE),
                 actionButton(ns("overlap_render"), "Render", icon = icon("play"),
                              class = "btn-primary btn-sm"))),
             uiOutput(ns("overlap_eulerr_note")),           # its own line below the row

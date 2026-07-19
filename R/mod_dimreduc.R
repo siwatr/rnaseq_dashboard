@@ -160,7 +160,7 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
     output$auto_ui <- renderUI({
       req(state$working)
-      checkboxInput(ns("auto"), "Auto-render", value = ncol(state$working) <= 150L)
+      bslib::input_switch(ns("auto"), "Auto-render", value = ncol(state$working) <= 150L)
     })
     # Grouped colour selector (<optgroup>s): the shared attribute catalog (gene
     # expression + per-sample QC metrics + removal/pool under "This session",

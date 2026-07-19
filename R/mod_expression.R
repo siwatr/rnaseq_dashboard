@@ -178,10 +178,10 @@ mod_expression_ui <- function(id) {
                    sprintf("input['%s'] == 'search'", ns("set_source")),
                    gene_search_ui(ns, "setsearch", multiple = TRUE,
                                   search_modes = c("exact", "contains", "regex"),
-                                  placeholder = "e.g. Actb, Gapdh, ENSG...")),
-                 expr_value_ui(ns, "set_val")),
+                                  placeholder = "e.g. Actb, Gapdh, ENSG..."))),
                bslib::accordion_panel(
                  "Aggregation", icon = icon("calculator"),
+                 expr_value_ui(ns, "set_val"),
                  radioButtons(ns("set_method"), "Average across genes",
                               c("Mean" = "mean", "Median" = "median"), inline = TRUE),
                  bslib::input_switch(
@@ -278,7 +278,7 @@ mod_expression_ui <- function(id) {
   })
   output[[pid("auto_ui")]] <- renderUI({
     req(state$working)
-    checkboxInput(ns(pid("auto")), "Auto-render", value = TRUE)
+    bslib::input_switch(ns(pid("auto")), "Auto-render", value = TRUE)
   })
   output[[pid("dot_method_ui")]] <- renderUI({
     if (!requireNamespace("ggbeeswarm", quietly = TRUE))
@@ -338,26 +338,30 @@ mod_expression_ui <- function(id) {
          colour_scale = aes_ggplot_scale(res, "colour"))
   }
 
-  # Only the (expensive) value matrix is gated/cached behind Render, keyed on the
-  # assay. The per-gene / per-set reduction, grouping, and colour are cheap live
-  # re-plots; a not-in-matrix message surfaces in the plot builder (the deferred
-  # spec would swallow a validate()).
-  mat_spec <- reactive({
+  # The value matrix (cached in `derived`, keyed on the assay) AND the source
+  # reduction to per-sample values are gated together behind Render: changing the
+  # gene / gene set / value / aggregation waits for a render (or auto-render).
+  # Grouping, colour, and geom toggles are cheap live re-plots on top of the gated
+  # result. `reduce` returns list(ok, ...) instead of validate()-ing (the deferred
+  # spec swallows validate()); build_gg surfaces `msg` when !ok.
+  value_spec <- reactive({
     req(state$working)
     assay <- val_spec()$assay
-    state_derive(state, cfg$derive_key, params = list(assay),
-                 expr = function() expr_value_matrix(state$working, assay))
+    mm <- state_derive(state, cfg$derive_key, params = list(assay),
+                       expr = function() expr_value_matrix(state$working, assay))
+    list(mat_cols = colnames(mm$mat), red = reduce(mm))
   })
-  mat_shown <- eng$deferred(pid("auto"), pid("render"), mat_spec,
-    sig = reactive(list(val_spec()$assay, state$data_version)))
-  output[[cfg$stale_id]] <- eng$stale_note(mat_shown)
+  out <- eng$deferred(pid("auto"), pid("render"), value_spec,
+    sig = reactive(list(val_spec(), cfg$source_sig(), state$data_version)))
+  output[[cfg$stale_id]] <- eng$stale_note(out)
 
   build_gg <- function(interactive) {
-    mm <- mat_shown$value()
-    validate(need(!is.null(mm),
+    got <- out$value()
+    validate(need(!is.null(got),
                   "Click Render (or enable auto-render) to draw the plot."))
+    red <- got$red
+    validate(need(isTRUE(red$ok), red$msg %||% "Nothing to plot."))
     req(input[[pid("x_group")]])
-    red <- reduce(mm)
     cd <- coldata()
     validate(need(input[[pid("x_group")]] %in% names(cd), "Pick a grouping variable."))
     shown <- intersect(names(red$values), showing_samples())
@@ -396,11 +400,11 @@ mod_expression_ui <- function(id) {
       dark_theme = dark(), interactive = interactive)
   }
   eng$dual_plot(cfg$plot_id, build_gg, n_elements = reactive({
-    mm <- mat_shown$value(); if (is.null(mm)) 0L
-    else length(intersect(colnames(mm$mat), showing_samples()))
+    got <- out$value(); if (is.null(got)) 0L
+    else length(intersect(got$mat_cols, showing_samples()))
   }), height = "440px")
 
-  list(mat_shown = mat_shown, group_sizes = group_sizes, geom_avail = geom_avail,
+  list(out = out, group_sizes = group_sizes, geom_avail = geom_avail,
        build_gg = build_gg, reduce = reduce, val_spec = val_spec)
 }
 
@@ -423,15 +427,21 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
     gene_resolved <- reactive({
       r <- gene_search(); if (length(r$records)) r$records[[1]] else NULL
     })
+    # Reduce fns return list(ok, ...) rather than calling validate(): they run
+    # inside the deferred spec (so the source is gated behind Render too), and a
+    # validate() there would be swallowed. build_gg surfaces `msg` when !ok.
     reduce_single_factory <- function(val_spec) function(mm) {
       rf <- gene_resolved()
-      validate(need(!is.null(rf) && !is.na(rf$id), "Enter a feature to plot."))
-      validate(need(rf$id %in% rownames(mm$mat),
-                    sprintf("'%s' is not in the %s matrix (VST is endogenous-only).",
-                            rf$match, val_spec()$assay)))
+      if (is.null(rf) || is.na(rf$id))
+        return(list(ok = FALSE, msg = "Enter a feature to plot."))
+      if (!rf$id %in% rownames(mm$mat))
+        return(list(ok = FALSE, msg = sprintf(
+          "'%s' is not in the %s matrix (VST is endogenous-only).",
+          rf$match, val_spec()$assay)))
       spec <- val_spec()
       raw <- as.numeric(mm$mat[rf$id, ]); names(raw) <- colnames(mm$mat)
-      list(values = expr_transform(raw, spec$transform, spec$pseudocount),
+      list(ok = TRUE,
+           values = expr_transform(raw, spec$transform, spec$pseudocount),
            y_lab = if (identical(spec$transform, "none")) mm$label else spec$label,
            title = sprintf("%s (%s)", rf$match, rf$id), subtitle = NULL,
            gene_id = rf$id, gene_label = rf$match,
@@ -441,9 +451,12 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       prefix = "", val_suffix = "val", derive_key = "expr_value_mat",
       plot_id = "gene", stale_id = "gene_stale",
       dark = dark, engine = eng, showing_samples = showing_samples,
-      reduce_factory = reduce_single_factory))
+      reduce_factory = reduce_single_factory,
+      source_sig = reactive({           # the gene id gates the plot (with the assay)
+        rf <- gene_resolved(); if (is.null(rf)) NA_character_ else rf$id %||% NA_character_
+      })))
     # Expose single-gene handles at module scope (testServer reads these).
-    mat_shown     <- single$mat_shown
+    gene_out      <- single$out         # deferred: value() = list(mat_cols, red)
     group_sizes   <- single$group_sizes
     geom_avail    <- single$geom_avail
     build_gene_gg <- single$build_gg
@@ -479,7 +492,8 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     reduce_set_factory <- function(val_spec) function(mm) {
       ids <- set_ids()
-      validate(need(length(ids) > 0, "Pick a saved set or search genes to plot."))
+      if (!length(ids))
+        return(list(ok = FALSE, msg = "Pick a saved set or search genes to plot."))
       spec <- val_spec()
       zsc <- isTRUE(input$set_zscore %||% TRUE)
       meth <- input$set_method %||% "mean"
@@ -488,9 +502,10 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
         method = meth, zscore = zsc,
         only_expressed = isTRUE(input$set_only_expr %||% TRUE),
         transform = spec$transform, pseudocount = spec$pseudocount)
-      validate(need(!is.null(agg$values) && agg$n_used > 0, sprintf(
-        "No genes to plot: 0 of %d gene%s survive the present / expression filter.",
-        agg$n_total, if (agg$n_total == 1L) "" else "s")))
+      if (is.null(agg$values) || agg$n_used == 0)
+        return(list(ok = FALSE, msg = sprintf(
+          "No genes to plot: 0 of %d gene%s survive the present / expression filter.",
+          agg$n_total, if (agg$n_total == 1L) "" else "s")))
       meth_lab <- if (identical(agg$method, "median")) "Median" else "Mean"
       base_lab <- if (identical(spec$transform, "none")) mm$label else spec$label
       y_lab <- sprintf("%s %s%s", meth_lab, if (zsc) "z-scored " else "", base_lab)
@@ -499,18 +514,21 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                      meth_lab, agg$n_used, agg$n_total, pct)
       if (zsc && agg$n_nonvar > 0L)
         sub <- paste0(sub, sprintf("; %d non-varying (z-score 0)", agg$n_nonvar))
-      list(values = agg$values, y_lab = y_lab, title = set_title(), subtitle = sub,
-           accounting = agg,
+      list(ok = TRUE, values = agg$values, y_lab = y_lab, title = set_title(),
+           subtitle = sub, accounting = agg,
            hover = function(df) sprintf("%s\n%s score: %.3g", df$sample, meth_lab, df$value))
     }
     set <- .expr_dist_server(input, output, session, state, cfg = list(
       prefix = "set_", val_suffix = "set_val", derive_key = "expr_set_value_mat",
       plot_id = "geneset", stale_id = "geneset_stale",
       dark = dark, engine = eng, showing_samples = showing_samples,
-      reduce_factory = reduce_set_factory))
-    set_values    <- set$reduce           # exposed for tests
-    build_set_gg  <- set$build_gg
-    set_mat_shown <- set$mat_shown
+      reduce_factory = reduce_set_factory,
+      source_sig = reactive(list(          # set + aggregation options gate the plot
+        set_ids(), input$set_method %||% "mean",
+        isTRUE(input$set_zscore %||% TRUE), isTRUE(input$set_only_expr %||% TRUE)))))
+    set_values <- set$reduce               # exposed for tests
+    build_set_gg <- set$build_gg
+    set_out <- set$out
 
     invisible(NULL)
   })
