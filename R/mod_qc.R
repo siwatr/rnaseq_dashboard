@@ -932,10 +932,12 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       req(state$working)
       dds <- state$working
       vst_mat <- SummarizedExperiment::assay(
-        state_derive(state, "vst", params = list(), expr = function() {
-          withProgress(message = "Computing variance-stabilizing transform...",
-                       value = 1, qc_vst(dds))
-        }))
+        state_derive(state, "vst", params = list(),
+          version = dds_content_fingerprint(dds),   # content-addressed: survives an assay-add
+          expr = function() {
+            withProgress(message = "Computing variance-stabilizing transform...",
+                         value = 1, qc_vst(dds))
+          }))
       list(vst = vst_mat)
     })
     meansd_shown <- deferred("diag_auto", "diag_render", meansd_spec,

@@ -4,7 +4,7 @@
 \alias{state_derive}
 \title{Get-or-compute a version-stamped derived artifact}
 \usage{
-state_derive(state, key, params = list(), expr)
+state_derive(state, key, params = list(), expr, version = state$data_version)
 }
 \arguments{
 \item{state}{App-state object.}
@@ -14,6 +14,12 @@ state_derive(state, key, params = list(), expr)
 \item{params}{List of parameters the result depends on.}
 
 \item{expr}{A zero-arg function computing the value.}
+
+\item{version}{The staleness token the entry is validated against (default
+\code{state$data_version}). Pass a content fingerprint (e.g.
+\code{\link[=dds_content_fingerprint]{dds_content_fingerprint()}}) for a \emph{content-addressed} artifact that should
+survive an assay-add -- pair it with a key in \code{.content_derived_keys} so
+\code{\link[=state_mutate]{state_mutate()}} does not clear it.}
 }
 \value{
 The cached or freshly computed value.

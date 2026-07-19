@@ -246,15 +246,15 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
     design_status <- mod_design_builder_server("design", state)
 
     # The fitted DESeqDataSet lives in the derived env (non-reactive) under a
-    # stamp; extraction reads it without triggering a re-fit. It bypasses the
-    # state_derive accessor deliberately: state_derive keys only on data_version,
-    # but the fit must also invalidate on a design change (design_version) -- hence
-    # the manual (dv, desv) stamp. NULL if no current fit.
+    # content-fingerprint stamp (.de_stamp: dds fit inputs + design_version), so
+    # extraction reads it without a re-fit and it survives an assay-add (which
+    # leaves counts/samples/features/size factors unchanged) but invalidates on a
+    # real structural or design change. `.content_derived_keys` keeps it across a
+    # state_mutate. NULL if no current fit.
     current_fit <- function() {
       if (!exists("de_fit", envir = state$derived, inherits = FALSE)) return(NULL)
       ent <- get("de_fit", envir = state$derived)
-      cur <- list(dv = state$data_version, desv = state$design_version %||% 0L)
-      if (!identical(ent$stamp, cur)) return(NULL)
+      if (!identical(ent$stamp, .de_stamp(state))) return(NULL)
       ent$value
     }
 
@@ -422,7 +422,7 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
       ok <- tryCatch({
         shiny::withProgress(message = "Running DESeq2", value = 0.4, {
           fit <- de_run(dds)
-          stamp <- list(dv = state$data_version, desv = state$design_version %||% 0L)
+          stamp <- .de_stamp(state)
           assign("de_fit", list(value = fit, stamp = stamp), envir = state$derived)
           de <- state$de %||% list()
           de$stamp <- stamp; de$shrink <- shrink

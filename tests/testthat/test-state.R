@@ -124,7 +124,7 @@ test_that("de_status reflects DE results vs the current data/design", {
   expect_equal(de_status(st), "none")                   # no results yet
   de <- st$de
   de$results <- list(x = data.frame(a = 1))
-  de$stamp   <- list(dv = st$data_version, desv = st$design_version)
+  de$stamp   <- .de_stamp(st)
   st$de <- de
   expect_equal(de_status(st), "current")
   st$design_version <- st$design_version + 1L           # design changed -> stale

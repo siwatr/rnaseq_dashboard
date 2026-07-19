@@ -71,8 +71,16 @@ new_app_state <- function() {
   state
 }
 
-.clear_derived <- function(state) {
-  rm(list = ls(state$derived, all.names = TRUE), envir = state$derived)
+# Derived caches that are *content-addressed* (validated by dds_content_fingerprint
+# on read: the DESeq fit and the blind VST), so a structure-preserving mutation
+# such as adding a normalized assay does not throw them away. state_mutate keeps
+# these; a full reset/undo clears everything.
+.content_derived_keys <- c("de_fit", "vst")
+
+.clear_derived <- function(state, keep = character(0)) {
+  env <- state$derived
+  drop <- setdiff(ls(envir = env, all.names = TRUE), keep)
+  if (length(drop)) rm(list = drop, envir = env)
 }
 
 .log <- function(state, entry) {
@@ -141,7 +149,10 @@ state_mutate <- function(state, fn, action = list()) {
   if (is.null(cur)) stop("No dataset loaded; cannot mutate state.", call. = FALSE)
   state$undo_stack   <- utils::head(c(list(cur), state$undo_stack), .undo_depth)
   state$working      <- fn(cur)
-  .clear_derived(state)
+  # Keep the content-addressed fit/VST: they self-invalidate by fingerprint on
+  # read, so an assay-add (which leaves counts/samples/features/size factors
+  # unchanged) preserves them, while a real structural change stales them.
+  .clear_derived(state, keep = .content_derived_keys)
   state$n_edits      <- state$n_edits + 1L
   state$data_version <- state$data_version + 1L
   .log(state, action)
@@ -180,6 +191,35 @@ state_set_design <- function(state, design, relevel = NULL, action = list()) {
   invisible(state)
 }
 
+#' Content fingerprint of a dds's fit inputs
+#'
+#' The DESeq2 fit and the (blind) VST depend on the count matrix, the sample and
+#' feature sets, and the size factors -- not on which *derived* assays (CPM/TPM/
+#' FPKM) happen to be present. Raw counts are immutable in this app (edits only
+#' ever subset), so `rownames` + `colnames` fully capture "the counts changed",
+#' and `sizeFactors` captures a size-factor change directly (e.g. a future
+#' control-gene re-estimate that moves them with the counts unchanged). Keying
+#' fit/VST staleness on this fingerprint -- rather than the coarse `data_version`
+#' that *any* mutation bumps -- means an assay-add preserves them while a real
+#' structural or size-factor change invalidates them.
+#'
+#' @param dds A `DESeqDataSet` (or `NULL`).
+#' @return A list `list(rn, cn, sf)`, or `NULL` when `dds` is `NULL`.
+#' @export
+dds_content_fingerprint <- function(dds) {
+  if (is.null(dds)) return(NULL)
+  list(rn = rownames(dds), cn = colnames(dds),
+       sf = tryCatch(DESeq2::sizeFactors(dds), error = function(e) NULL))
+}
+
+# The (content-fingerprint, design_version) stamp the DESeq fit + its extracted
+# results key on. Design enters via design_version (a relevel/design change must
+# invalidate the fit even though the fingerprint is unchanged).
+.de_stamp <- function(state) {
+  list(fp = dds_content_fingerprint(state$working),
+       desv = state$design_version %||% 0L)
+}
+
 #' DE result staleness relative to the current data + design
 #' @param state App-state object.
 #' @return `"none"` (no results), `"current"`, or `"stale"`.
@@ -187,8 +227,7 @@ state_set_design <- function(state, design, relevel = NULL, action = list()) {
 de_status <- function(state) {
   de <- state$de %||% list()
   if (is.null(de$stamp) || !length(de$results)) return("none")
-  cur <- list(dv = state$data_version, desv = state$design_version %||% 0L)
-  if (identical(de$stamp, cur)) "current" else "stale"
+  if (identical(de$stamp, .de_stamp(state))) "current" else "stale"
 }
 
 #' DESeq2 *fit* status (independent of result extraction)
@@ -203,8 +242,7 @@ de_status <- function(state) {
 de_fit_status <- function(state) {
   de <- state$de %||% list()
   if (is.null(de$stamp)) return("none")
-  cur <- list(dv = state$data_version, desv = state$design_version %||% 0L)
-  if (identical(de$stamp, cur)) "current" else "stale"
+  if (identical(de$stamp, .de_stamp(state))) "current" else "stale"
 }
 
 #' Get-or-compute a version-stamped derived artifact
@@ -217,18 +255,23 @@ de_fit_status <- function(state) {
 #' @param key Cache key (character).
 #' @param params List of parameters the result depends on.
 #' @param expr A zero-arg function computing the value.
+#' @param version The staleness token the entry is validated against (default
+#'   `state$data_version`). Pass a content fingerprint (e.g.
+#'   [dds_content_fingerprint()]) for a *content-addressed* artifact that should
+#'   survive an assay-add -- pair it with a key in `.content_derived_keys` so
+#'   [state_mutate()] does not clear it.
 #' @return The cached or freshly computed value.
 #' @export
-state_derive <- function(state, key, params = list(), expr) {
-  ver <- state$data_version
+state_derive <- function(state, key, params = list(), expr,
+                         version = state$data_version) {
   if (exists(key, envir = state$derived, inherits = FALSE)) {
     hit <- get(key, envir = state$derived)
-    if (identical(hit$version, ver) && identical(hit$params, params)) {
+    if (identical(hit$version, version) && identical(hit$params, params)) {
       return(hit$value)
     }
   }
   value <- expr()
-  assign(key, list(value = value, version = ver, params = params), envir = state$derived)
+  assign(key, list(value = value, version = version, params = params), envir = state$derived)
   value
 }
 

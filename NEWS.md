@@ -1,6 +1,11 @@
 # ddsdashboard (development version)
 
-* DE-staleness fix next, then Phase 7 continues — P7c (Gene sets heatmap core).
+* Adding a normalized assay (CPM/TPM/FPKM) no longer invalidates the DESeq2 fit or the cached
+  VST. Those are now *content-addressed* — keyed on a fingerprint of the count matrix, sample /
+  feature sets, and size factors (`dds_content_fingerprint()`) rather than the coarse
+  `data_version` — so a structure-preserving edit preserves them, while a real sample/feature
+  drop or a size-factor change still invalidates them.
+* Next: Phase 7 continues — P7c (Gene sets heatmap core).
 
 # ddsdashboard 0.4.1
 
