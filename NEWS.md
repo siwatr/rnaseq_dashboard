@@ -1,17 +1,32 @@
 # ddsdashboard (development version)
 
+* Next: Phase 7 continues — P7c (Gene sets heatmap core).
+
+# ddsdashboard 0.4.2
+
 * Size-factor normalization is decoupled from assay assignment and gets its own **Size factors**
-  Input sub-tab. Choose the control-gene set (endogenous / spike-in / a custom set via gene
-  search) and the `estimateSizeFactors` type; the config rides on the dds so structural edits
-  re-estimate under it. Size factors are materialized by default at load (an object's own factors
-  are respected), so DE / PCA / Expression read one consistent, visible normalization instead of
-  re-deriving it; DE never writes them back. Re-estimating the same config is a no-op.
+  Input sub-tab — a pill group of **Estimate / Per-sample / Compare**. *Estimate*: choose what to
+  estimate on (endogenous / spike-in / a custom set via gene search / all genes) and the
+  `estimateSizeFactors` type; every type honors the control set via a control-gene row-subset
+  inherit (so `iterate`, which ignores `controlGenes`, respects it too). The config rides on the
+  dds so structural edits re-estimate under it. Size factors are materialized by default at load
+  (an object's own factors are respected), so DE / PCA / Expression read one consistent, visible
+  normalization instead of re-deriving it; DE never writes them back. Re-estimating the same
+  config is a no-op.
+* New **Per-sample** and **Compare** size-factor plots. Per-sample shows the current factors as a
+  bar (or points grouped by a `colData` variable). Compare is a consumer-only scatter of two
+  size-factor vectors estimated under two different methods (x=y line + linear-fit R², both
+  centered to geometric mean 1) to gauge how similar two normalizations are — it never mutates the
+  dataset. Size factor is also a plottable **General QC** metric.
+* **Design convention:** the variable of interest is now the *last* term of the design formula
+  (covariates first, DESeq2 results-name style). A single resolver (`primary_design_var()`) drives
+  the default group/colour/contrast pickers across DE / PCA / Expression / QC / Size factors so
+  they agree. Term order does not affect DE correctness (results are extracted via `contrast=`).
 * Adding a normalized assay (CPM/TPM/FPKM) no longer invalidates the DESeq2 fit or the cached
   VST. Those are now *content-addressed* — keyed on a fingerprint of the count matrix, sample /
   feature sets, and size factors (`dds_content_fingerprint()`) rather than the coarse
   `data_version` — so a structure-preserving edit preserves them, while a real sample/feature
   drop or a size-factor change still invalidates them.
-* Next: Phase 7 continues — P7c (Gene sets heatmap core).
 
 # ddsdashboard 0.4.1
 

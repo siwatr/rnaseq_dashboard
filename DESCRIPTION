@@ -1,6 +1,6 @@
 Package: ddsdashboard
 Title: Explore and Process RNA-seq DESeqDataSet Objects
-Version: 0.4.1.9000
+Version: 0.4.2
 Authors@R:
     person("Siwat Chad", "Ruangroengkulrith", email = "chorchatty@gmail.com",
            role = c("aut", "cre"))
