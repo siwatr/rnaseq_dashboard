@@ -176,7 +176,9 @@ test_that("QC module caches VST and sample correlation keyed on data_version", {
                       cor_anno = c("condition", "bio_rep"),
                       cor_auto = FALSE, cor_render = 1)
     expect_true(exists("vst", envir = state$derived, inherits = FALSE))
-    expect_equal(get("vst", envir = state$derived)$version, state$data_version)
+    # VST is content-addressed (survives an assay-add): version is the fingerprint
+    expect_equal(get("vst", envir = state$derived)$version,
+                 dds_content_fingerprint(state$working))
     expect_true(exists("sample_cor", envir = state$derived, inherits = FALSE))
     expect_equal(get("sample_cor", envir = state$derived)$version, state$data_version)
   })
