@@ -128,12 +128,13 @@ mod_dimreduc_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     feature_type <- function() state$meta$feature_type %||% "gene"
     coldata <- function() as.data.frame(SummarizedExperiment::colData(state$working))
-    # Default colour-by: the first DESeq2 design variable (e.g. ~ X + Y -> "X"),
-    # then "condition", then none (covers objects with a ~1 / no usable design).
+    # Default colour-by: the DESeq2 design's variable of interest (the LAST term,
+    # e.g. ~ Y + X -> "X"; primary_design_var()), then "condition", then none
+    # (covers objects with a ~1 / no usable design).
     default_colour_col <- function() {
       cols <- colnames(coldata())
-      dv <- tryCatch(all.vars(DESeq2::design(state$working)), error = function(e) character(0))
-      if (length(dv) && dv[1] %in% cols) return(dv[1])
+      pv <- primary_design_var(state$working)
+      if (!is.na(pv) && pv %in% cols) return(pv)
       if ("condition" %in% cols) return("condition")
       "__none__"
     }

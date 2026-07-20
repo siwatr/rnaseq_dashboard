@@ -289,8 +289,8 @@ mod_expression_ui <- function(id) {
   }
   default_x <- function() {
     disc <- discrete_cols()
-    dv <- tryCatch(all.vars(DESeq2::design(state$working)), error = function(e) character(0))
-    if (length(dv) && dv[1] %in% disc) return(dv[1])
+    pv <- primary_design_var(state$working)      # variable of interest = last design term
+    if (!is.na(pv) && pv %in% disc) return(pv)
     if (length(disc)) disc[1] else "__none__"
   }
 

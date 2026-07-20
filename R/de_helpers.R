@@ -102,6 +102,23 @@ de_design_factors <- function(dds) {
   names(cd)[keep]
 }
 
+#' The design's variable of interest (the primary term)
+#'
+#' Convention (DESeq2 results-name style): covariates come first and the
+#' **variable of interest is the LAST term** of the design formula (so a design
+#' with interest `condition` and covariates `rep`/`batch` reads
+#' `~ rep + batch + condition`). This is the single place the app resolves "which
+#' design variable is primary"; default group/colour/contrast pickers across the
+#' pages read it so they agree. Returns `NA_character_` for a design with no
+#' variables (`~ 1`).
+#' @param dds A `DESeqDataSet`.
+#' @return A single column name, or `NA_character_`.
+#' @export
+primary_design_var <- function(dds) {
+  dv <- tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0))
+  if (length(dv)) dv[length(dv)] else NA_character_
+}
+
 #' Levels of a design variable (for contrast test/control pickers)
 #' @param dds A `DESeqDataSet`.
 #' @param var A colData column name.

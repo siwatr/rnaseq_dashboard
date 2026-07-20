@@ -96,9 +96,17 @@ mod_sizefactors_ui <- function(id) {
           selectInput(ns("sf_type"), "Estimator (type)", .sf_type_choices,
                       selected = "ratio"),
           conditionalPanel(
-            sprintf("input['%s'] != 'endogenous'", ns("sf_control")),
+            sprintf("input['%s'] == 'spike_in'", ns("sf_control")),
             tags$div(class = "small text-warning mt-1",
-                     "This normalization is used by DE, PCA, and Expression (not just QC). Spike-in factors can be noisy with few or low-count spikes; 'all genes' ignores the spike-in/exogenous separation and is discouraged.")),
+                     "Spike-in factors can be noisy with few or low-count spikes. This normalization drives DE, PCA, and Expression - not just QC.")),
+          conditionalPanel(
+            sprintf("input['%s'] == 'custom'", ns("sf_control")),
+            tags$div(class = "small text-warning mt-1",
+                     "A custom control set drives DE, PCA, and Expression - not just QC. Use genes expected not to change across your conditions (e.g. stable housekeeping genes).")),
+          conditionalPanel(
+            sprintf("input['%s'] == 'all_genes'", ns("sf_control")),
+            tags$div(class = "small text-warning mt-1",
+                     "Estimating on all genes ignores the spike-in/exogenous separation (those should not drive depth normalization) and is discouraged. This normalization drives DE, PCA, and Expression - not just QC.")),
           actionButton(ns("sf_estimate"), "Estimate size factors", class = "btn-primary"),
           helpText(class = "small text-muted mt-2",
                    "Size factors normalize for sequencing depth (used by DE and normalized log-counts). Re-estimating changes only samples' scaling, not the counts.")
@@ -118,10 +126,19 @@ mod_sizefactors_ui <- function(id) {
           title = tags$h4("Per-sample factors", class = "fs-6 mb-0"), width = 300,
           uiOutput(ns("pers_x_ui")),
           uiOutput(ns("pers_colour_ui")),
-          sliderInput(ns("pers_size"), "Point size", min = 0.25, max = 10,
-                      value = 2.5, step = 0.25),
-          sliderInput(ns("pers_alpha"), "Point opacity", min = 0.1, max = 1,
-                      value = 0.9, step = 0.05),
+          # Sort applies to the per-sample bar (discrete X = Sample) only.
+          conditionalPanel(
+            sprintf("input['%s'] == '__sample__'", ns("pers_x")),
+            selectInput(ns("pers_sort"), "Sort by (discrete X only)",
+                        choices = c("None" = "none", "Decreasing" = "decreasing",
+                                    "Increasing" = "increasing"), selected = "none")),
+          # Point size/opacity only matter when grouped by a colData var (points).
+          conditionalPanel(
+            sprintf("input['%s'] != '__sample__'", ns("pers_x")),
+            sliderInput(ns("pers_size"), "Point size", min = 0.25, max = 10,
+                        value = 2.5, step = 0.25),
+            sliderInput(ns("pers_alpha"), "Point opacity", min = 0.1, max = 1,
+                        value = 0.9, step = 0.05)),
           plot_subset_ui(ns, "pers"),
           uiOutput(ns("pers_auto_ui")),
           actionButton(ns("pers_render"), "Render", class = "btn-primary")
@@ -169,6 +186,8 @@ mod_sizefactors_ui <- function(id) {
             bslib::accordion_panel(
               "Plot settings", icon = icon("sliders"),
               bslib::input_switch(ns("cmp_fixed"), "Fix 1:1 aspect ratio", value = TRUE),
+              sliderInput(ns("cmp_height"), "Plot height (px)", min = 300, max = 900,
+                          value = 500, step = 50),
               uiOutput(ns("cmp_colour_ui")),
               sliderInput(ns("cmp_size"), "Point size", min = 0.25, max = 10,
                           value = 3, step = 0.25),
@@ -177,8 +196,10 @@ mod_sizefactors_ui <- function(id) {
             )
           ),
           plot_subset_ui(ns, "cmp"),
-          uiOutput(ns("cmp_auto_ui")),
-          actionButton(ns("cmp_render"), "Render", icon = icon("play"), class = "btn-primary")
+          # No auto-render: re-estimating two size-factor vectors can be slow
+          # (esp. iterate), so recomputation is always explicit. Plot-setting
+          # changes (colour/size/height) re-plot live from the cached vectors.
+          actionButton(ns("cmp_render"), "Compare", icon = icon("play"), class = "btn-primary")
         ),
         bslib::card(
           bslib::card_header(tags$h4("Size-factor comparison", class = "fs-6 mb-0")),
@@ -239,8 +260,10 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
       # known config does not needlessly invalidate downstream caches. A loaded
       # (unknown) config always commits -- the fresh estimate differs from the
       # inherited vector, and this is how the user replaces it with a known one.
-      cand <- tryCatch(estimate_size_factors(state$working, cfg),
-                       error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
+      cand <- tryCatch(
+        withProgress(message = "Estimating size factors...", value = 0.5,
+                     estimate_size_factors(state$working, cfg)),
+        error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
       if (is.null(cand)) return()
       cur <- sizefactor_config(state$working)
       cur_sf <- tryCatch(DESeq2::sizeFactors(state$working), error = function(e) NULL)
@@ -298,11 +321,17 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
                               group_field_choices(colnames(coldata()), none = FALSE)),
                   selected = "__sample__")
     })
+    # Default colour-by the design's variable of interest (last design term) when
+    # it is a colData column; otherwise none.
+    default_pers_colour <- function() {
+      pv <- primary_design_var(state$working)
+      if (!is.na(pv) && pv %in% colnames(coldata())) pv else "__none__"
+    }
     output$pers_colour_ui <- renderUI({
       req(state$working)
       selectInput(ns("pers_colour"), "Colour by",
                   choices = aes_choices(aes_catalog(state), none = TRUE),
-                  selected = "__none__")
+                  selected = default_pers_colour())
     })
     output$pers_auto_ui <- renderUI({
       req(state$working)
@@ -339,7 +368,10 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
       df <- data.frame(sample = shown, sf = as.numeric(sf[shown]), stringsAsFactors = FALSE)
 
       if (identical(xsel, "__sample__")) {
-        df$x <- factor(df$sample, levels = df$sample)
+        sort <- input$pers_sort %||% "none"
+        lvls <- if (identical(sort, "none")) df$sample
+                else df$sample[order(df$sf, decreasing = identical(sort, "decreasing"))]
+        df$x <- factor(df$sample, levels = lvls)
         aes_args <- list(x = quote(x), y = quote(sf))
         if (!is.null(cr) && cr$discrete) aes_args$fill <- quote(col)
         if (interactive) aes_args$text <- quote(text)
@@ -347,7 +379,7 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
         if (interactive) df$text <- sprintf("Sample: %s<br>Size factor: %s",
                                             df$sample, signif(df$sf, 4))
         p <- ggplot2::ggplot(df, do.call(ggplot2::aes, aes_args)) +
-          ggplot2::geom_col(alpha = palpha) +
+          ggplot2::geom_col() +
           ggplot2::labs(x = "sample", y = "Size factor",
                         fill = if (!is.null(cr) && cr$discrete) cr$lab else NULL) +
           ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
@@ -392,11 +424,6 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
                   choices = aes_choices(aes_catalog(state), none = TRUE),
                   selected = "__none__")
     })
-    output$cmp_auto_ui <- renderUI({
-      req(state$working)
-      bslib::input_switch(ns("cmp_auto"), "Auto-render", value = FALSE)
-    })
-
     cfg_x <- reactive(.sf_config_from(input$cmp_x_control, sfx_search()$ids, input$cmp_x_type))
     cfg_y <- reactive(.sf_config_from(input$cmp_y_control, sfy_search()$ids, input$cmp_y_type))
 
@@ -410,14 +437,17 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
       req(state$working)
       cx <- cfg_x(); cy <- cfg_y()
       state_derive(state, "sf_compare", params = list(cx, cy), expr = function() {
-        one <- function(cfg) tryCatch(
-          DESeq2::sizeFactors(estimate_size_factors(state$working, cfg)),
-          error = function(e) structure(NA_real_, err = conditionMessage(e)))
-        sx <- one(cx); sy <- one(cy)
-        if (!is.null(attr(sx, "err"))) return(list(ok = FALSE, msg = paste0("X axis: ", attr(sx, "err"))))
-        if (!is.null(attr(sy, "err"))) return(list(ok = FALSE, msg = paste0("Y axis: ", attr(sy, "err"))))
-        list(ok = TRUE, sf_x = sx, sf_y = sy,
-             lab_x = .sf_config_label(cx), lab_y = .sf_config_label(cy))
+        withProgress(message = "Estimating size factors (2 methods)...", value = 0, {
+          one <- function(cfg) tryCatch(
+            DESeq2::sizeFactors(estimate_size_factors(state$working, cfg)),
+            error = function(e) structure(NA_real_, err = conditionMessage(e)))
+          sx <- one(cx); incProgress(0.5)
+          sy <- one(cy); incProgress(0.5)
+          if (!is.null(attr(sx, "err"))) return(list(ok = FALSE, msg = paste0("X axis: ", attr(sx, "err"))))
+          if (!is.null(attr(sy, "err"))) return(list(ok = FALSE, msg = paste0("Y axis: ", attr(sy, "err"))))
+          list(ok = TRUE, sf_x = sx, sf_y = sy,
+               lab_x = .sf_config_label(cx), lab_y = .sf_config_label(cy))
+        })
       })
     })
     compare_shown <- deferred("cmp_auto", "cmp_render", compare_value,
@@ -463,7 +493,7 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
     dual_plot("cmp", build_cmp_gg, n_elements = reactive({
       v <- compare_shown$value()
       if (is.null(v) || !isTRUE(v$ok)) 0L else length(intersect(names(v$sf_x), showing_samples()))
-    }))
+    }), height = reactive(paste0(input$cmp_height %||% 500, "px")))
 
     invisible(NULL)
   })

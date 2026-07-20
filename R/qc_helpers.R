@@ -188,10 +188,11 @@ qc_sample_correlation <- function(dds, method = c("spearman", "pearson"),
   stats::cor(.qc_diagnostic_matrix(dds, assay), method = method)
 }
 
-# Default grouping column for within-group correlation: prefer a *discrete*
-# design variable (factor/character) so a continuous covariate does not collapse
-# every sample into its own singleton group; fall back to the first discrete
-# column, then the first column. Pure so helpers/tests can reuse it.
+# Default grouping column for within-group correlation: prefer the *discrete*
+# variable of interest (the LAST design term, factor/character) so a continuous
+# covariate does not collapse every sample into its own singleton group; fall
+# back to another discrete design term, then the first discrete column, then the
+# first column. Pure so helpers/tests can reuse it.
 .qc_default_group <- function(dds) {
   cd <- as.data.frame(SummarizedExperiment::colData(dds))
   if (!ncol(cd)) return(NULL)
@@ -199,8 +200,8 @@ qc_sample_correlation <- function(dds, method = c("spearman", "pearson"),
                           is.logical(x), logical(1))
   pool <- if (any(is_discrete)) names(cd)[is_discrete] else names(cd)
   dv <- tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0))
-  hit <- intersect(dv, pool)
-  if (length(hit)) hit[1] else pool[1]
+  hit <- intersect(dv, pool)                       # design order preserved
+  if (length(hit)) hit[length(hit)] else pool[1]   # variable of interest = last
 }
 
 #' Within-group sample correlation

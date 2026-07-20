@@ -90,7 +90,11 @@ plot_engine_server <- function(input, output, session, state) {
   # (a sticky override, reset when the data changes or the global toggle flips -
   # so flipping the toggle off/on is the way back to the default gate). The
   # static fallback shows a one-line note + the override button above the plot.
+  # `height` is a CSS size string OR a zero-arg function/reactive returning one
+  # (so a page can expose a user-adjustable plot height - useful for fixed-ratio
+  # plots that would otherwise be pinned small by a fixed height).
   dual_plot <- function(id, gg, n_elements, height = "300px") {
+    resolve_height <- function() if (is.function(height)) height() else height
     forced <- reactiveVal(FALSE)
     observeEvent(input[[paste0(id, "_force")]], forced(TRUE))
     observeEvent(state$data_version, forced(FALSE))     # new data -> re-gate
@@ -117,10 +121,11 @@ plot_engine_server <- function(input, output, session, state) {
       }))
     }
     output[[paste0(id, "_container")]] <- renderUI({
+      h <- resolve_height()
       inner <- if (isTRUE(interactive_here())) {
-        plotly::plotlyOutput(ns(paste0(id, "_plotly")), height = height)
+        plotly::plotlyOutput(ns(paste0(id, "_plotly")), height = h)
       } else {
-        plotOutput(ns(paste0(id, "_static")), height = height)
+        plotOutput(ns(paste0(id, "_static")), height = h)
       }
       tagList(
         if (isTRUE(over_budget()) && !isTRUE(forced()) && !is.null(state$working))
@@ -130,7 +135,7 @@ plot_engine_server <- function(input, output, session, state) {
               format(n_elements(), big.mark = ","), ncol(state$working))),
             actionButton(ns(paste0(id, "_force")), "Render interactive anyway",
                          icon = icon("bolt"), class = "btn-sm btn-outline-primary mt-1")),
-        shinycssloaders::withSpinner(inner, proxy.height = height))
+        shinycssloaders::withSpinner(inner, proxy.height = h))
     })
   }
 

@@ -54,6 +54,19 @@ test_that("de_coef_name matches the DESeq2 convention", {
                "condition_treated_vs_control")
 })
 
+test_that("primary_design_var returns the LAST design term (variable of interest)", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 20, n_per_group = 2, n_spike = 0, seed = 3)
+  DESeq2::design(dds) <- ~ condition
+  expect_equal(primary_design_var(dds), "condition")            # single term
+  SummarizedExperiment::colData(dds)$batch <-
+    factor(rep(c("a", "b"), length.out = ncol(dds)))
+  DESeq2::design(dds) <- ~ batch + condition                    # covariate first, interest last
+  expect_equal(primary_design_var(dds), "condition")
+  DESeq2::design(dds) <- ~ 1
+  expect_true(is.na(primary_design_var(dds)))                   # no variable
+})
+
 test_that("de_design_factors / de_contrast_levels / de_relevel work on a dds", {
   skip_if_not_installed("DESeq2")
   dds <- make_mock_dds(n_genes = 40, n_per_group = 3, n_spike = 4, seed = 1)

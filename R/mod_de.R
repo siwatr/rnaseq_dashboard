@@ -318,7 +318,8 @@ mod_de_server <- function(id, state, dark_mode = reactive(FALSE)) {
       if (is.null(dds)) return()
       dv <- intersect(tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0)),
                       de_design_factors(dds))
-      sel <- if (isTRUE(input$c_var %in% dv)) input$c_var else if (length(dv)) dv[1] else NULL
+      # Default to the variable of interest (the LAST design term; dv is in design order).
+      sel <- if (isTRUE(input$c_var %in% dv)) input$c_var else if (length(dv)) dv[length(dv)] else NULL
       updateSelectInput(session, "c_var", choices = dv, selected = sel)
     }, ignoreNULL = FALSE)
 
