@@ -78,21 +78,28 @@ mod_sizefactors_server <- function(id, state) {
         showNotification("Enter at least one control gene for a custom set.", type = "error")
         return()
       }
+      # Always re-estimate (it's cheap) so the user can re-run at will; commit only
+      # when the values or the recorded config actually change, so a repeat of the
+      # same known config doesn't needlessly invalidate downstream caches. A loaded
+      # (unknown) config always commits -- the fresh estimate differs from the
+      # inherited vector, and this is how the user replaces it with a known one.
+      cand <- tryCatch(estimate_size_factors(state$working, cfg),
+                       error = function(e) { showNotification(conditionMessage(e), type = "error"); NULL })
+      if (is.null(cand)) return()
       cur <- sizefactor_config(state$working)
-      same <- identical(cfg$control, cur$control) &&
-              setequal(cfg$custom_ids, cur$custom_ids) &&
-              identical(cfg$type, cur$type)
-      if (same && !is.null(tryCatch(DESeq2::sizeFactors(state$working), error = function(e) NULL))) {
-        showNotification("Size factors already reflect this configuration.", type = "message")
+      cur_sf <- tryCatch(DESeq2::sizeFactors(state$working), error = function(e) NULL)
+      unchanged <- identical(cur$provenance, "user") &&
+                   identical(cur$control, cfg$control) && setequal(cur$custom_ids, cfg$custom_ids) &&
+                   identical(cur$type, cfg$type) && !is.null(cur_sf) &&
+                   isTRUE(all.equal(unname(cur_sf), unname(DESeq2::sizeFactors(cand))))
+      if (unchanged) {
+        showNotification("Size factors re-estimated - values unchanged.", type = "message")
         return()
       }
-      ok <- tryCatch({
-        state_mutate(state, function(d) estimate_size_factors(d, cfg),
-                     action = list(action = "size_factors", control = cfg$control,
-                                   type = cfg$type, n_control = length(cfg$custom_ids)))
-        TRUE
-      }, error = function(e) { showNotification(conditionMessage(e), type = "error"); FALSE })
-      if (isTRUE(ok)) showNotification("Size factors updated.", type = "message")
+      state_mutate(state, function(d) cand,
+                   action = list(action = "size_factors", control = cfg$control, type = cfg$type,
+                                 n_control = length(.sf_control_index(state$working, cfg))))
+      showNotification("Size factors updated.", type = "message")
     })
 
     output$status <- renderUI({
@@ -100,18 +107,24 @@ mod_sizefactors_server <- function(id, state) {
       dds <- state$working
       sf <- tryCatch(DESeq2::sizeFactors(dds), error = function(e) NULL)
       if (is.null(sf))
-        return(tags$p(class = "text-warning", "Size factors are not set for this dataset."))
+        return(tags$p(class = "text-warning",
+                      "Size factors are not set for this dataset. Estimate them below."))
       cfg <- sizefactor_config(dds)
-      n_ctrl <- length(.sf_control_index(dds, cfg))
-      prov <- switch(cfg$provenance %||% "auto",
-                     loaded = "provided by the loaded object",
-                     user = "set on this tab", "endogenous default (computed on load)")
-      ctrl_lab <- switch(cfg$control,
-                         endogenous = "endogenous genes", spike_in = "spike-in genes",
-                         custom = "a custom gene set", cfg$control)
-      tags$p(class = "text-muted mb-2", sprintf(
-        "Set from %s using %s (%d control genes), estimator '%s'. Range %.3f-%.3f.",
-        ctrl_lab, prov, n_ctrl, cfg$type %||% "ratio", min(sf), max(sf)))
+      rng <- sprintf("Range %.3f-%.3f.", min(sf), max(sf))
+      # For a loaded object we don't know the upstream control set / estimator, so
+      # don't invent them -- only report what WE computed (auto default / user set).
+      txt <- switch(cfg$provenance %||% "auto",
+        loaded = sprintf(
+          "Inherited from the loaded object; the control genes and estimator used upstream are unknown. %s Re-estimate below to set a known configuration.", rng),
+        user = {
+          ctrl_lab <- switch(cfg$control, endogenous = "endogenous genes",
+                             spike_in = "spike-in genes", custom = "a custom gene set", cfg$control)
+          sprintf("Set on this tab from %s (%d control genes), estimator '%s'. %s",
+                  ctrl_lab, length(.sf_control_index(dds, cfg)), cfg$type %||% "ratio", rng)
+        },
+        sprintf("Endogenous default (median-of-ratios), computed on load from %d endogenous genes. %s",
+                length(.sf_control_index(dds, cfg)), rng))
+      tags$p(class = "text-muted mb-2", txt)
     })
 
     output$table <- DT::renderDT({
@@ -121,7 +134,7 @@ mod_sizefactors_server <- function(id, state) {
       df <- data.frame(sample = names(sf) %||% as.character(seq_along(sf)),
                        size_factor = round(as.numeric(sf), 4),
                        stringsAsFactors = FALSE)
-      dt_table(df, rownames = FALSE)
+      dt_table(df)
     })
 
     invisible(NULL)

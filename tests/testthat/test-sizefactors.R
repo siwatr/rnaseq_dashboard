@@ -107,29 +107,37 @@ test_that("Size-factors UI mounts control + estimator inputs", {
   expect_match(ui, "Custom set")
 })
 
-test_that("Size-factors server estimates on a custom set and is idempotent", {
+test_that("Size-factors server: confirm default commits (auto->user), then value-idempotent", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
   shiny::testServer(mod_sizefactors_server, args = list(state = state), {
     state_load(state, make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 6, seed = 7),
                source = "demo", meta = list(feature_type = "gene"))
     session$flushReact()
-    # load materialized endogenous defaults
+    # load materialized endogenous defaults, provenance "auto"
     expect_equal(sizefactor_config(state$working)$control, "endogenous")
+    expect_equal(sizefactor_config(state$working)$provenance, "auto")
     v0 <- state$data_version
 
-    # re-estimating the SAME (endogenous) config is a no-op (no version bump)
+    # confirming the endogenous default commits it (auto -> user): one bump, even
+    # though the values are unchanged (the user deliberately set the config).
     session$setInputs(sf_control = "endogenous", sf_type = "ratio", sf_estimate = 1)
     session$flushReact()
-    expect_equal(state$data_version, v0)
+    expect_equal(state$data_version, v0 + 1L)
+    expect_equal(sizefactor_config(state$working)$provenance, "user")
+    v1 <- state$data_version
+
+    # re-running the SAME user config now is a value no-op (no bump)
+    session$setInputs(sf_estimate = 2); session$flushReact()
+    expect_equal(state$data_version, v1)
 
     # switch to a custom control set via the shared gene search, then estimate
     gnames <- SummarizedExperiment::rowData(state$working)$gene_name[1:12]
     session$setInputs(sf_control = "custom", sf_searchby = "gene_name",
                       sf_q = paste(gnames, collapse = ", "), sf_type = "ratio")
     session$elapse(400); session$flushReact()
-    session$setInputs(sf_estimate = 2); session$flushReact()
-    expect_equal(state$data_version, v0 + 1L)                  # a real change bumped it
+    session$setInputs(sf_estimate = 3); session$flushReact()
+    expect_equal(state$data_version, v1 + 1L)                  # a real change bumped it
     expect_equal(sizefactor_config(state$working)$control, "custom")
     expect_equal(sizefactor_config(state$working)$provenance, "user")
     expect_false(is.null(DESeq2::sizeFactors(state$working)))
