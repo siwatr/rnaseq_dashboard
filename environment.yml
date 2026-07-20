@@ -55,6 +55,7 @@ dependencies:
   # Bioconductor core (the dds object, QC, heatmaps, annotation)
   - bioconductor-deseq2
   - bioconductor-summarizedexperiment
+  - bioconductor-s4vectors           # metadata() accessor for the size-factor config (Imports)
   - bioconductor-singlecellexperiment
   - bioconductor-scater
   - bioconductor-complexheatmap

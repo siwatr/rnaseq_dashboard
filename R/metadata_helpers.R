@@ -306,7 +306,7 @@ reset_metadata_slot <- function(working, original, slot = c("colData", "rowData"
                         error = function(e) working)
   } else {
     working <- refresh_assays(working)
-    if (!is.null(DESeq2::sizeFactors(working))) working <- estimate_size_factors_endogenous(working)
+    working <- reestimate_size_factors(working)   # under working's own config; no-op if unset
   }
   working
 }

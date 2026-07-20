@@ -118,7 +118,11 @@ state_dds <- function(state) {
 #' @export
 state_load <- function(state, obj, source = "rds", meta = list()) {
   state$original     <- obj
-  state$working      <- obj
+  # Materialize a default (endogenous) size-factor normalization on `working` when
+  # the object doesn't carry one, so DE/PCA/Expression read a consistent, visible
+  # value and the Size-factors tab has something to show; an object's own size
+  # factors are respected (provenance "loaded"). `original` stays exactly as loaded.
+  state$working      <- tryCatch(ensure_size_factors(obj), error = function(e) obj)
   state$meta         <- meta
   state$undo_stack   <- list()
   .clear_derived(state)
@@ -288,7 +292,10 @@ state_derive <- function(state, key, params = list(), expr,
 #' @export
 state_reset <- function(state) {
   if (is.null(state$original)) return(invisible(state))
-  state$working      <- state$original
+  # Re-materialize the default size factors (original is kept exactly as loaded),
+  # so `working` keeps the invariant of carrying a normalization after a reset.
+  state$working      <- tryCatch(ensure_size_factors(state$original),
+                                 error = function(e) state$original)
   state$undo_stack   <- list()
   .clear_derived(state)
   state$n_edits      <- 0L

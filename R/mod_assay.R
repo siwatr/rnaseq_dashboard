@@ -1,7 +1,8 @@
 # Page 1, "Assay" tab: inspect assays and add normalized ones. CPM is always
 # available; TPM/FPKM require a complete feature_length (populated by annotation
-# / GTF). Adding assays also (re)estimates size factors on endogenous genes.
-# Backed by R/assay_helpers.R.
+# / GTF). Size factors are NOT set here -- they are a separate DESeq2 median-of-
+# ratios normalization (unrelated to these library-size/length assays) managed on
+# the "Size factors" tab. Backed by R/assay_helpers.R.
 
 mod_assay_ui <- function(id) {
   ns <- NS(id)
@@ -9,7 +10,7 @@ mod_assay_ui <- function(id) {
     sidebar = bslib::sidebar(
       title = tags$h4("Add assays", class = "fs-6 mb-0"), width = 250,
       uiOutput(ns("controls")),
-      actionButton(ns("apply"), "Add assays / update size factors", class = "btn-primary")
+      actionButton(ns("apply"), "Add assays", class = "btn-primary")
     ),
     bslib::card(
       bslib::card_header(tags$h4("Assay information", class = "fs-6 mb-0")),
@@ -43,10 +44,8 @@ mod_assay_server <- function(id, state) {
 
     do_apply <- function(sel) {
       ok <- tryCatch({
-        state_mutate(state, function(d) {
-          d <- add_normalized_assays(d, sel)
-          estimate_size_factors_endogenous(d)
-        }, action = list(action = "add_assays", assays = sel))
+        state_mutate(state, function(d) add_normalized_assays(d, sel),
+                     action = list(action = "add_assays", assays = sel))
         TRUE
       }, error = function(e) { showNotification(conditionMessage(e), type = "error"); FALSE })
       if (!isTRUE(ok)) return(invisible())
@@ -84,8 +83,6 @@ mod_assay_server <- function(id, state) {
       dds <- state$working
       cat("Assays:", paste(SummarizedExperiment::assayNames(dds), collapse = ", "), "\n")
       cat("Dimensions:", nrow(dds), "features x", ncol(dds), "samples\n")
-      sf <- tryCatch(DESeq2::sizeFactors(dds), error = function(e) NULL)
-      cat("Size factors:", if (is.null(sf)) "not set" else "set (endogenous)", "\n")
     })
 
     invisible(NULL)

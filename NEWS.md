@@ -1,5 +1,11 @@
 # ddsdashboard (development version)
 
+* Size-factor normalization is decoupled from assay assignment and gets its own **Size factors**
+  Input sub-tab. Choose the control-gene set (endogenous / spike-in / a custom set via gene
+  search) and the `estimateSizeFactors` type; the config rides on the dds so structural edits
+  re-estimate under it. Size factors are materialized by default at load (an object's own factors
+  are respected), so DE / PCA / Expression read one consistent, visible normalization instead of
+  re-deriving it; DE never writes them back. Re-estimating the same config is a no-op.
 * Adding a normalized assay (CPM/TPM/FPKM) no longer invalidates the DESeq2 fit or the cached
   VST. Those are now *content-addressed* — keyed on a fingerprint of the count matrix, sample /
   feature sets, and size factors (`dds_content_fingerprint()`) rather than the coarse

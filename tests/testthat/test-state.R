@@ -30,7 +30,8 @@ test_that("state_load / mutate / derive / undo / reset behave correctly", {
   state_load(st, dds, source = "demo", meta = list(data_type = "bulk"))
   expect_equal(st$data_version, 1L)
   expect_equal(length(st$history), 1L)
-  expect_identical(st$working, st$original)
+  expect_identical(st$original, dds)                       # original kept exactly as loaded
+  expect_false(is.null(DESeq2::sizeFactors(st$working)))   # working carries default size factors
   expect_equal(state_meta(st)$n_features, nrow(dds))
   expect_equal(state_meta(st)$n_edits, 0L)
 
@@ -57,7 +58,9 @@ test_that("state_load / mutate / derive / undo / reset behave correctly", {
   expect_equal(state_meta(st)$n_edits, 0L)                 # undo decrements the count
 
   state_reset(st)
-  expect_identical(st$working, st$original)
+  expect_identical(st$original, dds)                       # reset target unchanged
+  expect_equal(nrow(st$working), nrow(dds))                # working restored (+ default size factors)
+  expect_false(is.null(DESeq2::sizeFactors(st$working)))
   expect_equal(length(st$undo_stack), 0L)
   expect_equal(state_meta(st)$n_edits, 0L)
 })

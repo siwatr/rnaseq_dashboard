@@ -351,7 +351,7 @@ removal_status_colors <- function(config = NULL) {
 # and (only if they were already set) re-estimate endogenous size factors.
 .refit_after_subset <- function(dds) {
   dds <- refresh_assays(dds)
-  if (!is.null(DESeq2::sizeFactors(dds))) dds <- estimate_size_factors_endogenous(dds)
+  dds <- reestimate_size_factors(dds)   # under the dds's own config; no-op if unset
   dds
 }
 
@@ -444,7 +444,10 @@ drop_samples <- function(dds, drop_ids) {
   dds <- ensure_logcounts(dds)
   want <- intersect(c("CPM", "TPM", "FPKM"), SummarizedExperiment::assayNames(working))
   if (length(want)) dds <- add_normalized_assays(dds, which = want)
-  if (!is.null(DESeq2::sizeFactors(working))) dds <- estimate_size_factors_endogenous(dds)
+  # Reconstruction (DESeqDataSetFromMatrix) drops metadata, so carry the size-
+  # factor config over from `working` when re-estimating.
+  if (!is.null(DESeq2::sizeFactors(working)))
+    dds <- estimate_size_factors(dds, sizefactor_config(working))
   dds
 }
 

@@ -182,7 +182,9 @@ de_coef_name <- function(contrast) {
 de_run <- function(dds, quiet = TRUE) {
   dds <- .de_droplevels_design(dds)
   sf <- tryCatch(DESeq2::sizeFactors(dds), error = function(e) NULL)
-  if (is.null(sf)) dds <- estimate_size_factors_endogenous(dds)
+  # Consumer, not owner: use whatever size factors the dataset carries; only fall
+  # back (under the dds's own config) when none were set. Never written back here.
+  if (is.null(sf)) dds <- estimate_size_factors(dds, sizefactor_config(dds))
   DESeq2::DESeq(dds, quiet = quiet)
 }
 
