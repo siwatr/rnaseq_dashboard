@@ -455,21 +455,34 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
     cfg_x <- reactive(.sf_config_from(input$cmp_x_control, sfx_search()$ids, input$cmp_x_type))
     cfg_y <- reactive(.sf_config_from(input$cmp_y_control, sfy_search()$ids, input$cmp_y_type))
 
+    # The dds content the Compare estimation actually depends on -- deliberately
+    # EXCLUDES the committed sizeFactors(dds). Compare is consumer-only: it computes
+    # its own factors from the two configs (read-only) and never reads the dds's own
+    # size factors, so an Estimate-pill change (which bumps data_version) must NOT
+    # stale it. This token captures what DOES matter: sample/feature identity
+    # (rn/cn), the endogenous/spike split (feature_class, the control-set source),
+    # and the design_version (the `iterate` estimator is design-based).
+    sf_compare_token <- reactive({
+      req(state$working)
+      dds <- state$working
+      list(rn = rownames(dds), cn = colnames(dds),
+           fc = tryCatch(as.character(SummarizedExperiment::rowData(dds)$feature_class),
+                         error = function(e) NULL),
+           dv = state$design_version %||% 0L)
+    })
+
     # Compute the two size-factor vectors READ-ONLY (state is never mutated). Each
     # is estimated on the working dds under its config; an empty spike-in / custom
     # set is carried as ok = FALSE (a validate() inside a deferred spec is
     # swallowed, so error state is data, not a condition). Cached in `derived`
-    # keyed on the two configs + data_version, so a structural dds edit
-    # (data_version bump) re-estimates both, while a mere re-view reuses the cache.
+    # keyed on the two configs + the content token above (NOT data_version), so a
+    # size-factor change on the dds neither re-estimates nor stales this plot, while
+    # a real structural edit (sample/feature/feature_class/design) does.
     compare_value <- reactive({
       req(state$working)
       cx <- cfg_x(); cy <- cfg_y()
-      # design_version is in the key because the `iterate` estimator is design-
-      # based: its factors change with the design/reference level, which bumps
-      # design_version (not data_version). ratio/poscounts are design-independent,
-      # but keying on it uniformly is harmless and keeps the cache honest.
       est <- state_derive(state, "sf_compare",
-                   params = list(cx, cy, state$design_version %||% 0L), expr = function() {
+                   params = list(cx, cy), version = sf_compare_token(), expr = function() {
         withProgress(message = "Estimating size factors (2 methods)...", value = 0, {
           one <- function(cfg) tryCatch(
             DESeq2::sizeFactors(estimate_size_factors(state$working, cfg)),
@@ -487,8 +500,7 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
       c(est, list(show = showing_samples()))
     })
     compare_shown <- deferred("cmp_auto", "cmp_render", compare_value,
-      sig = reactive(list(cfg_x(), cfg_y(), state$data_version,
-                          state$design_version %||% 0L, showing_samples())))
+      sig = reactive(list(cfg_x(), cfg_y(), sf_compare_token(), showing_samples())))
     output$cmp_stale <- stale_note(compare_shown)
 
     cmp_colour_resolve <- function(samples) {
@@ -519,7 +531,10 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cr <- cmp_colour_resolve(shown)
       colour_lab <- NULL; colour_scale <- NULL
       if (!is.null(cr)) { df$col <- cr$values; colour_lab <- cr$lab; colour_scale <- cr$scale }
-      r2 <- tryCatch(summary(stats::lm(y ~ x, df))$r.squared, error = function(e) NA_real_)
+      # suppressWarnings: two equivalent methods give an (essentially) perfect fit,
+      # for which summary.lm warns "essentially perfect fit" -- R2 is still 1, valid.
+      r2 <- tryCatch(suppressWarnings(summary(stats::lm(y ~ x, df))$r.squared),
+                     error = function(e) NA_real_)
       subtitle <- if (is.finite(r2))
                     sprintf("Linear fit R2 = %.3f (dashed = x=y; centered to geometric mean 1)", r2)
                   else "Dashed line = x=y (centered to geometric mean 1)"

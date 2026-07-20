@@ -149,6 +149,33 @@ test_that("Compare pill computes two size-factor vectors read-only (no data_vers
   })
 })
 
+test_that("Compare pill does not go stale when the dds's own size factors change", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  shiny::testServer(mod_sizefactors_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 6, seed = 7),
+               source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    session$setInputs(cmp_x_control = "endogenous", cmp_x_type = "ratio",
+                      cmp_y_control = "endogenous", cmp_y_type = "ratio", cmp_render = 1)
+    session$flushReact()
+    expect_false(compare_shown$stale())
+
+    # Estimate/commit size factors on the dds (Estimate pill) -> data_version bumps,
+    # but Compare is consumer-only and must NOT go stale.
+    session$setInputs(sf_control = "spike_in", sf_type = "ratio", sf_estimate = 1)
+    session$flushReact()
+    expect_equal(sizefactor_config(state$working)$control, "spike_in")   # the dds did change
+    expect_false(compare_shown$stale())                                  # ...but Compare did not
+
+    # A real structural edit (drop a sample) DOES stale it (token still catches it).
+    state_mutate(state, function(d) d[, -1], action = list(action = "drop_sample"))
+    session$flushReact()
+    expect_true(compare_shown$stale())
+  })
+})
+
 test_that("Compare pill carries a graceful message when a control set is empty", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
