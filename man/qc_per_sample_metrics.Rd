@@ -11,7 +11,8 @@ qc_per_sample_metrics(dds)
 }
 \value{
 A \code{data.frame}, one row per sample (row names = \code{colnames(dds)}), with
-columns \code{sample}, \code{library_size}, \code{detected}, \code{pct_mito}, \code{pct_spike}.
+columns \code{sample}, \code{library_size}, \code{detected}, \code{pct_mito}, \code{pct_spike}, and
+\code{size_factor} (the DESeq2 size factor, \code{NA} when unset).
 }
 \description{
 Computes, for each sample (column): library size (total counts), number of

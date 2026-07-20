@@ -160,6 +160,7 @@ app_ui <- function(themer_mode = FALSE) {
         bslib::nav_panel(tags$h3("Sample", class = "fs-6"),  mod_metadata_ui("metadata")),
         bslib::nav_panel(tags$h3("Feature", class = "fs-6"), mod_feature_ui("feature")),
         bslib::nav_panel(tags$h3("Assay", class = "fs-6"),        mod_assay_ui("assay")),
+        bslib::nav_panel(tags$h3("Size factors", class = "fs-6"), mod_sizefactors_ui("sizefactors")),
         bslib::nav_panel(tags$h3("Design", class = "fs-6"),
           bslib::card(bslib::card_body(
             tags$p(class = "text-muted",
@@ -209,6 +210,8 @@ app_server <- function(input, output, session) {
   mod_metadata_server("metadata", state)
   mod_feature_server("feature", state)
   mod_assay_server("assay", state)
+  mod_sizefactors_server("sizefactors", state,       # Dataset > Size factors tab
+                         dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_design_builder_server("design_input", state)   # Dataset > Design tab (synced with the DE page)
   mod_qc_server("qc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_dimreduc_server("dimreduc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))

@@ -47,7 +47,9 @@ mod_design_builder_server <- function(id, state) {
       last_desv(desv)
       if (design_changed || !isTRUE(input$primary %in% fac)) {
         dv   <- intersect(tryCatch(all.vars(DESeq2::design(dds)), error = function(e) character(0)), fac)
-        prim <- if (length(dv)) dv[1] else if (length(fac)) fac[1] else character(0)
+        # Convention: the variable of interest is the LAST design term (covariates
+        # first). Read it back as primary so the builder round-trips its own designs.
+        prim <- if (length(dv)) dv[length(dv)] else if (length(fac)) fac[1] else character(0)
         updateSelectInput(session, "primary", choices = fac, selected = prim)
         updateSelectizeInput(session, "covariates", choices = fac, selected = setdiff(dv, prim))
       } else {
@@ -57,12 +59,15 @@ mod_design_builder_server <- function(id, state) {
       }
     }, ignoreNULL = FALSE)
 
-    # The terms the user has selected (primary first; primary excluded from covs).
+    # The terms the user has selected. Convention: covariates first, the variable
+    # of interest (primary) LAST (DESeq2 results-name style), so `~ rep + condition`
+    # rather than `~ condition + rep`. Order does not affect correctness (results
+    # are extracted via `contrast=`), but it is the standard the app follows.
     terms <- reactive({
       p <- input$primary %||% character(0)
       p <- p[nzchar(p)]
       cov <- setdiff(input$covariates %||% character(0), p)
-      unique(c(p, cov))
+      unique(c(cov, p))
     })
 
     pending_design <- reactive({

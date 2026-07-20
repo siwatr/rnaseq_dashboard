@@ -52,12 +52,12 @@ test_that("adding an assay preserves the DESeq fit + VST; a structural edit stal
   skip_if_not_installed("DESeq2")
   shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
   state <- new_app_state()
-  # Load WITHOUT pre-estimating size factors -- exactly the app's state when a user
-  # runs DE before ever adding an assay (de_run estimates internally; working keeps
-  # NULL size factors). This is the scenario that regressed.
+  # state_load now materializes default endogenous size factors on `working`, so
+  # DE runs against a stable, visible normalization. The fingerprint keeps the fit
+  # valid across a benign re-estimate (assay-add) and stales it on a real change.
   dds <- ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 6, seed = 2))
   state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
-  expect_null(DESeq2::sizeFactors(state$working))
+  expect_false(is.null(DESeq2::sizeFactors(state$working)))
 
   # Simulate a completed fit + extracted results, and a content-addressed VST.
   assign("de_fit", list(value = "FIT", stamp = .de_stamp(state)), envir = state$derived)

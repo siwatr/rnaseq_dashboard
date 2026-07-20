@@ -249,14 +249,14 @@ test_that("default colour-by follows the DESeq2 design's first variable, with fa
     state_load(state, mk(), source = "demo"); session$flushReact()
     expect_match(as.character(output$colour_ui$html), 'value=\"condition\"[^>]*selected', perl = TRUE)
   })
-  # ~ batch + condition -> the FIRST design var (batch).
+  # ~ batch + condition -> the variable of interest (the LAST design var, condition).
   state <- new_app_state()
   shiny::testServer(mod_dimreduc_server, args = list(state = state), {
     dds <- mk()
     SummarizedExperiment::colData(dds)$batch <- factor(rep(c("a", "b"), length.out = ncol(dds)))
     DESeq2::design(dds) <- ~ batch + condition
     state_load(state, dds, source = "demo"); session$flushReact()
-    expect_match(as.character(output$colour_ui$html), 'value=\"batch\"[^>]*selected', perl = TRUE)
+    expect_match(as.character(output$colour_ui$html), 'value=\"condition\"[^>]*selected', perl = TRUE)
   })
   # No usable design + no "condition" column -> (none).
   state <- new_app_state()

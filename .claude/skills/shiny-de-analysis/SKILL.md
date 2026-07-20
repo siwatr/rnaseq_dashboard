@@ -22,6 +22,13 @@ Plots** / **Results Table** (all wired; P5a–c complete).
 ## Design + contrast (guided, not free-text)
 
 - **Candidate factors:** `de_design_factors(dds)` (discrete colData columns, >= 2 levels).
+- **Term order — variable of interest LAST (project convention):** the design builder writes
+  **covariates first, the variable of interest last** (`~ rep + batch + condition`, DESeq2
+  results-name style). Order doesn't affect correctness (results come via `contrast=`), but it is
+  the standard. **`primary_design_var(dds)`** (in `de_helpers.R`) is the single resolver for "which
+  design variable is primary" (= the last term, `NA` for `~ 1`); every default group/colour/contrast
+  picker across the pages (DE contrast var, PCA/Expression/Size-factors colour, QC within-group
+  group) reads it so they agree. Don't hand-roll `all.vars(design)[1]`.
 - **Reference level:** `de_relevel(dds, col, ref)` — the DE *primitive* for the control
   level (Phase 8 factor management generalizes reordering and reuses it). Committed to the
   dds so `apeglm` can shrink by coefficient.

@@ -184,7 +184,9 @@ aes_choices <- function(catalog, kinds = c("discrete", "continuous"), none = FAL
   if (is.null(reason)) {
     st <- removal_status(flagged); labs <- .removal_labels_2
   } else {
-    rcol <- .metric_reason[[reason]]
+    # A metric may have no corresponding flag reason (e.g. size_factor) -> fall
+    # back to the generic pass/suggested highlight rather than erroring on [[.
+    rcol <- if (reason %in% names(.metric_reason)) .metric_reason[[reason]] else NULL
     this <- if (!is.null(rcol)) fl[[rcol]][i] else NULL
     st <- removal_status(flagged, this); labs <- .removal_labels
   }

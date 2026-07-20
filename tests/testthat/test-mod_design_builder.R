@@ -23,6 +23,25 @@ test_that("mod_design_builder applies a design (design-scoped) + relevels the re
   })
 })
 
+test_that("mod_design_builder builds covariates-first / variable-of-interest-last", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_design_builder_server, args = list(state = state), {
+    dds <- make_mock_dds(n_genes = 30, n_per_group = 3, n_spike = 0, seed = 5)
+    SummarizedExperiment::colData(dds)$batch <-
+      factor(rep(c("a", "b", "c"), length.out = ncol(dds)))   # not confounded
+    state_load(state, dds, source = "demo")
+    session$flushReact()
+    session$setInputs(primary = "condition", covariates = "batch")
+    session$flushReact()
+    session$setInputs(apply = 1)
+    session$flushReact()
+    f <- paste(deparse(DESeq2::design(state$working)), collapse = " ")
+    expect_match(f, "batch \\+ condition")                    # covariate first, interest last
+    expect_equal(primary_design_var(state$working), "condition")
+  })
+})
+
 test_that("mod_design_builder refuses to apply a confounded (rank-deficient) design", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
@@ -33,7 +52,7 @@ test_that("mod_design_builder refuses to apply a confounded (rank-deficient) des
     state_load(state, dds, source = "demo")
     session$flushReact()
 
-    session$setInputs(primary = "condition", covariates = "batch")   # ~ condition + batch (not full rank)
+    session$setInputs(primary = "condition", covariates = "batch")   # ~ batch + condition (not full rank)
     session$flushReact()
     session$setInputs(apply = 1)
     session$flushReact()

@@ -351,7 +351,7 @@ removal_status_colors <- function(config = NULL) {
 # and (only if they were already set) re-estimate endogenous size factors.
 .refit_after_subset <- function(dds) {
   dds <- refresh_assays(dds)
-  if (!is.null(DESeq2::sizeFactors(dds))) dds <- estimate_size_factors_endogenous(dds)
+  dds <- reestimate_size_factors(dds)   # under the dds's own config; no-op if unset
   dds
 }
 
@@ -444,7 +444,15 @@ drop_samples <- function(dds, drop_ids) {
   dds <- ensure_logcounts(dds)
   want <- intersect(c("CPM", "TPM", "FPKM"), SummarizedExperiment::assayNames(working))
   if (length(want)) dds <- add_normalized_assays(dds, which = want)
-  if (!is.null(DESeq2::sizeFactors(working))) dds <- estimate_size_factors_endogenous(dds)
+  # Reconstruction (DESeqDataSetFromMatrix) drops metadata + size factors, so carry
+  # the config over from `working`. Don't re-derive externally "loaded" factors
+  # under a guessed method -- keep the config recorded but leave factors unset (the
+  # Size-factors tab / load-time materialization will handle it).
+  if (!is.null(DESeq2::sizeFactors(working))) {
+    cfg <- sizefactor_config(working)
+    dds <- if (identical(cfg$provenance, "loaded")) set_sizefactor_config(dds, cfg)
+           else estimate_size_factors(dds, cfg)
+  }
   dds
 }
 
