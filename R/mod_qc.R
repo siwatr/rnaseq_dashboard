@@ -844,6 +844,11 @@ mod_qc_server <- function(id, state, dark_mode = reactive(FALSE)) {
       s <- gen_shown$value()
       tbl <- s$tbl[s$tbl$sample %in% s$show, , drop = FALSE]
       validate(need(nrow(tbl) > 0, "No samples in the current 'Showing' selection."))
+      # size_factor is NA until size factors are estimated (Dataset > Size factors).
+      validate(need(any(is.finite(tbl[[s$metric]])),
+                    if (identical(s$metric, "size_factor"))
+                      "Size factors are not set - estimate them on the Dataset > Size factors tab."
+                    else "No finite values for this metric."))
       ae <- sample_aes(input$group %||% default_group_col(), s$metric, tbl$sample)
       tbl$group <- ae$values
       .qc_metric_plot(tbl, s$x_axis, s$metric, ae$lab, sort = s$sort,

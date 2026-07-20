@@ -236,12 +236,23 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
     coldata <- function() as.data.frame(SummarizedExperiment::colData(state$working))
 
     # ==== Estimate pill =====================================================
-    # Reflect the dataset's stored config in the inputs (on load / any data change).
+    # Reflect the dataset's stored config in the inputs, but only when it actually
+    # changed (like the design builder) -- so an unrelated data edit elsewhere
+    # (e.g. a QC filter bumping data_version) doesn't wipe a selection the user set
+    # here but hasn't estimated yet.
+    last_sf_cfg <- reactiveVal(NULL)
     observeEvent(state$working, {
       req(state$working)
       cfg <- sizefactor_config(state$working)
-      updateRadioButtons(session, "sf_control", selected = cfg$control)
-      updateSelectInput(session, "sf_type", selected = cfg$type)
+      prev <- last_sf_cfg()
+      last_sf_cfg(cfg)
+      changed <- is.null(prev) || !identical(prev$control, cfg$control) ||
+                 !identical(prev$type, cfg$type) ||
+                 !setequal(prev$custom_ids %||% character(0), cfg$custom_ids %||% character(0))
+      if (changed) {
+        updateRadioButtons(session, "sf_control", selected = cfg$control)
+        updateSelectInput(session, "sf_type", selected = cfg$type)
+      }
     })
 
     pending_config <- reactive({
@@ -275,9 +286,13 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
         showNotification("Size factors re-estimated - values unchanged.", type = "message")
         return()
       }
+      # Log the control-gene count actually used: the degenerate endogenous case
+      # (no endogenous rows) falls back to all genes in estimate_size_factors().
+      n_ctrl <- length(.sf_control_index(state$working, cfg))
+      if (!n_ctrl && identical(cfg$control, "endogenous")) n_ctrl <- nrow(state$working)
       state_mutate(state, function(d) cand,
                    action = list(action = "size_factors", control = cfg$control, type = cfg$type,
-                                 n_control = length(.sf_control_index(state$working, cfg))))
+                                 n_control = n_ctrl))
       showNotification("Size factors updated.", type = "message")
     })
 
@@ -349,20 +364,27 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
            lab = res$label, scale = res)
     }
 
+    # Gate the X-axis choice + the "Showing" subset behind Render (the QC
+    # convention): the spec snapshots them so the build reads the gated values,
+    # not live inputs -- otherwise a Showing/X change would redraw immediately AND
+    # trip the stale banner. Colour/sort/size/opacity stay live (cheap re-plots).
     pers_shown <- deferred("pers_auto", "pers_render",
-      reactive({ req(state$working); input$pers_x %||% "__sample__" }),
+      reactive({ req(state$working)
+                 list(xsel = input$pers_x %||% "__sample__", show = showing_samples()) }),
       sig = reactive(list(input$pers_x, showing_samples(), state$data_version)))
     output$pers_stale <- stale_note(pers_shown)
 
     build_pers_gg <- function(interactive) {
-      validate(need(!is.null(pers_shown$value()),
+      snap <- pers_shown$value()
+      validate(need(!is.null(snap),
                     "Click Render (or enable auto-render) to plot size factors."))
       req(state$working)
       sf <- tryCatch(DESeq2::sizeFactors(state$working), error = function(e) NULL)
       validate(need(!is.null(sf), "No size factors yet - estimate them on the Estimate pill."))
-      shown <- intersect(colnames(state$working), showing_samples())
+      # Read the gated snapshot (X-axis + Showing subset), not live inputs.
+      shown <- intersect(colnames(state$working), snap$show)
       validate(need(length(shown) > 0, "No samples in the current 'Showing' selection."))
-      xsel <- input$pers_x %||% "__sample__"
+      xsel <- snap$xsel %||% "__sample__"
       psize <- input$pers_size %||% 2.5; palpha <- input$pers_alpha %||% 0.9
       cr <- pers_colour_resolve(shown)
       df <- data.frame(sample = shown, sf = as.numeric(sf[shown]), stringsAsFactors = FALSE)
@@ -373,18 +395,23 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
                 else df$sample[order(df$sf, decreasing = identical(sort, "decreasing"))]
         df$x <- factor(df$sample, levels = lvls)
         aes_args <- list(x = quote(x), y = quote(sf))
-        if (!is.null(cr) && cr$discrete) aes_args$fill <- quote(col)
+        # Fill by the colour aesthetic (discrete -> manual scale, continuous ->
+        # gradient); aes_ggplot_scale returns NULL when no palette config, letting
+        # thematic supply the default gradient/palette.
+        if (!is.null(cr)) { aes_args$fill <- quote(col); df$col <- cr$values }
         if (interactive) aes_args$text <- quote(text)
-        if (!is.null(cr) && cr$discrete) df$col <- cr$values
-        if (interactive) df$text <- sprintf("Sample: %s<br>Size factor: %s",
-                                            df$sample, signif(df$sf, 4))
+        if (interactive) {
+          df$text <- sprintf("Sample: %s<br>Size factor: %s", df$sample, signif(df$sf, 4))
+          if (!is.null(cr)) df$text <- paste0(df$text, "<br>", cr$lab, ": ",
+                                              if (cr$discrete) as.character(df$col) else round(df$col, 3))
+        }
         p <- ggplot2::ggplot(df, do.call(ggplot2::aes, aes_args)) +
           ggplot2::geom_col() +
           ggplot2::labs(x = "sample", y = "Size factor",
-                        fill = if (!is.null(cr) && cr$discrete) cr$lab else NULL) +
+                        fill = if (!is.null(cr)) cr$lab else NULL) +
           ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
           .plot_theme(dark())
-        if (!is.null(cr) && cr$discrete) {
+        if (!is.null(cr)) {
           sc <- aes_ggplot_scale(cr$scale, "fill")
           if (!is.null(sc)) p <- p + sc
         }
@@ -414,7 +441,8 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
       p
     }
     dual_plot("pers", build_pers_gg, n_elements = reactive({
-      length(intersect(colnames(state$working %||% list()), showing_samples()))
+      snap <- pers_shown$value()
+      if (is.null(snap)) 0L else length(intersect(colnames(state$working %||% list()), snap$show))
     }))
 
     # ==== Compare pill (consumer-only) ======================================
@@ -436,7 +464,12 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
     compare_value <- reactive({
       req(state$working)
       cx <- cfg_x(); cy <- cfg_y()
-      state_derive(state, "sf_compare", params = list(cx, cy), expr = function() {
+      # design_version is in the key because the `iterate` estimator is design-
+      # based: its factors change with the design/reference level, which bumps
+      # design_version (not data_version). ratio/poscounts are design-independent,
+      # but keying on it uniformly is harmless and keeps the cache honest.
+      est <- state_derive(state, "sf_compare",
+                   params = list(cx, cy, state$design_version %||% 0L), expr = function() {
         withProgress(message = "Estimating size factors (2 methods)...", value = 0, {
           one <- function(cfg) tryCatch(
             DESeq2::sizeFactors(estimate_size_factors(state$working, cfg)),
@@ -449,9 +482,13 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
                lab_x = .sf_config_label(cx), lab_y = .sf_config_label(cy))
         })
       })
+      # Snapshot the "Showing" subset at render time (the heavy estimate above is
+      # cached independently of it); the build reads est$show, not live.
+      c(est, list(show = showing_samples()))
     })
     compare_shown <- deferred("cmp_auto", "cmp_render", compare_value,
-      sig = reactive(list(cfg_x(), cfg_y(), state$data_version, showing_samples())))
+      sig = reactive(list(cfg_x(), cfg_y(), state$data_version,
+                          state$design_version %||% 0L, showing_samples())))
     output$cmp_stale <- stale_note(compare_shown)
 
     cmp_colour_resolve <- function(samples) {
@@ -468,16 +505,24 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(!is.null(v),
                     "Click Render (or enable auto-render) to compare size factors."))
       validate(need(isTRUE(v$ok), v$msg %||% "Cannot compute size factors."))
-      shown <- intersect(names(v$sf_x), showing_samples())
+      shown <- intersect(names(v$sf_x), v$show)          # gated snapshot, not live
       validate(need(length(shown) > 0, "No samples in the current 'Showing' selection."))
-      df <- data.frame(sample = shown, x = as.numeric(v$sf_x[shown]),
-                       y = as.numeric(v$sf_y[shown]), stringsAsFactors = FALSE)
+      # Size factors are RELATIVE (a global constant is absorbed by normalization),
+      # and DESeq2's `ratio` estimator does not center to geometric mean 1. Center
+      # each vector to geomean 1 (over all samples, so the value is a property of
+      # the method, not the shown subset) so the x=y line reflects genuine
+      # per-sample agreement rather than an arbitrary global scale offset.
+      gm <- function(z) { z <- z[is.finite(z) & z > 0]; if (!length(z)) 1 else exp(mean(log(z))) }
+      sx <- v$sf_x / gm(v$sf_x); sy <- v$sf_y / gm(v$sf_y)
+      df <- data.frame(sample = shown, x = as.numeric(sx[shown]),
+                       y = as.numeric(sy[shown]), stringsAsFactors = FALSE)
       cr <- cmp_colour_resolve(shown)
       colour_lab <- NULL; colour_scale <- NULL
       if (!is.null(cr)) { df$col <- cr$values; colour_lab <- cr$lab; colour_scale <- cr$scale }
       r2 <- tryCatch(summary(stats::lm(y ~ x, df))$r.squared, error = function(e) NA_real_)
-      subtitle <- if (is.finite(r2)) sprintf("Linear fit R2 = %.3f (dashed line = x=y)", r2)
-                  else "Dashed line = x=y"
+      subtitle <- if (is.finite(r2))
+                    sprintf("Linear fit R2 = %.3f (dashed = x=y; centered to geometric mean 1)", r2)
+                  else "Dashed line = x=y (centered to geometric mean 1)"
       if (interactive) {
         df$text <- sprintf("Sample: %s<br>%s: %s<br>%s: %s", df$sample,
                            v$lab_x, signif(df$x, 4), v$lab_y, signif(df$y, 4))
@@ -492,7 +537,7 @@ mod_sizefactors_server <- function(id, state, dark_mode = reactive(FALSE)) {
     }
     dual_plot("cmp", build_cmp_gg, n_elements = reactive({
       v <- compare_shown$value()
-      if (is.null(v) || !isTRUE(v$ok)) 0L else length(intersect(names(v$sf_x), showing_samples()))
+      if (is.null(v) || !isTRUE(v$ok)) 0L else length(intersect(names(v$sf_x), v$show))
     }), height = reactive(paste0(input$cmp_height %||% 500, "px")))
 
     invisible(NULL)

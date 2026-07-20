@@ -183,6 +183,47 @@ test_that("Per-sample pill renders bar (Sample) and grouped (colData) plots", {
   })
 })
 
+test_that("Per-sample colour-by works for continuous attributes (bar + grouped)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  shiny::testServer(mod_sizefactors_server, args = list(state = state), {
+    dds <- make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 4, seed = 5)
+    SummarizedExperiment::colData(dds)$rin <- runif(ncol(dds), 6, 10)   # continuous colData
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    session$setInputs(pers_x = "__sample__", pers_colour = "rin", pers_auto = TRUE)
+    session$flushReact()
+    # a continuous fill must actually build (regression: bar branch dropped it)
+    p <- build_pers_gg(FALSE); ggplot2::ggplot_build(p)
+    expect_s3_class(p, "ggplot")
+    session$setInputs(pers_x = "condition", pers_colour = "__qc__library_size")
+    session$flushReact()
+    p2 <- build_pers_gg(FALSE); ggplot2::ggplot_build(p2)
+    expect_s3_class(p2, "ggplot")
+  })
+})
+
+test_that("Estimate pill keeps an un-estimated selection across an unrelated data edit", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  shiny::testServer(mod_sizefactors_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 6, seed = 7),
+               source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    session$setInputs(sf_control = "spike_in")           # user picks, does NOT estimate
+    session$flushReact()
+    # an unrelated data edit (add an assay) bumps data_version but not the config
+    state_mutate(state, function(d) {
+      SummarizedExperiment::assay(d, "CPM") <-
+        cpm(as.matrix(SummarizedExperiment::assay(d, "counts"))); d
+    }, action = list(action = "add_assay"))
+    session$flushReact()
+    expect_equal(input$sf_control, "spike_in")           # preserved, not reset to endogenous
+  })
+})
+
 test_that("Size-factors server: confirm default commits (auto->user), then value-idempotent", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()
