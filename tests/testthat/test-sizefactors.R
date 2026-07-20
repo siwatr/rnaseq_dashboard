@@ -62,6 +62,43 @@ test_that("reestimate_size_factors reuses the stored config; ensure_size_factors
   expect_equal(sizefactor_config(d_keep)$provenance, "loaded")
 })
 
+test_that("all estimator types honor the control set via the row-subset path", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 10, seed = 6)
+  # iterate ignores DESeq2's controlGenes, but the subset-inherit path makes it
+  # respect the control set; factors land on all samples.
+  d_it <- estimate_size_factors(dds, list(control = "spike_in", type = "iterate"))
+  expect_length(DESeq2::sizeFactors(d_it), ncol(dds))
+  expect_equal(sizefactor_config(d_it)$type, "iterate")
+  # poscounts on a custom set works too
+  d_pc <- estimate_size_factors(dds, list(control = "custom",
+                                          custom_ids = rownames(dds)[1:30], type = "poscounts"))
+  expect_length(DESeq2::sizeFactors(d_pc), ncol(dds))
+})
+
+test_that("empty control sets error; iterate refuses a too-small control set", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 0, seed = 8)  # no spike-ins
+  expect_error(estimate_size_factors(dds, list(control = "spike_in")), "No control genes")
+  expect_error(estimate_size_factors(dds, list(control = "custom", custom_ids = "nope")),
+               "No control genes")
+  # iterate with fewer control genes than the design rank is refused
+  expect_error(estimate_size_factors(dds, list(control = "custom",
+                                               custom_ids = rownames(dds)[1], type = "iterate")),
+               "iterate")
+})
+
+test_that("reestimate_size_factors keeps externally loaded factors", {
+  skip_if_not_installed("DESeq2")
+  dds <- ensure_size_factors(make_mock_dds(n_genes = 50, n_per_group = 3, n_spike = 4, seed = 9))
+  # simulate a loaded object: mark provenance loaded, keep its factors
+  dds <- set_sizefactor_config(dds, utils::modifyList(sizefactor_config(dds),
+                                                      list(provenance = "loaded")))
+  sf0 <- DESeq2::sizeFactors(dds)
+  d_re <- reestimate_size_factors(dds[, -1])            # a structural edit
+  expect_equal(unname(DESeq2::sizeFactors(d_re)), unname(sf0[-1]))   # loaded factors kept (subset)
+})
+
 test_that("Size-factors UI mounts control + estimator inputs", {
   ui <- as.character(mod_sizefactors_ui("sf"))
   expect_match(ui, "sf-sf_control")

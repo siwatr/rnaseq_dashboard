@@ -444,10 +444,15 @@ drop_samples <- function(dds, drop_ids) {
   dds <- ensure_logcounts(dds)
   want <- intersect(c("CPM", "TPM", "FPKM"), SummarizedExperiment::assayNames(working))
   if (length(want)) dds <- add_normalized_assays(dds, which = want)
-  # Reconstruction (DESeqDataSetFromMatrix) drops metadata, so carry the size-
-  # factor config over from `working` when re-estimating.
-  if (!is.null(DESeq2::sizeFactors(working)))
-    dds <- estimate_size_factors(dds, sizefactor_config(working))
+  # Reconstruction (DESeqDataSetFromMatrix) drops metadata + size factors, so carry
+  # the config over from `working`. Don't re-derive externally "loaded" factors
+  # under a guessed method -- keep the config recorded but leave factors unset (the
+  # Size-factors tab / load-time materialization will handle it).
+  if (!is.null(DESeq2::sizeFactors(working))) {
+    cfg <- sizefactor_config(working)
+    dds <- if (identical(cfg$provenance, "loaded")) set_sizefactor_config(dds, cfg)
+           else estimate_size_factors(dds, cfg)
+  }
   dds
 }
 

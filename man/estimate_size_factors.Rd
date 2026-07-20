@@ -23,8 +23,16 @@ size factors (a thin wrapper kept for the many internal callers).
 \description{
 Generalizes \code{\link[=estimate_size_factors_endogenous]{estimate_size_factors_endogenous()}}: the control-gene set is
 chosen by \code{config$control} (\code{"endogenous"}/\code{"spike_in"}/\code{"custom"}) and the
-estimator by \code{config$type}. Keeps the poscounts fallback -- a \code{type = "ratio"}
-run that \strong{fails when every control gene has at least one zero} (all geometric
-means zero, common on sparse data) retries with \code{type = "poscounts"}. Records
-the config on the returned dds so the choice travels with the object.
+estimator by \code{config$type} (\code{"ratio"}/\code{"poscounts"}/\code{"iterate"}). Size factors
+are per-sample scalars, so they are estimated on the control-gene \strong{row-subset}
+and the full dds \strong{inherits} them -- this honors the control set for \emph{every}
+estimator, including \code{"iterate"} (which ignores DESeq2's \code{controlGenes}), and is
+mathematically identical to \verb{controlGenes=} for ratio/poscounts (a gene's
+geometric mean depends only on its own row). An empty control set is an
+\strong{error} for \code{"spike_in"}/\code{"custom"}; only the degenerate \code{"endogenous"} case
+with no endogenous rows falls back to all genes. \code{"iterate"} (design-based) is
+\strong{refused} when the control set is too small to identify the model. A ratio run
+whose control subset is all-zero-containing retries once with \code{"poscounts"};
+non-finite factors (degenerate control set) warn. Records the config on the
+returned dds so the choice travels with the object.
 }

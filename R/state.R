@@ -217,8 +217,8 @@ state_set_design <- function(state, design, relevel = NULL, action = list()) {
 dds_content_fingerprint <- function(dds) {
   if (is.null(dds)) return(NULL)
   sf <- tryCatch(DESeq2::sizeFactors(dds), error = function(e) NULL)
-  if (is.null(sf))                                    # NULL == "will estimate endogenous"
-    sf <- tryCatch(DESeq2::sizeFactors(estimate_size_factors_endogenous(dds)),
+  if (is.null(sf))                                    # NULL == "will estimate under the dds's config"
+    sf <- tryCatch(DESeq2::sizeFactors(estimate_size_factors(dds, sizefactor_config(dds))),
                    error = function(e) NULL)
   list(rn = rownames(dds), cn = colnames(dds), sf = unname(sf))
 }

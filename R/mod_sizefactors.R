@@ -22,10 +22,17 @@ mod_sizefactors_ui <- function(id) {
                        search_modes = c("exact", "contains", "regex"),
                        label = "Control-gene set",
                        placeholder = "e.g. Actb, Gapdh, ENSG...")),
+      # All three honor the control set: estimate_size_factors() estimates on the
+      # control-gene row-subset (so DESeq2's "iterate", which ignores controlGenes,
+      # still respects it) and the full dds inherits the per-sample factors.
       selectInput(ns("sf_type"), "Estimator (type)",
                   c("ratio (median-of-ratios)" = "ratio",
                     "poscounts" = "poscounts", "iterate" = "iterate"),
                   selected = "ratio"),
+      conditionalPanel(
+        sprintf("input['%s'] != 'endogenous'", ns("sf_control")),
+        tags$div(class = "small text-warning mt-1",
+                 "This normalization is used by DE, PCA, and Expression (not just QC). Spike-in factors can be noisy with few or low-count spikes.")),
       actionButton(ns("sf_estimate"), "Estimate size factors", class = "btn-primary"),
       helpText(class = "small text-muted mt-2",
                "Size factors normalize for sequencing depth (used by DE and normalized log-counts). Re-estimating changes only samples' scaling, not the counts.")
