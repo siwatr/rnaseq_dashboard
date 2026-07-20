@@ -64,7 +64,8 @@
   library_size = "Library size (millions)",
   detected     = "Detected features",
   pct_mito     = "% mitochondrial",
-  pct_spike    = "% spike-in"
+  pct_spike    = "% spike-in",
+  size_factor  = "Size factor"
 )
 
 # Pull a metric column as an axis (value + label); library size -> millions.
@@ -453,7 +454,8 @@
 .qc_metric_choices <- c("Library size" = "library_size",
                         "Detected features" = "detected",
                         "% mitochondrial" = "pct_mito",
-                        "% spike-in" = "pct_spike")
+                        "% spike-in" = "pct_spike",
+                        "Size factor" = "size_factor")
 
 mod_qc_ui <- function(id) {
   ns <- NS(id)

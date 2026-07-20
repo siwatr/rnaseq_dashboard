@@ -16,11 +16,16 @@ test_that("qc_per_sample_metrics returns one row per sample with the expected sc
   expect_equal(nrow(m), ncol(dds))
   expect_equal(rownames(m), colnames(dds))
   expect_setequal(colnames(m),
-                  c("sample", "library_size", "detected", "pct_mito", "pct_spike"))
+                  c("sample", "library_size", "detected", "pct_mito", "pct_spike",
+                    "size_factor"))
   expect_true(all(is.finite(m$library_size)))
   expect_true(all(m$detected >= 0 & m$detected <= nrow(dds)))
   expect_true(all(m$pct_mito  >= 0 & m$pct_mito  <= 100))
   expect_true(all(m$pct_spike >= 0 & m$pct_spike <= 100))
+  # size_factor is NA until estimated, and populated once materialized.
+  expect_true(all(is.na(m$size_factor)))
+  m2 <- qc_per_sample_metrics(ensure_size_factors(dds))
+  expect_true(all(is.finite(m2$size_factor)) && all(m2$size_factor > 0))
 })
 
 test_that("library size and detected match a direct colSums computation", {

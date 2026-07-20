@@ -99,12 +99,88 @@ test_that("reestimate_size_factors keeps externally loaded factors", {
   expect_equal(unname(DESeq2::sizeFactors(d_re)), unname(sf0[-1]))   # loaded factors kept (subset)
 })
 
-test_that("Size-factors UI mounts control + estimator inputs", {
+test_that("Size-factors UI mounts the three pills + control/estimator inputs", {
   ui <- as.character(mod_sizefactors_ui("sf"))
+  # Estimate pill
   expect_match(ui, "sf-sf_control")
   expect_match(ui, "sf-sf_type")
   expect_match(ui, "sf-sf_estimate")
   expect_match(ui, "Custom set")
+  expect_match(ui, "All genes", fixed = TRUE)          # the discouraged option
+  expect_match(ui, "Estimate using:", fixed = TRUE)    # renamed label
+  # Per-sample pill + Compare pill (last)
+  expect_match(ui, "sf-pers_render")
+  expect_match(ui, "sf-cmp_x_control")
+  expect_match(ui, "sf-cmp_y_control")
+  expect_match(ui, "sf-cmp_render")
+})
+
+test_that("'all_genes' resolves to every row and estimates", {
+  skip_if_not_installed("DESeq2")
+  dds <- make_mock_dds(n_genes = 50, n_per_group = 3, n_spike = 6, seed = 11)
+  expect_equal(length(.sf_control_index(dds, list(control = "all_genes"))), nrow(dds))
+  e <- estimate_size_factors(dds, list(control = "all_genes"))
+  expect_false(is.null(DESeq2::sizeFactors(e)))
+  expect_equal(sizefactor_config(e)$control, "all_genes")
+})
+
+test_that("Compare pill computes two size-factor vectors read-only (no data_version bump)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  shiny::testServer(mod_sizefactors_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 6, seed = 7),
+               source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    v0 <- state$data_version
+    session$setInputs(cmp_x_control = "endogenous", cmp_x_type = "ratio",
+                      cmp_y_control = "spike_in", cmp_y_type = "ratio", cmp_render = 1)
+    session$flushReact()
+    cv <- compare_shown$value()
+    expect_true(isTRUE(cv$ok))
+    expect_length(cv$sf_x, ncol(state$working))
+    expect_length(cv$sf_y, ncol(state$working))
+    # viewing is read-only: the working dds + its size factors are untouched
+    expect_identical(state$data_version, v0)
+    expect_equal(sizefactor_config(state$working)$control, "endogenous")
+    # the built ggplot renders (exercises geom_smooth / lm)
+    p <- build_cmp_gg(FALSE)
+    expect_s3_class(p, "ggplot")
+  })
+})
+
+test_that("Compare pill carries a graceful message when a control set is empty", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  shiny::testServer(mod_sizefactors_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 0, seed = 9),
+               source = "demo", meta = list(feature_type = "gene"))       # no spike-ins
+    session$flushReact()
+    session$setInputs(cmp_x_control = "endogenous", cmp_x_type = "ratio",
+                      cmp_y_control = "spike_in", cmp_y_type = "ratio", cmp_auto = TRUE)
+    session$flushReact()
+    cv <- compare_shown$value()
+    expect_false(isTRUE(cv$ok))
+    expect_true(nzchar(cv$msg))
+  })
+})
+
+test_that("Per-sample pill renders bar (Sample) and grouped (colData) plots", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::reactiveConsole(TRUE); on.exit(shiny::reactiveConsole(FALSE), add = TRUE)
+  shiny::testServer(mod_sizefactors_server, args = list(state = state), {
+    state_load(state, make_mock_dds(n_genes = 60, n_per_group = 3, n_spike = 4, seed = 5),
+               source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    session$setInputs(pers_x = "__sample__", pers_colour = "__none__", pers_auto = TRUE)
+    session$flushReact()
+    expect_s3_class(build_pers_gg(FALSE), "ggplot")
+    session$setInputs(pers_x = "condition")
+    session$flushReact()
+    expect_s3_class(build_pers_gg(FALSE), "ggplot")
+  })
 })
 
 test_that("Size-factors server: confirm default commits (auto->user), then value-idempotent", {

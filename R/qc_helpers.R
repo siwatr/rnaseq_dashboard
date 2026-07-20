@@ -83,7 +83,8 @@ detect_mito_features <- function(dds) {
 #'
 #' @param dds A `DESeqDataSet` with a `"counts"` assay.
 #' @return A `data.frame`, one row per sample (row names = `colnames(dds)`), with
-#'   columns `sample`, `library_size`, `detected`, `pct_mito`, `pct_spike`.
+#'   columns `sample`, `library_size`, `detected`, `pct_mito`, `pct_spike`, and
+#'   `size_factor` (the DESeq2 size factor, `NA` when unset).
 #' @export
 qc_per_sample_metrics <- function(dds) {
   samples  <- colnames(dds)
@@ -94,12 +95,14 @@ qc_per_sample_metrics <- function(dds) {
   } else {
     .qc_metrics_base(dds, is_mito, is_spike)
   }
+  sf <- tryCatch(DESeq2::sizeFactors(dds), error = function(e) NULL)
   data.frame(
     sample       = samples,
     library_size = as.numeric(vals$library_size),
     detected     = as.integer(vals$detected),
     pct_mito     = as.numeric(vals$pct_mito),
     pct_spike    = as.numeric(vals$pct_spike),
+    size_factor  = if (is.null(sf)) rep(NA_real_, length(samples)) else as.numeric(sf[samples]),
     row.names    = samples,
     stringsAsFactors = FALSE,
     check.names  = FALSE

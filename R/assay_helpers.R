@@ -101,6 +101,7 @@ set_sizefactor_config <- function(dds, config) {
     endogenous = if (!is.null(fc)) which(fc == "endogenous") else seq_len(nrow(dds)),
     spike_in   = if (!is.null(fc)) which(fc == "spike_in") else integer(0),
     custom     = which(rownames(dds) %in% (config$custom_ids %||% character(0))),
+    all_genes  = seq_len(nrow(dds)),
     seq_len(nrow(dds)))
 }
 

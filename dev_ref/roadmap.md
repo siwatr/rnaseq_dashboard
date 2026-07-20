@@ -267,6 +267,18 @@ after P7a; the heatmap splits into core + k-means; the Phase-6-deferred annotate
   `combine_gene_set_annotation` with shared-gene **warning**, annotation-driven `row_split` +
   nested k-means) + the `Palette > Gene Set` per-set-colour domain. Closes Phase 7 → propose `v0.5.0`.
 
+### Interlude — Size factors tab (branch `size-factors-tab`, a fix PR during P7)
+- **Decouple size-factor estimation from assay assignment** into its own **Dataset > Size factors**
+  sub-tab (`mod_sizefactors.R`): config carried on the dds (`metadata$sizefactor_config`),
+  control-gene set (endogenous/spike-in/custom via `mod_gene_search`) + estimator `type`, all types
+  honoring the set via the control-gene **row-subset** inherit; DE/PCA/Expression stay **consumers**.
+- **Visualization + estimation-set enhancements** (this change): tab becomes a `navset_card_pill`
+  **Estimate / Per-sample / Compare**; label "Estimate using:" + an **"All genes (discouraged)"**
+  option; a **Per-sample** plot (bar / colData-grouped points) and a **consumer-only Compare** scatter
+  of two methods (x=y line + linear-fit R², read-only — nothing written back, re-estimates on a
+  structural dds edit); `size_factor` added as a plottable **General QC metric**. All on the shared
+  `dual_plot`/deferred + `mod_plot_subset` + `aes_helpers` machinery.
+
 ## Phase 8 — Visualization enhancements ⬜
 The gathered deferred plot/UX items (no home in the build order until now):
 - **P3g-d** Palette factor management — coerce a `colData`/`rowData` column to factor + reorder its

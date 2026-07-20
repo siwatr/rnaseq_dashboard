@@ -15,7 +15,8 @@ test_that("QC module caches the metric table keyed on data_version", {
     expect_equal(cached$version, state$data_version)
     expect_equal(nrow(cached$value), ncol(state$working))
     expect_setequal(colnames(cached$value),
-                    c("sample", "library_size", "detected", "pct_mito", "pct_spike"))
+                    c("sample", "library_size", "detected", "pct_mito", "pct_spike",
+                      "size_factor"))
   })
 })
 

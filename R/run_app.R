@@ -210,7 +210,8 @@ app_server <- function(input, output, session) {
   mod_metadata_server("metadata", state)
   mod_feature_server("feature", state)
   mod_assay_server("assay", state)
-  mod_sizefactors_server("sizefactors", state)       # Dataset > Size factors tab
+  mod_sizefactors_server("sizefactors", state,       # Dataset > Size factors tab
+                         dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_design_builder_server("design_input", state)   # Dataset > Design tab (synced with the DE page)
   mod_qc_server("qc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
   mod_dimreduc_server("dimreduc", state, dark_mode = reactive(identical(input$dark_mode, "dark")))
