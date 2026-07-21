@@ -736,6 +736,10 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
                       error = function(e) NULL)
       if (is.null(res) || !length(res$annotation)) {
         showNotification("Nothing to combine.", type = "warning"); return() }
+      # An annotation needs 2+ levels (a single split group is just one gene set).
+      if (length(res$levels) < 2L) {
+        showNotification("Splitting produced a single group -- pick column(s) that split into 2+ groups, or save as a normal gene set.",
+                         type = "warning"); return() }
       nm <- trimws(input$tbl_anno_name %||% "")
       if (!nzchar(nm)) { showNotification("Enter an annotation name.", type = "warning"); return() }
       if (!is.null(state$gene_sets[[nm]])) {
@@ -1409,13 +1413,19 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
     # (so the preview shows it instead of the app erroring).
     anno_combined <- reactive({
       mem <- intersect(input$anno_members %||% character(0), names(state$gene_sets))
-      if (!length(mem)) return(list(ok = FALSE, msg = "Select one or more member sets."))
+      # An annotation groups MULTIPLE sets -- a single set collapses to one level
+      # (redundant with that set's own in/out Gene Set palette).
+      if (length(mem) < 2L)
+        return(list(ok = FALSE, msg = "Select at least two gene sets -- an annotation groups multiple sets."))
       res <- tryCatch(
         combine_gene_set_annotation(state$gene_sets[mem], shared = input$anno_shared %||% "concat",
                                     sep = input$anno_sep %||% ";",
                                     label = input$anno_label %||% "multiple"),
         error = function(e) e)
       if (inherits(res, "condition")) return(list(ok = FALSE, msg = conditionMessage(res)))
+      # Safety net: 2+ sets that share all genes still yield a single label.
+      if (length(res$levels) < 2L)
+        return(list(ok = FALSE, msg = "These sets produce a single label -- pick sets that differ."))
       list(ok = TRUE, res = res, members = mem)
     })
     output$anno_preview_ui <- renderUI({

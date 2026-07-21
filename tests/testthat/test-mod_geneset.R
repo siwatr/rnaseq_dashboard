@@ -49,11 +49,18 @@ test_that("Annotation tab builds a kind='annotated' record and deletes it", {
     session$flushReact()
     expect_setequal(simple_names(), c("up", "down"))
 
+    # Guard: a single member set is refused (an annotation groups multiple sets).
+    session$setInputs(anno_members = "up", anno_shared = "concat", anno_name = "solo")
+    session$flushReact()
+    expect_false(anno_combined()$ok)
+    session$setInputs(anno_build = 1); session$flushReact()
+    expect_null(state$gene_sets[["solo"]])
+
     session$setInputs(anno_members = c("up", "down"), anno_shared = "concat",
                       anno_sep = ";", anno_name = "DE dir")
     session$flushReact()
     expect_true(anno_combined()$ok)
-    session$setInputs(anno_build = 1); session$flushReact()
+    session$setInputs(anno_build = 2); session$flushReact()
     rec <- state$gene_sets[["DE dir"]]
     expect_equal(rec$kind, "annotated")
     expect_equal(unname(rec$annotation[rn[2]]), "up;down")     # overlap concatenated
@@ -61,7 +68,7 @@ test_that("Annotation tab builds a kind='annotated' record and deletes it", {
     expect_match(rec$source, "^combine: up, down")
 
     # A name clash is rejected (no second record, store unchanged).
-    session$setInputs(anno_name = "DE dir", anno_build = 2); session$flushReact()
+    session$setInputs(anno_name = "DE dir", anno_build = 3); session$flushReact()
     expect_length(annotated_names(), 1L)
 
     # Delete via the sidebar selected-delete path.
