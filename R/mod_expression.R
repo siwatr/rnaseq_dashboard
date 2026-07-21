@@ -438,11 +438,11 @@ mod_expression_ui <- function(id) {
                        numericInput(ns("hm_seed"), "Seed (blank = no seed)",
                                     value = 1, step = 1)),
               bslib::tooltip(
-                actionButton(ns("hm_redo"), "Redo", icon = icon("dice"),
+                actionButton(ns("hm_redo"), "Random seed", icon = icon("dice"),
                              class = "btn-sm btn-outline-secondary mb-3"),
-                "Pick a new seed for a different clustering (then click Render).")),
+                "Put a new random seed in the box, then click Render for a different clustering.")),
             helpText(class = "small text-muted",
-                     "Leave the seed blank for a fresh (non-reproducible) clustering each render."),
+                     "A set seed is reproducible; blank leaves it unseeded. Use Random seed to re-roll - re-clicking Render alone reuses the cached clustering."),
             conditionalPanel(
               sprintf("input['%s'] >= 2", ns("hm_row_k")),
               tags$hr(class = "my-2"),
@@ -890,13 +890,11 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                  bslib::accordion_panel_open("hm_acc", values = TRUE))
     observeEvent(input$hm_collapse_all,
                  bslib::accordion_panel_close("hm_acc", values = TRUE))
-    # Redo lands on a NEW concrete seed for a fresh but reproducible clustering:
-    # increment a numeric seed, or pick a random one when the seed is blank (so a
-    # "no seed" clustering the user likes can be pinned). Gated: then click Render.
+    # "Random seed" puts a fresh random seed in the box (always random, so the name
+    # is honest); the new clustering is a concrete, reproducible one that takes
+    # effect on the next Render (gated, like every other heatmap setting).
     observeEvent(input$hm_redo, {
-      s <- suppressWarnings(as.integer(input$hm_seed))
-      new <- if (length(s) == 1L && !is.na(s)) s + 1L else sample.int(1e6L, 1L)
-      updateNumericInput(session, "hm_seed", value = new)
+      updateNumericInput(session, "hm_seed", value = sample.int(1e6L, 1L))
     })
     .seed_lab <- function(x) if (length(x) != 1L || is.na(x)) "none" else as.character(x)
     .conflict_modal <- function(msg, confirm_id) showModal(modalDialog(
