@@ -14,6 +14,27 @@ test_that("mod_geneset UI mounts the build + your-sets cards", {
   expect_match(ui, "gs-anno_panels")
 })
 
+test_that(".gs_group_by_kind builds optgroups as named lists (single-item safe)", {
+  sets <- list(A = new_gene_set("g1"), B = new_gene_set("g2"),
+               AB = new_gene_set("g3", kind = "annotated", annotation = c(g3 = "x")))
+  g <- .gs_group_by_kind(names(sets), sets)
+  expect_named(g, c("Gene set", "Annotation"))
+  # Named lists (not bare vectors) so a single-item group renders as an optgroup,
+  # not a leaf labelled with the group name.
+  expect_equal(g[["Gene set"]], list(A = "A", B = "B"))
+  g1 <- .gs_group_by_kind(c("A", "AB"), sets)
+  expect_equal(g1[["Gene set"]], list(A = "A"))         # length-1 group still a list
+  expect_equal(g1[["Annotation"]], list(AB = "AB"))
+})
+
+test_that(".gs_filter_by_kind narrows a selection to one kind; empty stays empty", {
+  sets <- list(A = new_gene_set("g1"),
+               AB = new_gene_set("g2", kind = "annotated", annotation = c(g2 = "x")))
+  expect_equal(.gs_filter_by_kind(c("A", "AB"), sets, "gs"), "A")
+  expect_equal(.gs_filter_by_kind(c("A", "AB"), sets, "anno"), "AB")
+  expect_length(.gs_filter_by_kind(character(0), sets, "gs"), 0L)
+})
+
 test_that("Annotation tab builds a kind='annotated' record and deletes it", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()

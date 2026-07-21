@@ -53,7 +53,8 @@
 # control and the Export selector. The buttons wire via .gs_set_multiselect_server
 # (keyed on `<id>_all` / `<id>_none`); `choices`/`selected` are supplied live by the
 # renderUI that draws it (so it re-renders on add/delete, preserving the selection).
-.gs_set_multiselect_ui <- function(ns, id, label, choices, selected = choices) {
+.gs_set_multiselect_ui <- function(ns, id, label, choices, selected = choices,
+                                   kind_filter = FALSE) {
   tagList(
     tags$style(HTML(sprintf(
       "#%s + .selectize-control .selectize-input { max-height: 110px; overflow-y: auto; }",
@@ -61,24 +62,52 @@
     selectizeInput(ns(id), label, choices = choices, selected = selected, multiple = TRUE),
     tags$div(class = "d-flex gap-2 mb-2",
       actionButton(ns(paste0(id, "_all")), "Select all", class = "btn-sm btn-outline-secondary"),
-      actionButton(ns(paste0(id, "_none")), "Deselect all", class = "btn-sm btn-outline-secondary")))
+      actionButton(ns(paste0(id, "_none")), "Deselect all", class = "btn-sm btn-outline-secondary")),
+    # Narrow the current selection to one kind (leaves an empty box untouched).
+    if (kind_filter) tags$div(class = "d-flex gap-2 mb-2",
+      actionButton(ns(paste0(id, "_gsonly")), "Gene set only",
+                   class = "btn-sm btn-outline-secondary"),
+      actionButton(ns(paste0(id, "_annoonly")), "Annotation only",
+                   class = "btn-sm btn-outline-secondary")))
 }
 
 # Group set names into Gene set / Annotation optgroups for a selectize (per the
 # app rule: separate whenever a selector's choices mix simple sets + annotations).
+# Each group is a NAMED LIST (not a bare vector) so a single-item group still
+# renders as an optgroup -- a length-1 vector collapses to a leaf option labelled
+# with the group name (value = the lone set), the classic selectize quirk.
 .gs_group_by_kind <- function(nms, sets) {
   anno <- vapply(nms, function(n) identical(sets[[n]]$kind %||% "simple", "annotated"), logical(1))
+  grp <- function(v) stats::setNames(as.list(v), v)
   out <- list()
-  if (any(!anno)) out[["Gene set"]]   <- nms[!anno]
-  if (any(anno))  out[["Annotation"]] <- nms[anno]
+  if (any(!anno)) out[["Gene set"]]   <- grp(nms[!anno])
+  if (any(anno))  out[["Annotation"]] <- grp(nms[anno])
   out
 }
+# Filter a selection down to one kind (used by the Compare selector's "Gene set
+# only" / "Annotation only" buttons). An empty selection stays empty.
+.gs_filter_by_kind <- function(selection, sets, kind = c("gs", "anno")) {
+  kind <- match.arg(kind)
+  is_anno <- function(n) identical(sets[[n]]$kind %||% "simple", "annotated")
+  Filter(if (identical(kind, "anno")) is_anno else Negate(is_anno), selection)
+}
 # Wire one .gs_set_multiselect_ui's buttons. Call once per selector in the server.
-.gs_set_multiselect_server <- function(input, output, session, id, choices_fn) {
+# `sets_fn` (the named gene_sets list) enables the Gene-set-only / Annotation-only
+# filter buttons (only meaningful when kind_filter = TRUE in the UI).
+.gs_set_multiselect_server <- function(input, output, session, id, choices_fn,
+                                       sets_fn = NULL) {
   observeEvent(input[[paste0(id, "_all")]],
     updateSelectizeInput(session, id, selected = choices_fn()))
   observeEvent(input[[paste0(id, "_none")]],
     updateSelectizeInput(session, id, selected = character(0)))
+  if (!is.null(sets_fn)) {
+    observeEvent(input[[paste0(id, "_gsonly")]],
+      updateSelectizeInput(session, id,
+        selected = .gs_filter_by_kind(input[[id]] %||% character(0), sets_fn(), "gs")))
+    observeEvent(input[[paste0(id, "_annoonly")]],
+      updateSelectizeInput(session, id,
+        selected = .gs_filter_by_kind(input[[id]] %||% character(0), sets_fn(), "anno")))
+  }
   invisible(NULL)
 }
 
@@ -1647,10 +1676,11 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       cur <- shiny::isolate(input$cmp_sets)
       sel <- if (!is.null(cur)) intersect(cur, nms) else nms
       .gs_set_multiselect_ui(ns, "cmp_sets", "Sets to visualize",
-                             .gs_group_by_kind(nms, state$gene_sets), sel)
+                             .gs_group_by_kind(nms, state$gene_sets), sel, kind_filter = TRUE)
     })
     .gs_set_multiselect_server(input, output, session, "cmp_sets",
-                               function() names(state$gene_sets))
+                               function() names(state$gene_sets),
+                               sets_fn = function() state$gene_sets)
     cmp_selected <- reactive(intersect(input$cmp_sets %||% character(0), names(state$gene_sets)))
     have_eulerr <- function() requireNamespace("eulerr", quietly = TRUE)
 

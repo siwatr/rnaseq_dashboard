@@ -702,10 +702,13 @@ mod_palette_server <- function(id, state) {
         choice_vec <- if (!length(choices)) character(0)
           else if (identical(d, "geneset")) {
             simple <- intersect(choices, .pal_geneset_simple())
-            grp <- list()
-            if (length(simple)) grp[["Gene set"]] <- simple
             anno <- setdiff(choices, simple)
-            if (length(anno)) grp[["Annotation"]] <- anno
+            grp <- list()
+            # Named LISTS (not bare vectors): a length-1 vector inside a group
+            # collapses to a leaf labelled with the group name, so a single-item
+            # group would show "Gene set"/"Annotation" as the option (value = the set).
+            if (length(simple)) grp[["Gene set"]]   <- stats::setNames(as.list(simple), simple)
+            if (length(anno))   grp[["Annotation"]] <- stats::setNames(as.list(anno), anno)
             grp
           } else stats::setNames(choices, vapply(choices, function(it) dom_item_label(d, it), ""))
         tagList(
