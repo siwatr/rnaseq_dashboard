@@ -48,11 +48,12 @@
   else continuous_palette_default(name = "viridis: viridis")
 }
 
-# Assemble the Heatmap object from a rendered snapshot `s` + live annotation.
-# `s` carries the matrix, resolved labels/marks, cluster/dend flags, ramp config,
-# and legend title; `anno` is a HeatmapAnnotation (or NULL) resolved live.
-.hm_build <- function(s, anno) {
-  col_fun <- .hm_col_fun(s$mat, s$ramp, s$zscored)
+# Assemble the Heatmap object from a rendered snapshot `s` + live annotation +
+# a live colour function. `s` carries the matrix, resolved labels/marks,
+# cluster/dend flags, and legend title; `anno` is a HeatmapAnnotation (or NULL)
+# and `col_fun` the value ramp -- both resolved live at draw (a value ramp is a
+# display aesthetic, so it must not enter the deferred sig / stale the plot).
+.hm_build <- function(s, anno, col_fun) {
   args <- list(
     matrix = s$mat, name = s$legend, col = col_fun,
     cluster_rows = isTRUE(s$cluster_rows), cluster_columns = isTRUE(s$cluster_cols),
@@ -814,12 +815,9 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
               zscore = zsc, only_expressed = isTRUE(input$hm_only_expr %||% TRUE),
               transform = spec$transform, pseudocount = spec$pseudocount)
       base_lab <- if (identical(spec$transform, "none")) vm$label else spec$label
-      use_palette <- identical(input$hm_ramp_src %||% "custom", "palette") && !zsc
-      ramp <- if (use_palette) (state$palette$assays[[spec$assay]] %||% hm_ramp())
-              else hm_ramp()
 
-      out <- list(hm = hm, mat = NULL, zscored = zsc,
-                  legend = if (zsc) "z-score" else base_lab, ramp = ramp,
+      out <- list(hm = hm, mat = NULL, zscored = zsc, assay = spec$assay,
+                  legend = if (zsc) "z-score" else base_lab,
                   row_mode = "none", col_mode = "none",
                   row_labels = character(0), col_labels = character(0),
                   row_mark_at = integer(0), row_mark_lab = character(0),
@@ -890,16 +888,18 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                           hm_rowsel()$ids, input$hm_col_sel,
                           isTRUE(input$hm_cluster_rows %||% TRUE),
                           isTRUE(input$hm_cluster_cols %||% TRUE),
-                          input$hm_row_dend, input$hm_col_dend,
-                          input$hm_ramp_src, hm_ramp(), input$hm_anno,
-                          state$data_version)))
+                          input$hm_row_dend, input$hm_col_dend, input$hm_anno,
+                          state$data_version)))         # ramp is a live aesthetic (not gated)
     output$hm_stale <- eng$stale_note(hm_shown)
 
     output$hm_info <- renderUI({
       s <- hm_shown$value(); if (is.null(s)) return(NULL)
       hm <- s$hm
+      # "not in the value matrix" (not "absent from the dataset"): a spike-in /
+      # exogenous gene is in the dds but excluded from an endogenous-only VST
+      # matrix, so the same set plots fewer genes under VST than under a stored assay.
       m <- sprintf("%d of %d genes shown%s%s.", hm$n_used, hm$n_total,
-                   if (hm$n_absent > 0) sprintf("; %d absent from the dataset", hm$n_absent) else "",
+                   if (hm$n_absent > 0) sprintf("; %d not in the value matrix", hm$n_absent) else "",
                    if (s$zscored && hm$n_nonvar > 0)
                      sprintf("; %d non-varying (flat row)", hm$n_nonvar) else "")
       lines <- list(tags$div(m))
@@ -922,8 +922,13 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(!is.null(s$mat) && nrow(s$mat) > 0,
                     s$empty_msg %||% "No genes to plot."))
       validate(need(ncol(s$mat) > 0, "No samples in the current 'Showing' selection."))
-      validate(need(!is.null(.hm_col_fun(s$mat, s$ramp, s$zscored)),
-                    "Install 'circlize' for the heatmap colour scale."))
+      # Colour ramp resolved LIVE (a display aesthetic, not gated): a Custom ramp,
+      # or the assay's Palette-page config for a raw (non-z-scored) matrix. So a
+      # ramp / Palette edit recolours without a re-render (mirrors the QC heatmap).
+      ramp <- if (identical(input$hm_ramp_src %||% "custom", "palette") && !s$zscored)
+                (state$palette$assays[[s$assay]] %||% hm_ramp()) else hm_ramp()
+      col_fun <- .hm_col_fun(s$mat, ramp, s$zscored)
+      validate(need(!is.null(col_fun), "Install 'circlize' for the heatmap colour scale."))
       anno <- NULL
       if (!is.null(s$anno)) {
         show <- colnames(s$mat)
@@ -936,7 +941,7 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
             df = s$anno$df[show, , drop = FALSE], col = anno_col)
         }
       }
-      ComplexHeatmap::draw(.hm_build(s, anno))
+      ComplexHeatmap::draw(.hm_build(s, anno, col_fun))
     })
     # Exposed for tests.
     hm_out <- hm_shown

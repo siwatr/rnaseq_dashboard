@@ -266,7 +266,8 @@ test_that("heatmap snapshot builds from a saved set; value matrix caches; draws"
 
     skip_if_not_installed("ComplexHeatmap")
     skip_if_not_installed("circlize")
-    ht <- .hm_build(s, NULL)                              # snapshot -> a real Heatmap
+    cf <- .hm_col_fun(s$mat, .hm_ramp_default(TRUE), s$zscored)   # ramp resolved live
+    ht <- .hm_build(s, NULL, cf)                          # snapshot -> a real Heatmap
     expect_s4_class(ht, "Heatmap")
   })
 })
@@ -295,6 +296,11 @@ test_that("heatmap respects the Render gate (no auto-render) + stale banner", {
 
     session$setInputs(hm_render = 2); session$flushReact()
     expect_equal(nrow(hm_out$value()$mat), 15L)          # SetB (rn[10:24])
+    expect_false(hm_out$stale())
+
+    # The colour ramp is a live aesthetic, NOT gated: changing its source must not
+    # stale the plot (mirrors the QC correlation heatmap - colours recolour live).
+    session$setInputs(hm_ramp_src = "palette"); session$flushReact()
     expect_false(hm_out$stale())
   })
 })

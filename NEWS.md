@@ -1,6 +1,18 @@
 # ddsdashboard (development version)
 
-* Next: Phase 7 continues — P7c (Gene sets heatmap core).
+* **Gene sets > Heatmap** (P7c): a `ComplexHeatmap` over a named gene set (blank until you pick
+  one). Render-only with a spinner — a heatmap is slow, and a single static plot has no cheap live
+  layer, so every control is snapshotted on Render and a settings change shows a stale banner. The
+  value matrix (any assay / VST / normalized log-counts) is cached behind the gate; per-gene
+  z-score is the default (toggle raw `log10`), with constant rows drawn flat rather than breaking
+  the plot. Row/column labels are duplicate- and NA-safe (a gene symbol shared by several ids shows
+  for each; a missing label falls back to the id) and can show all / a searched selection / none,
+  defaulting by size. Sample annotation, separate cluster + dendrogram toggles, a divergent ramp
+  centred at 0 for z-scores, and the "Showing:" sample subset round it out.
+* Extracted a reusable **continuous-palette control** (`continuous_palette_ui`/`_server`) from the
+  Palette page so any plot can carry its own colour ramp (base palette + anchors + reverse + custom
+  stops); the heatmap uses it now and the planned shared heatmap controller will too.
+* Next: Phase 7 continues — P7d (heatmap k-means).
 
 # ddsdashboard 0.4.2
 

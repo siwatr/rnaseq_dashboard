@@ -254,11 +254,27 @@ after P7a; the heatmap splits into core + k-means; the Phase-6-deferred annotate
   expression of n of N genes (x%) within the set"** (+ a non-varying warning); no plot when 0 survive.
   Factored `.expr_dist_server()` shares grouping/colour/geoms/styling/deferred-matrix between the
   single-gene and aggregate pills. + tests.
-- **P7c ⬜** — **Gene sets** heatmap core: a `ComplexHeatmap` over a named Phase-6 set (**blank
-  placeholder until a set is chosen** — no DEG/top-variable auto-default). Per-gene z-score default
-  (toggle raw `log10(assay + pc)`); row names hidden + `anno_mark()` for genes of interest; display
-  toggles (names off > 20, dend off > 100, cluster on); top annotation via `aes_annotation()`
-  (values-snapshot/colours-live). Static (`renderPlot` + `draw()`), deferred gate.
+- **P7c ✅ (branch `p7c-geneset-heatmap`)** — **Gene sets** heatmap core: a `ComplexHeatmap` over a
+  named Phase-6 set (**blank placeholder until a set is chosen** — no DEG/top-variable auto-default).
+  **Render-only** (no auto-render — a heatmap is slow; a single static `renderPlot`+`draw()` has no
+  cheap live layer, so *everything* is snapshotted on Render and a settings change shows a stale
+  banner) + a spinner. Value matrix via the shared `expr_value` control (any stored assay / VST /
+  norm-log-counts), cached in `derived` behind the gate; **per-gene z-score default** (toggle raw
+  `log10(assay + pc)`) — constant rows z-score to 0 (never `NaN`) and are counted. **Row/column
+  labels are decoupled from the matrix dimnames** (`expr_heatmap_matrix()` keeps unique dds ids as
+  the stable key; display goes through ComplexHeatmap `row_labels=`/`column_labels=` via
+  `expr_heatmap_labels()`, so duplicate `gene_name`s (many ids → one symbol) and NA labels (→ id
+  fallback) are safe); modes **Auto/All/Selected/None** (Auto resolves by size, separate row/column
+  thresholds — `option()`s `heatmap_row_label_max`/`_col_label_max`/`_dend_max`), **Selected** marks
+  searched genes/samples via `anno_mark()` and reports how many can't be shown (`expr_label_coverage()`).
+  Sample (top) annotation via `aes_annotation()` (values-snapshot / colours-live, like the QC
+  correlation heatmap). **Cluster** and **show-dendrogram** are separate controls (dendrograms
+  auto-hide above their threshold). z-score → divergent RdBu centred at 0 (`expr_symmetric_limits()`);
+  raw → sequential viridis. Colour source: a **Custom ramp** (default) or the assay's Palette-page
+  config (raw only). `mod_plot_subset` "Showing:". + a reusable **`mod_continuous_palette.R`**
+  (`continuous_palette_ui`/`_server`) extracted from the Palette page's per-item continuous panel
+  (host-namespace sub-module → reactive `list(name,min,max,custom,reverse)`; the P8 shared heatmap
+  controller reuses it). + tests. + doc-sync (per-PR) + propose `v0.4.3`.
 - **P7d ⬜** — heatmap **k-means** (computed *outside* `Heatmap()` via `expr_kmeans` → `row_split`/
   `column_split`; **`split_with_counts()`** member-count label standard; seed + Redo; store
   membership; **save row clusters as gene sets** → portable via the P6d export; column clusters
