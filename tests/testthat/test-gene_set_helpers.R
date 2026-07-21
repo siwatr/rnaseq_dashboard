@@ -79,6 +79,59 @@ test_that("gene_set_present / gene_set_absent derive the live view (order-preser
   expect_equal(gene_set_absent(c("g1", "gX"), feats), "gX")
 })
 
+# ---- combine_gene_set_annotation (P7e) ------------------------------------
+
+test_that("combine_gene_set_annotation: single-set membership + level order", {
+  sets <- list(up = new_gene_set(c("g1", "g2")), down = new_gene_set(c("g3", "g4")))
+  r <- combine_gene_set_annotation(sets)
+  expect_equal(unname(r$annotation[c("g1", "g2", "g3", "g4")]),
+               c("up", "up", "down", "down"))
+  expect_equal(r$levels, c("up", "down"))       # member-set input order
+  expect_length(r$shared_ids, 0L)
+  expect_identical(r$note, "")
+})
+
+test_that("combine_gene_set_annotation: concat is the default for shared genes", {
+  sets <- list(up = new_gene_set(c("g1", "g2")), hyp = new_gene_set(c("g2", "g3")))
+  r <- combine_gene_set_annotation(sets)               # sep = ";"
+  expect_equal(unname(r$annotation["g2"]), "up;hyp")   # input order, joined
+  expect_setequal(r$shared_ids, "g2")
+  expect_match(r$note, "1 gene")
+  expect_equal(r$levels, c("up", "hyp", "up;hyp"))     # singles first, combo last
+  # Custom separator.
+  expect_equal(unname(combine_gene_set_annotation(sets, sep = "|")$annotation["g2"]),
+               "up|hyp")
+})
+
+test_that("combine_gene_set_annotation: label + first strategies", {
+  sets <- list(A = new_gene_set(c("g1", "g2")), B = new_gene_set(c("g2", "g3")))
+  lab <- combine_gene_set_annotation(sets, shared = "label")
+  expect_equal(unname(lab$annotation["g2"]), "multiple")
+  expect_true("multiple" %in% lab$levels)
+  expect_equal(unname(combine_gene_set_annotation(sets, shared = "label",
+                                                  label = "both")$annotation["g2"]), "both")
+  fst <- combine_gene_set_annotation(sets, shared = "first")
+  expect_equal(unname(fst$annotation["g2"]), "A")      # first set in input order
+})
+
+test_that("combine_gene_set_annotation: 'label' guards against a member-set-name clash", {
+  sets <- list(multiple = new_gene_set("g1"), B = new_gene_set(c("g1", "g2")))
+  expect_error(combine_gene_set_annotation(sets, shared = "label"), "collides")
+  expect_error(combine_gene_set_annotation(sets, shared = "label", label = ""), "non-empty")
+})
+
+test_that("combine_gene_set_annotation: empty / one-set / NA-blank edges", {
+  expect_length(combine_gene_set_annotation(list())$annotation, 0L)
+  expect_length(combine_gene_set_annotation(NULL)$levels, 0L)
+  one <- combine_gene_set_annotation(list(S = new_gene_set(c("g1", "g2"))))
+  expect_equal(one$levels, "S")
+  expect_length(one$shared_ids, 0L)
+  # Blank ids dropped; a set with no ids contributes nothing.
+  edge <- combine_gene_set_annotation(list(A = c("g1", "", NA), B = character(0)))
+  expect_equal(names(edge$annotation), "g1")
+  expect_equal(edge$levels, "A")
+})
+
 # ---- File round-trip (P6d): JSON / GMT / TSV serializers ------------------
 
 test_that("JSON round-trips ids, names, kind, source (faithful)", {
