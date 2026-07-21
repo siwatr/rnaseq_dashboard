@@ -8,7 +8,10 @@
   annotations from scratch (combine member sets), from a **DE group build** (the From-DE source now
   stages up/down/no-change sets across one or more contrasts at once), or as a fast-track when
   importing a table split by column. Each annotation shows a composition bar (coloured by a new
-  **Palette > Gene Set** domain) or a members table. Delete individually or in bulk.
+  **Palette > Gene Set** domain) and/or a members table; rename an annotation or one of its levels,
+  and delete individually or in bulk. The **Palette > Gene Set** pill colours both a simple set (a
+  2-level in/out palette) and an annotated set (per level), with a **"Pull color from gene sets"**
+  control so an annotation can inherit its member sets' colours.
 
 # ddsdashboard 0.4.3
 

@@ -52,6 +52,41 @@ test_that("Annotation tab builds a kind='annotated' record and deletes it", {
   })
 })
 
+test_that("annotation rename (set + level) propagates to the Palette geneset config", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 12, n_per_group = 3, n_spike = 0, seed = 6))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    state$gene_sets <- list(A = new_gene_set(rn[1:4], kind = "annotated",
+      annotation = stats::setNames(c("up", "up", "down", "down"), rn[1:4])))
+    state$palette <- list(geneset = list(A = list(name = "Custom palette",
+      colors = c(up = "#FF0000", down = "#0000FF"))))
+    session$flushReact()
+
+    # Rename set A -> B via the panel modal (k = 1): store + palette key follow.
+    session$setInputs(anno_rename_to_1 = "B", anno_rename_ok_1 = 1); session$flushReact()
+    expect_null(state$gene_sets[["A"]])
+    expect_false(is.null(state$gene_sets[["B"]]))
+    expect_equal(state$palette$geneset[["B"]]$colors[["up"]], "#FF0000")
+    expect_null(state$palette$geneset[["A"]])
+
+    # Rename level up -> UP: annotation map + palette colour key follow.
+    session$setInputs(anno_level_from_1 = "up", anno_level_to_1 = "UP", anno_level_ok_1 = 1)
+    session$flushReact()
+    expect_equal(unname(state$gene_sets$B$annotation[rn[1]]), "UP")
+    expect_equal(state$palette$geneset$B$colors[["UP"]], "#FF0000")
+    expect_false("up" %in% names(state$palette$geneset$B$colors))
+
+    # Merge guard: renaming UP -> down (an existing level) is refused.
+    session$setInputs(anno_level_from_1 = "UP", anno_level_to_1 = "down", anno_level_ok_1 = 2)
+    session$flushReact()
+    expect_true(all(c("UP", "down") %in% unique(unname(state$gene_sets$B$annotation))))
+  })
+})
+
 # Stage a paste of rownames + create/append via the Save section.
 stage_paste <- function(session, q) {
   session$setInputs(source = "paste", paste_searchby = "__rownames__",

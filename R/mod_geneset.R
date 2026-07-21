@@ -299,23 +299,24 @@ mod_geneset_ui <- function(id) {
             actionButton(ns("anno_del_sel"), "Delete selected",
                          class = "btn-sm btn-outline-danger", icon = shiny::icon("trash")),
             actionButton(ns("anno_del_all"), "Delete all",
-                         class = "btn-sm btn-outline-danger", icon = shiny::icon("xmark"))),
-          tags$hr(),
-          actionButton(ns("anno_collapse"), "Collapse all",
-                       class = "btn-sm btn-outline-secondary", icon = shiny::icon("angles-up"))),
+                         class = "btn-sm btn-outline-danger", icon = shiny::icon("xmark")))),
         bslib::accordion(
           open = TRUE,
           bslib::accordion_panel(
             "View controls", icon = shiny::icon("sliders"),
             uiOutput(ns("anno_show_cols_ui")),
             bslib::input_switch(ns("anno_within"), "Within this dataset only", value = FALSE),
-            radioButtons(ns("anno_view"), "Show in each panel",
+            checkboxGroupInput(ns("anno_view"), "Show in each panel",
               c("Composition bar" = "bar", "Members table" = "table"),
               selected = "bar", inline = TRUE))),
-        tags$div(class = "mt-3 mb-2",
-          tags$h4("Your annotations", class = "fs-5 mb-0 d-inline"),
-          tags$span(class = "small text-muted ms-2",
-                    "Annotated sets available to the heatmap")),
+        tags$div(
+          class = "mt-3 mb-2 d-flex justify-content-between align-items-center",
+          tags$div(
+            tags$h4("Your annotations", class = "fs-5 mb-0 d-inline"),
+            tags$span(class = "small text-muted ms-2",
+                      "Annotated sets available to the heatmap")),
+          actionButton(ns("anno_collapse"), "Collapse all",
+                       class = "btn-sm btn-outline-secondary", icon = shiny::icon("angles-up"))),
         uiOutput(ns("anno_empty_note")),
         uiOutput(ns("anno_panels"))
       )
@@ -1431,6 +1432,30 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       showNotification(sprintf("Deleted %d annotation(s).", length(pick)),
                        type = "message", duration = 3)
     }
+    # Non-structural edits (membership unchanged): rename the annotation set, or a
+    # single level. Both propagate to the Palette Gene Set config key so colours
+    # follow, and stale the heatmap via state$gene_sets (P7e-2's sig).
+    .anno_rename_set <- function(from, to) {
+      sets <- state$gene_sets; names(sets)[names(sets) == from] <- to; state$gene_sets <- sets
+      if (!is.null((state$palette$geneset %||% list())[[from]])) {
+        p <- state$palette; p$geneset[[to]] <- p$geneset[[from]]; p$geneset[[from]] <- NULL
+        state$palette <- p
+      }
+      snapshot_absent()
+      .log(state, list(action = "gene_set_annotation_rename", from = from, to = to))
+    }
+    .anno_rename_level <- function(nm, from, to) {
+      set <- state$gene_sets[[nm]]; anno <- set$annotation
+      anno[anno == from] <- to
+      sets <- state$gene_sets; sets[[nm]]$annotation <- anno; state$gene_sets <- sets
+      cfg <- (state$palette$geneset %||% list())[[nm]]
+      if (!is.null(cfg) && !is.null(cfg$colors) && from %in% names(cfg$colors)) {
+        p <- state$palette; cols <- p$geneset[[nm]]$colors
+        names(cols)[names(cols) == from] <- to; p$geneset[[nm]]$colors <- cols; state$palette <- p
+      }
+      snapshot_absent()
+      .log(state, list(action = "gene_set_annotation_level_rename", set = nm, from = from, to = to))
+    }
     observeEvent(input$anno_del_sel, {
       pick <- intersect(input$anno_del_pick %||% character(0), annotated_names())
       if (!length(pick)) { showNotification("Select annotation(s) to delete.", type = "warning"); return() }
@@ -1499,18 +1524,26 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       keep <- setdiff(names(fr), c("In dataset", "Annotation"))
       fr[, c(keep, "Annotation", "In dataset"), drop = FALSE]
     }
+    # Both bar + table live in every panel, gated by the view checkboxes via
+    # conditionalPanel (NOT input$anno_view here) -- so toggling the view is a
+    # client-side show/hide that never rebuilds the accordion (open panels stay
+    # open). Bar sits above the table when both are shown.
     output$anno_panels <- renderUI({
       nms <- annotated_names(); if (!length(nms)) return(NULL)
-      view <- input$anno_view %||% "bar"
+      cond_bar <- sprintf("input['%1$s'] && input['%1$s'].indexOf('bar') > -1", ns("anno_view"))
+      cond_tbl <- sprintf("input['%1$s'] && input['%1$s'].indexOf('table') > -1", ns("anno_view"))
       panels <- lapply(seq_along(utils::head(nms, .anno_pool)), function(k) {
         nm <- nms[k]; set <- state$gene_sets[[nm]]
         nlev <- length(unique(unname(set$annotation)))
-        body <- if (identical(view, "table")) DT::DTOutput(ns(paste0("anno_dt_", k)))
-                else plotOutput(ns(paste0("anno_bar_", k)), height = "130px")
         bslib::accordion_panel(
           sprintf("%s  (%d genes, %d levels)", nm, length(set$ids), nlev), value = nm,
-          body,
-          tags$div(class = "mt-2",
+          conditionalPanel(cond_bar, plotOutput(ns(paste0("anno_bar_", k)), height = "130px")),
+          conditionalPanel(cond_tbl, DT::DTOutput(ns(paste0("anno_dt_", k)))),
+          tags$div(class = "mt-2 d-flex gap-2 flex-wrap",
+            actionButton(ns(paste0("anno_prename_", k)), "Rename",
+                         class = "btn-sm btn-outline-secondary", icon = shiny::icon("pen")),
+            actionButton(ns(paste0("anno_plevel_", k)), "Rename level",
+                         class = "btn-sm btn-outline-secondary", icon = shiny::icon("tag")),
             actionButton(ns(paste0("anno_pdel_", k)), "Delete",
                          class = "btn-sm btn-outline-danger", icon = shiny::icon("trash"))))
       })
@@ -1528,6 +1561,46 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       })
       observeEvent(input[[paste0("anno_pdel_", k)]], {
         nms <- annotated_names(); req(k <= length(nms)); .anno_delete(nms[k])
+      }, ignoreInit = TRUE)
+      # Rename the annotation set (conflict-guarded; Palette key follows).
+      observeEvent(input[[paste0("anno_prename_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); nm <- nms[k]
+        showModal(modalDialog(title = "Rename annotation", size = "s",
+          textInput(ns(paste0("anno_rename_to_", k)), "New name", value = nm),
+          footer = tagList(modalButton("Cancel"),
+            actionButton(ns(paste0("anno_rename_ok_", k)), "Rename", class = "btn-primary"))))
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("anno_rename_ok_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); nm <- nms[k]
+        to <- trimws(input[[paste0("anno_rename_to_", k)]] %||% "")
+        if (!nzchar(to)) { showNotification("Enter a name.", type = "warning"); return() }
+        if (!identical(to, nm) && !is.null(state$gene_sets[[to]])) {
+          showNotification("A set with that name already exists.", type = "warning"); return() }
+        if (!identical(to, nm)) .anno_rename_set(nm, to)
+        removeModal()
+      }, ignoreInit = TRUE)
+      # Rename a single level (guarded against merging into an existing level).
+      observeEvent(input[[paste0("anno_plevel_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); nm <- nms[k]
+        levs <- unique(unname(state$gene_sets[[nm]]$annotation))
+        showModal(modalDialog(title = sprintf("Rename a level of '%s'", nm), size = "s",
+          selectInput(ns(paste0("anno_level_from_", k)), "Level", choices = levs),
+          textInput(ns(paste0("anno_level_to_", k)), "New name"),
+          footer = tagList(modalButton("Cancel"),
+            actionButton(ns(paste0("anno_level_ok_", k)), "Rename", class = "btn-primary"))))
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("anno_level_ok_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); nm <- nms[k]
+        from <- input[[paste0("anno_level_from_", k)]]
+        to <- trimws(input[[paste0("anno_level_to_", k)]] %||% "")
+        levs <- unique(unname(state$gene_sets[[nm]]$annotation))
+        if (is.null(from) || !from %in% levs) { removeModal(); return() }
+        if (!nzchar(to)) { showNotification("Enter a level name.", type = "warning"); return() }
+        if (!identical(to, from) && to %in% levs) {
+          showNotification("That level already exists -- merging is not allowed.",
+                           type = "warning"); return() }
+        if (!identical(to, from)) .anno_rename_level(nm, from, to)
+        removeModal()
       }, ignoreInit = TRUE)
     })
     observeEvent(input$anno_collapse,

@@ -141,6 +141,38 @@ test_that("Gene Set pill: an annotated set is configurable + round-trips + recon
   })
 })
 
+test_that("Gene Set pill: simple sets are 2-level in/out; quick pull inherits into an annotation", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 12, n_per_group = 3, n_spike = 0, seed = 4))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(
+      up   = new_gene_set(rn[1:3]),
+      down = new_gene_set(rn[4:6]),
+      DEdir = new_gene_set(rn[1:6], kind = "annotated",
+                annotation = stats::setNames(c("up", "up", "up", "down", "down", "down"), rn[1:6])))
+    session$flushReact()
+    # A simple set is a 2-level in/out palette (with the in/out preset).
+    session$setInputs(addsel_geneset = "up", addbtn_geneset = 1); session$flushReact()
+    expect_setequal(names(state$palette$geneset$up$colors), c("In set", "Outside set"))
+    session$setInputs(addsel_geneset = "down", addbtn_geneset = 2); session$flushReact()
+    # Give up/down distinct in-set colours.
+    p <- state$palette
+    p$geneset$up$colors[["In set"]]   <- "#FF0000"
+    p$geneset$down$colors[["In set"]] <- "#0000FF"
+    state$palette <- p; session$flushReact()
+    # Add the annotation, then Quick pull -> its up/down levels inherit red/blue.
+    session$setInputs(addsel_geneset = "DEdir", addbtn_geneset = 3); session$flushReact()
+    session$setInputs(qpull_geneset__DEdir = 1); session$flushReact()
+    cols <- state$palette$geneset$DEdir$colors
+    expect_equal(unname(cols[["up"]]),   "#FF0000")
+    expect_equal(unname(cols[["down"]]), "#0000FF")
+    expect_equal(state$palette$geneset$DEdir$name, "Custom palette")
+  })
+})
+
 test_that("discrete attributes above the hard cap are hidden from the add control", {
   skip_if_not_installed("DESeq2")
   withr::local_options(ddsdashboard.palette_max_levels = 1L)   # condition has 2 levels

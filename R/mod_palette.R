@@ -35,10 +35,13 @@
           paste(shown, collapse = ", "), if (more) ", ..." else "")
 }
 
-# The Setting pills: domain -> display label. `geneset` (P7e) colours each
-# annotated gene-set's levels for the Expression heatmap row annotation.
+# The Setting pills: domain -> display label. `geneset` (P7e) colours gene-set
+# palettes for the Expression heatmap row annotation -- a **simple** set is a
+# 2-level in/out palette; an **annotated** set colours each of its levels.
 .pal_domains <- c(colData = "Sample", rowData = "Feature",
                   assays = "Assay", geneset = "Gene Set", other = "Other")
+# A simple gene set's two palette levels (the pull source is the "In set" colour).
+.GENESET_LEVELS <- c("In set", "Outside set")
 # "other" domain items: the customizable session/derived attributes (removal
 # status, removal pool, the per-sample QC metrics; the single source is
 # aes_other_palette_items()) plus the app-internal sample-correlation ramp.
@@ -226,21 +229,39 @@ mod_palette_server <- function(id, state) {
       if (methods::is(col, "Rle")) col <- as.vector(col)
       col
     }
-    # Annotated gene-set names + a set's annotation levels (the geneset domain,
-    # driven by the session store rather than the dds).
-    .pal_geneset_names <- function()
-      names(Filter(function(s) identical(s$kind %||% "simple", "annotated"),
-                   state$gene_sets %||% list()))
+    # The geneset domain is driven by the session store (not the dds): every gene
+    # set is a palette item -- a SIMPLE set is a 2-level in/out palette; an
+    # ANNOTATED set colours each of its annotation levels.
+    .pal_geneset_all <- function() names(state$gene_sets %||% list())
+    .pal_geneset_is_annotated <- function(item) {
+      s <- (state$gene_sets %||% list())[[item]]
+      !is.null(s) && identical(s$kind %||% "simple", "annotated")
+    }
+    .pal_geneset_simple <- function() Filter(Negate(.pal_geneset_is_annotated), .pal_geneset_all())
     .pal_geneset_levels <- function(item) {
+      if (!.pal_geneset_is_annotated(item)) return(.GENESET_LEVELS)
       s <- (state$gene_sets %||% list())[[item]]
       if (is.null(s) || is.null(s$annotation)) character(0) else unique(unname(s$annotation))
+    }
+    # The "In set" colour of a gene set's palette (NA if unconfigured) -- the pull
+    # source for an annotation level named after that set.
+    .pal_geneset_in_color <- function(item) {
+      cfg <- (state$palette$geneset %||% list())[[item]]
+      v <- if (is.null(cfg)) NULL else cfg$colors[[.GENESET_LEVELS[1]]]
+      if (is.null(v) || is.na(v)) NA_character_ else norm_color(v)
+    }
+    # Simple gene sets an annotated item can pull from: name == one of its levels,
+    # and that set has an in-set colour configured.
+    .pal_pull_candidates <- function(item) {
+      cand <- intersect(.pal_geneset_levels(item), .pal_geneset_simple())
+      cand[!vapply(cand, function(s) is.na(.pal_geneset_in_color(s)), logical(1))]
     }
     dom_items <- function(dom) {
       switch(dom,
         colData = colnames(dom_df("colData")),
         rowData = colnames(dom_df("rowData")),
         assays  = SummarizedExperiment::assayNames(state$working),
-        geneset = .pal_geneset_names(),
+        geneset = .pal_geneset_all(),
         other   = .pal_other_items())
     }
     dom_needs_data <- function(dom) dom %in% c("colData", "rowData", "assays")
@@ -342,6 +363,9 @@ mod_palette_server <- function(id, state) {
         return(list(name = "DEG: Pink-Blue", colors = NULL))
       if (dom == "other" && item == "gene_set_presence")   # present solid / absent faded
         return(list(name = "Custom palette", colors = gene_set_presence_colors()))
+      if (dom == "geneset" && !.pal_geneset_is_annotated(item))   # simple set: in / out
+        return(list(name = "Custom palette",
+                    colors = stats::setNames(c("#4C78A8", "#E0E0E0"), .GENESET_LEVELS)))
       NULL
     }
     # Default config for a freshly added item (preset if it has one).
@@ -531,7 +555,52 @@ mod_palette_server <- function(id, state) {
         resolved <- palette_discrete(lvls, new$colors, new$name %||% "Okabe-Ito", new$custom)
         for (i in seq_along(lvls)) update_picker(pin_id(dom, item, i), unname(resolved[[lvls[i]]]))
       }, ignoreInit = TRUE)
-      obs_handles[[key]] <- c(pin_obs, list(name_obs, reset_obs, remove_obs))
+      # Pull-color observers (annotated geneset items only): copy a matching simple
+      # set's In-set colour into the level of the same name. Quick pull = all
+      # matching levels; partial pull = the picked sets. Untouched levels keep their
+      # colour; a pull flips the config to Custom palette + re-syncs the pickers.
+      pull_obs <- NULL
+      if (dom == "geneset" && .pal_geneset_is_annotated(item)) {
+        apply_pull <- function(which_levels) {
+          if (is.null(cur())) return()
+          lvls <- dom_levels(dom, item)
+          cols <- palette_discrete(lvls, cur()$colors, cur()$name %||% "Okabe-Ito", cur()$custom)
+          hit <- character(0)
+          for (lev in intersect(which_levels, lvls)) {
+            ic <- .pal_geneset_in_color(lev)
+            if (!is.na(ic)) { cols[[lev]] <- ic; hit <- c(hit, lev) }
+          }
+          if (!length(hit)) {
+            showNotification("No matching gene-set colours to pull.", type = "warning", duration = 3)
+            return()
+          }
+          p <- state$palette
+          p[[dom]][[item]]$colors <- cols; p[[dom]][[item]]$name <- "Custom palette"
+          state$palette <- p
+          updateSelectInput(session, iid("name", dom, item), selected = "Custom palette")
+          for (i in seq_along(lvls)) update_picker(pin_id(dom, item, i), unname(cols[[lvls[i]]]))
+          showNotification(sprintf("Pulled colour into %d level(s).", length(hit)),
+                           type = "message", duration = 3)
+        }
+        qpull_obs <- observeEvent(input[[iid("qpull", dom, item)]],
+          apply_pull(dom_levels(dom, item)), ignoreInit = TRUE)
+        ppull_obs <- observeEvent(input[[iid("ppull", dom, item)]], {
+          picks <- input[[iid("ppullsel", dom, item)]] %||% character(0)
+          if (!length(picks)) {
+            showNotification("Pick a gene set to pull from.", type = "warning", duration = 3); return()
+          }
+          apply_pull(picks)
+          updateSelectizeInput(session, iid("ppullsel", dom, item), selected = character(0))
+        }, ignoreInit = TRUE)
+        ppullall_obs <- observeEvent(input[[iid("ppullall", dom, item)]],
+          updateSelectizeInput(session, iid("ppullsel", dom, item),
+                               selected = .pal_pull_candidates(item)), ignoreInit = TRUE)
+        ppullnone_obs <- observeEvent(input[[iid("ppullnone", dom, item)]],
+          updateSelectizeInput(session, iid("ppullsel", dom, item), selected = character(0)),
+          ignoreInit = TRUE)
+        pull_obs <- list(qpull_obs, ppull_obs, ppullall_obs, ppullnone_obs)
+      }
+      obs_handles[[key]] <- c(pin_obs, pull_obs, list(name_obs, reset_obs, remove_obs))
       invisible()
     }
 
@@ -632,12 +701,19 @@ mod_palette_server <- function(id, state) {
         if (!length(items))
           return(tags$p(class = "text-muted p-2",
                         'No colour mappings yet. Use "Add colour mapping" in the sidebar.'))
-        panels <- lapply(items, function(it) .palette_item_panel(ns, d, it, cfg[[it]],
-                                                                 shiny::isolate(dom_kind(d, it)),
-                                                                 shiny::isolate(dom_class(d, it)),
-                                                                 shiny::isolate(dom_levels(d, it)),
-                                                                 has_picker,
-                                                                 label = shiny::isolate(dom_item_label(d, it))))
+        panels <- lapply(items, function(it) {
+          gs_anno <- d == "geneset" && shiny::isolate(.pal_geneset_is_annotated(it))
+          .palette_item_panel(ns, d, it, cfg[[it]],
+                              shiny::isolate(dom_kind(d, it)),
+                              shiny::isolate(dom_class(d, it)),
+                              shiny::isolate(dom_levels(d, it)),
+                              has_picker,
+                              label = shiny::isolate(dom_item_label(d, it)),
+                              sub_badge = if (d == "geneset")
+                                (if (gs_anno) "Annotation" else "Gene set") else NULL,
+                              pull_candidates = if (gs_anno)
+                                shiny::isolate(.pal_pull_candidates(it)) else NULL)
+        })
         # Preserve which panels are open across rebuilds (a rebuild otherwise
         # re-opens all): keep the currently-open set + the just-added item.
         open_now <- shiny::isolate(input[[paste0("acc_", d)]])
@@ -860,7 +936,7 @@ mod_palette_server <- function(id, state) {
 # Build the accordion panel for one item (discrete or continuous). `label` is the
 # friendly title shown in the accordion (defaults to the raw item id).
 .palette_item_panel <- function(ns, dom, item, cfg, kind, klass, levels, has_picker,
-                                label = item) {
+                                label = item, sub_badge = NULL, pull_candidates = NULL) {
   key <- paste0(dom, "__", .pal_safe(item))
   id  <- function(prefix) ns(paste0(prefix, "_", key))
   remove_btn <- actionButton(id("remove"), "Remove mapping", icon = icon("trash"),
@@ -946,6 +1022,29 @@ mod_palette_server <- function(id, state) {
     # The DEG status item offers only its curated 3-colour schemes (+ Custom);
     # every other discrete item gets the generic N-level palette catalogue.
     base_choices <- if (dom == "other" && item == "DEG") deg_palette_choices() else palette_choices()
+    # Pull-color section (annotated geneset items only): a Quick pull (all matching
+    # levels) + a partial pull (pick sets). Colours come from each matching simple
+    # set's In-set colour. `pull_candidates` non-NULL flags an annotated item.
+    pull_ui <- if (!is.null(pull_candidates)) tagList(
+      tags$hr(class = "my-2"),
+      tags$div(class = "small fw-semibold mb-1", "Pull color from gene sets"),
+      bslib::tooltip(
+        actionButton(id("qpull"), "Quick pull", icon = icon("clone"),
+                     class = "btn-sm btn-outline-secondary mb-2"),
+        "Set every level that matches a gene set to that set's in-set colour; levels with no match are left untouched."),
+      if (length(pull_candidates)) tagList(
+        selectizeInput(id("ppullsel"), NULL, choices = pull_candidates, multiple = TRUE,
+                       options = list(placeholder = "Pick gene sets to pull from")),
+        tags$div(class = "d-flex gap-2",
+          bslib::tooltip(actionButton(id("ppullall"), "All", icon = icon("plus"),
+                                      class = "btn-sm btn-outline-secondary"), "Select all"),
+          bslib::tooltip(actionButton(id("ppullnone"), "All", icon = icon("minus"),
+                                      class = "btn-sm btn-outline-secondary"), "Deselect all"),
+          bslib::tooltip(actionButton(id("ppull"), "Pull", icon = icon("clone"),
+                                      class = "btn-sm btn-outline-secondary"),
+                         "Set the selected sets' matching levels to their in-set colour.")))
+      else helpText(class = "small text-muted",
+                    "No gene-set palettes match this annotation's levels yet. Add a colour for a matching gene set first.")) else NULL
     tagList(
       selectInput(id("name"), "Base palette", choices = base_choices, selected = name),
       if (length(levels) > .pal_many_levels)
@@ -954,15 +1053,19 @@ mod_palette_server <- function(id, state) {
                          length(levels))),
       tags$div(class = "small fw-semibold mb-1", "Levels"),
       tags$div(class = "mb-2", lapply(seq_along(levels), one_picker)),
+      pull_ui,
       tags$div(class = "d-flex gap-2 mt-2",
         bslib::tooltip(
-          actionButton(id("reset"), "Reset to palette", icon = icon("rotate-left"),
+          actionButton(id("reset"), "Reset", icon = icon("rotate-left"),
                        class = "btn-sm btn-outline-secondary"),
           "Reset to the default palette (or this attribute's preset), clearing per-level edits."),
         remove_btn))
   }
-  bslib::accordion_panel(title = tags$span(label, .pal_badges(kind, klass)),
-                         value = item, body)
+  bslib::accordion_panel(
+    title = tags$span(label, .pal_badges(kind, klass),
+      if (!is.null(sub_badge))
+        tags$span(class = "badge rounded-pill text-bg-info ms-1 fw-normal", sub_badge)),
+    value = item, body)
 }
 
 # pin id string (without ns); mirrors the server's pin_id().
