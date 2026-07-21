@@ -180,21 +180,10 @@ expr_set_aggregate <- function(mat, ids, counts = NULL,
                                transform = "none", pseudocount = 1) {
   method <- match.arg(method)
   mat <- as.matrix(mat)
-  ids <- unique(as.character(ids)); ids <- ids[!is.na(ids)]
-  n_total <- length(ids)
-  present <- ids[ids %in% rownames(mat)]
-  n_present <- length(present)
-
-  used <- present
-  if (isTRUE(only_expressed) && n_present && !is.null(counts)) {
-    counts <- as.matrix(counts)
-    in_counts <- present[present %in% rownames(counts)]
-    expressed <- in_counts[rowSums(counts[in_counts, , drop = FALSE], na.rm = TRUE) > 0]
-    # genes absent from `counts` can't be judged -> keep them (conservative)
-    keep <- union(expressed, setdiff(present, rownames(counts)))
-    used <- present[present %in% keep]                   # preserve the set's order
-  }
-  n_used <- length(used)
+  sel <- .expr_set_rows(rownames(mat), ids, counts = counts,
+                        only_expressed = only_expressed)
+  n_total <- sel$n_total; n_present <- length(sel$present)
+  used <- sel$used; n_used <- length(used)
 
   out <- list(values = NULL, n_total = n_total, n_present = n_present,
               n_absent = n_total - n_present, n_used = n_used,
@@ -212,4 +201,142 @@ expr_set_aggregate <- function(mat, ids, counts = NULL,
   names(agg) <- colnames(mat)
   out$values <- agg
   out
+}
+
+# Shared gene-set row selection (used by expr_set_aggregate + expr_heatmap_matrix):
+# authored ids -> those present in the matrix -> optionally drop genes with all-zero
+# counts. Order-preserving. `only_expressed` needs `counts`; genes absent from
+# `counts` can't be judged and are kept (conservative). Returns the deduped `ids`,
+# `n_total`, the `present` ids, and the `used` ids (after the expression filter).
+.expr_set_rows <- function(mat_rownames, ids, counts = NULL, only_expressed = TRUE) {
+  ids <- unique(as.character(ids)); ids <- ids[!is.na(ids)]
+  present <- ids[ids %in% mat_rownames]
+  used <- present
+  if (isTRUE(only_expressed) && length(present) && !is.null(counts)) {
+    counts <- as.matrix(counts)
+    in_counts <- present[present %in% rownames(counts)]
+    expressed <- in_counts[rowSums(counts[in_counts, , drop = FALSE], na.rm = TRUE) > 0]
+    keep <- union(expressed, setdiff(present, rownames(counts)))
+    used <- present[present %in% keep]                   # preserve the set's order
+  }
+  list(ids = ids, n_total = length(ids), present = present, used = used)
+}
+
+#' Prepare a gene-set expression matrix for the heatmap
+#'
+#' The heatmap counterpart of [expr_set_aggregate()]: it selects the same gene-set
+#' rows (present in the dataset, optionally dropping all-zero-count genes),
+#' transforms them, and -- by default -- per-gene z-scores across samples so genes
+#' on very different expression scales are comparable. Unlike the aggregate helper
+#' it keeps the full genes x samples matrix (no averaging). Constant (zero-variance)
+#' rows z-score to 0 (via [row_zscore()]) rather than `NaN`, so they still draw as a
+#' flat mid-colour row instead of breaking the heatmap; their count is returned so
+#' the caller can note it.
+#'
+#' @param mat A numeric genes x samples value matrix (e.g. from
+#'   [expr_value_matrix()]).
+#' @param ids Authored gene-set ids (matched against `rownames(mat)`).
+#' @param counts Optional raw counts matrix for the `only_expressed` filter.
+#' @param zscore Per-gene z-score across samples (default TRUE).
+#' @param only_expressed Drop genes with all-zero counts (default TRUE).
+#' @param transform Passed to [expr_transform()], applied before z-scoring.
+#' @param pseudocount Added before a log transform.
+#' @return A list: `mat` (the prepared genes x samples matrix, or `NULL` when no
+#'   gene survives), `n_total`, `n_present`, `n_absent`, `n_used`, `n_nonvar`
+#'   (constant kept rows), `ids_used`, `zscored`.
+#' @export
+expr_heatmap_matrix <- function(mat, ids, counts = NULL, zscore = TRUE,
+                                only_expressed = TRUE, transform = "none",
+                                pseudocount = 1) {
+  mat <- as.matrix(mat)
+  sel <- .expr_set_rows(rownames(mat), ids, counts = counts,
+                        only_expressed = only_expressed)
+  n_total <- sel$n_total; n_present <- length(sel$present)
+  used <- sel$used; n_used <- length(used)
+  out <- list(mat = NULL, n_total = n_total, n_present = n_present,
+              n_absent = n_total - n_present, n_used = n_used, n_nonvar = 0L,
+              ids_used = used, zscored = isTRUE(zscore))
+  if (!n_used) return(out)
+
+  sub <- expr_transform(mat[used, , drop = FALSE], transform, pseudocount)
+  rng <- apply(sub, 1, function(r) { r <- r[is.finite(r)]; if (!length(r)) 0 else diff(range(r)) })
+  out$n_nonvar <- sum(rng == 0)
+  if (isTRUE(zscore)) sub <- row_zscore(sub)
+  out$mat <- sub
+  out
+}
+
+#' Display labels for heatmap rows or columns (duplicate- and NA-safe)
+#'
+#' Builds the vector of *display* labels for a set of matrix dimnames without
+#' touching the matrix's actual `dimnames` -- the matrix keeps the unique dds ids
+#' as its row/column names (the stable key for subsetting, `anno_mark` indexing,
+#' and clustering), while ComplexHeatmap's `row_labels=`/`column_labels=` receive
+#' this vector. Because it is display-only, duplicate labels (many gene ids share
+#' one `gene_name`) are fine. When `source` is a metadata column, a row whose value
+#' is `NA`/empty falls back to its id, so every element still gets a label.
+#'
+#' @param keys The matrix dimnames to label (gene ids for rows, sample ids for
+#'   columns).
+#' @param source `"__id__"` to use `keys` verbatim, or a `meta` column name.
+#' @param meta The `rowData`/`colData` data frame (or `NULL`).
+#' @param meta_keys Row keys of `meta` aligned to the dds (default
+#'   `rownames(meta)`); `keys` are matched against these.
+#' @return A character vector the same length/order as `keys`.
+#' @export
+expr_heatmap_labels <- function(keys, source = "__id__", meta = NULL,
+                                meta_keys = rownames(meta)) {
+  keys <- as.character(keys)
+  if (identical(source, "__id__") || is.null(meta) || !source %in% colnames(meta))
+    return(keys)
+  lab <- as.character(meta[[source]])[match(keys, meta_keys)]
+  bad <- is.na(lab) | !nzchar(trimws(lab))
+  lab[bad] <- keys[bad]
+  lab
+}
+
+#' Default label-display mode for a heatmap axis
+#'
+#' Show all labels when the axis has few elements, otherwise none -- the sensible
+#' default before the user overrides it. Rows (genes) and columns (samples) use
+#' their own thresholds at the call site.
+#'
+#' @param n Number of elements on the axis.
+#' @param max_n Threshold at/below which all labels are shown.
+#' @return `"all"` or `"none"`.
+#' @export
+heatmap_label_default <- function(n, max_n) if (n <= max_n) "all" else "none"
+
+#' How many searched labels can actually be shown
+#'
+#' For the "show selected" label mode: the user searches ids from the whole dataset,
+#' but only those present on the plotted axis (a gene in the chosen set, a sample in
+#' the current "Showing" subset) can be marked. Reports the split so the UI can note
+#' "X of Y labels cannot be shown".
+#'
+#' @param selected Searched ids.
+#' @param present_keys The axis dimnames actually plotted.
+#' @return A list: `n_selected`, `n_shown`, `n_hidden`.
+#' @export
+expr_label_coverage <- function(selected, present_keys) {
+  selected <- unique(as.character(selected)); selected <- selected[!is.na(selected)]
+  n_shown <- sum(selected %in% present_keys)
+  list(n_selected = length(selected), n_shown = n_shown,
+       n_hidden = length(selected) - n_shown)
+}
+
+#' Symmetric colour limits around zero
+#'
+#' For a z-scored heatmap the divergent ramp should be centred at 0, so the limits
+#' are `c(-M, M)` with `M` the largest absolute value. Used when the user leaves the
+#' ramp anchors blank in z-score mode.
+#'
+#' @param values Numeric values (non-finite dropped).
+#' @return `c(-M, M)`; `c(-1, 1)` when there is nothing finite / all zero.
+#' @export
+expr_symmetric_limits <- function(values) {
+  v <- values[is.finite(values)]
+  if (!length(v)) return(c(-1, 1))
+  m <- max(abs(v)); if (m == 0) m <- 1
+  c(-m, m)
 }
