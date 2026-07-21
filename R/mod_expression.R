@@ -917,6 +917,12 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
         showNotification("Render a row-clustered heatmap (row k >= 2) first.",
                          type = "warning"); return()
       }
+      # Don't persist a clustering computed on a now-stale object (e.g. samples
+      # dropped since the last Render) -- the snapshot no longer matches the data.
+      if (isTRUE(hm_shown$stale())) {
+        showNotification("The heatmap is out of date - click Render, then save.",
+                         type = "warning"); return()
+      }
       mem <- cluster_membership(s$row_clusters); prefix <- row_prefix()
       targets <- sprintf("%s k%s", prefix, names(mem))
       sets <- state$gene_sets %||% list()
@@ -950,6 +956,10 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       s <- hm_shown$value()
       if (is.null(s) || is.null(s$col_clusters)) {
         showNotification("Render a column-clustered heatmap (column k >= 2) first.",
+                         type = "warning"); return()
+      }
+      if (isTRUE(hm_shown$stale())) {
+        showNotification("The heatmap is out of date - click Render, then save.",
                          type = "warning"); return()
       }
       colname <- col_name()
