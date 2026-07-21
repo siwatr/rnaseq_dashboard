@@ -93,6 +93,13 @@ hard-coded Okabe-Ito).
 - `removal_status_colors(config)` + `.removal_labels`/`.removal_labels_2` (in
   `filter_helpers.R`) own the reason-aware green/amber/red. (`removal_palette()` was
   removed — use the resolver.)
+- **Feature-axis note (P7e):** the Palette page has a **`geneset`** discrete domain
+  (`state$palette$geneset[[<annotated-set name>]]` → level→hex), driven by the session
+  gene-set store, **not** part of the sample-axis `aes_helpers` catalog. It colours the
+  Gene Sets Annotation tab's composition bar (`gene_set_anno_colors()`) and — in P7e-2 —
+  the Expression heatmap's **row (feature) annotation** via a separate feature-axis
+  resolver (`expr_row_annotation()`), the row-axis analog of `aes_annotation()`. Don't
+  route feature/gene annotation through the sample-only `aes_helpers`.
 
 ## Adding a new colour/annotation attribute (recipe)
 
