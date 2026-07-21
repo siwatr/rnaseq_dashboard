@@ -208,6 +208,24 @@ mod_palette_server <- function(id, state) {
       bump()
     }, ignoreNULL = FALSE)
 
+    # The geneset domain is driven by state$gene_sets (a session field -- no
+    # data_version bump), so the data_version reconcile above never sees a
+    # build/rename/delete there. Bump struct() on any gene_sets change so the Gene
+    # Set add-selector + panels refresh, and drop geneset configs whose set is gone
+    # (a targeted cleanup -- NOT the full reconcile, which would wrongly clear the
+    # data-domain configs when state$working is momentarily absent).
+    observeEvent(state$gene_sets, {
+      gs <- state$palette$geneset
+      if (length(gs)) {
+        keep <- intersect(names(gs), names(state$gene_sets %||% list()))
+        if (length(keep) < length(gs)) {
+          p <- state$palette; p$geneset <- if (length(keep)) gs[keep] else NULL
+          state$palette <- p
+        }
+      }
+      bump()
+    }, ignoreNULL = FALSE, ignoreInit = TRUE)
+
     has_picker <- requireNamespace("shinyWidgets", quietly = TRUE)
     update_picker <- function(i_id, value) {
       if (has_picker) shinyWidgets::updateColorPickr(session, i_id, value = value)
@@ -244,10 +262,14 @@ mod_palette_server <- function(id, state) {
       if (is.null(s) || is.null(s$annotation)) character(0) else unique(unname(s$annotation))
     }
     # The "In set" colour of a gene set's palette (NA if unconfigured) -- the pull
-    # source for an annotation level named after that set.
+    # source for an annotation level named after that set. Resolve via
+    # palette_discrete so a simple set on a *named* base palette (colors not stored
+    # explicitly) still yields its effective in-set colour, not NA.
     .pal_geneset_in_color <- function(item) {
       cfg <- (state$palette$geneset %||% list())[[item]]
-      v <- if (is.null(cfg)) NULL else cfg$colors[[.GENESET_LEVELS[1]]]
+      if (is.null(cfg)) return(NA_character_)
+      cols <- palette_discrete(.GENESET_LEVELS, cfg$colors, cfg$name %||% "Okabe-Ito", cfg$custom)
+      v <- cols[[.GENESET_LEVELS[1]]]
       if (is.null(v) || is.na(v)) NA_character_ else norm_color(v)
     }
     # Simple gene sets an annotated item can pull from: name == one of its levels,

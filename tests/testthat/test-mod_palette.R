@@ -141,6 +141,27 @@ test_that("Gene Set pill: an annotated set is configurable + round-trips + recon
   })
 })
 
+test_that("Gene Set pill reacts to gene_sets changes (offers new sets; drops deleted configs)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 12, n_per_group = 3, n_spike = 0, seed = 7))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    # Build a set AFTER the pill already rendered -> the add-selector refreshes to
+    # offer it (this failed before: the domain only reacted to data_version).
+    expect_false(grepl("later_set", as.character(output$addui_geneset$html), fixed = TRUE))
+    state$gene_sets <- list(later_set = new_gene_set(rownames(state$working)[1:3]))
+    session$flushReact()
+    expect_match(as.character(output$addui_geneset$html), "later_set", fixed = TRUE)
+    # Configure it, then delete the set -> its geneset config is cleaned up.
+    session$setInputs(addsel_geneset = "later_set", addbtn_geneset = 1); session$flushReact()
+    expect_false(is.null(state$palette$geneset[["later_set"]]))
+    state$gene_sets <- list(); session$flushReact()
+    expect_null(state$palette$geneset[["later_set"]])
+  })
+})
+
 test_that("Gene Set pill: simple sets are 2-level in/out; quick pull inherits into an annotation", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()

@@ -401,8 +401,8 @@ palette_gradientn <- function(name, values, min = NULL, max = NULL,
 #' Round-trips with [palette_from_json()].
 #'
 #' @param palette The palette config list (`state$palette`): a named list of
-#'   domains (`colData`/`rowData`/`assays`/`other`), each a named list of item
-#'   configs.
+#'   domains (`colData`/`rowData`/`assays`/`geneset`/`other`), each a named list of
+#'   item configs.
 #' @param pretty Pretty-print the JSON (default `TRUE`).
 #' @return A length-1 JSON string.
 #' @export

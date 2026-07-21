@@ -469,18 +469,15 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       de_classify_table(res[[lab]], input$deg_padj %||% 0.05, input$deg_lfc %||% log2(2))
     }
     # de_results() ALWAYS creates log2FoldChange_shrunk -- all-NA when shrinkage
-    # was "none" or every fallback failed. A column-presence check would pass and
-    # DEG_shrunk would be uniformly no_change (an empty set with no explanation),
-    # so test for real shrunk values instead (checked on the first selected contrast).
-    deg_shrunk_ok <- reactive({
-      labs <- deg_contrasts(); if (!length(labs)) return(FALSE)
-      df <- tryCatch(deg_classify_one(labs[1]), error = function(e) NULL)
-      !is.null(df) && "log2FoldChange_shrunk" %in% names(df) &&
-        any(!is.na(df$log2FoldChange_shrunk))
-    })
-    deg_col <- reactive({
-      if (isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok())) "DEG_shrunk" else "DEG"
-    })
+    # was "none" or every fallback failed. Shrinkage is computed PER CONTRAST
+    # (apeglm/normal need a coef; ashr may be absent), so a column-presence check
+    # would pass and DEG_shrunk would be uniformly no_change. Resolve the DEG column
+    # PER CONTRAST (test each contrast's real shrunk values) -- a global choice off
+    # the first contrast would silently empty a contrast whose shrunk col is all-NA.
+    deg_shrunk_avail <- function(df)
+      "log2FoldChange_shrunk" %in% names(df) && any(!is.na(df$log2FoldChange_shrunk))
+    deg_col_for <- function(df)
+      if (isTRUE(input$deg_shrunk) && deg_shrunk_avail(df)) "DEG_shrunk" else "DEG"
     # Group build: one staged set per (contrast x selected direction), named
     # "<contrast> <dir>". Empty directions are dropped. Two+ sets flow through the
     # existing multi-set Save (New/Add) path; a single set uses the New/Add box.
@@ -488,11 +485,10 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       labs <- deg_contrasts(); if (!length(labs)) return(list())
       dirs <- intersect(input$deg_dir %||% c("up", "down"), c("up", "down", "no_change"))
       if (!length(dirs)) return(list())
-      col <- deg_col()
       out <- list()
       for (lab in labs) {
         df <- tryCatch(deg_classify_one(lab), error = function(e) NULL); if (is.null(df)) next
-        v <- as.character(df[[col]])
+        v <- as.character(df[[deg_col_for(df)]])       # per-contrast shrunk choice
         for (d in dirs) {
           ids <- rownames(df)[v == d]
           if (length(ids)) out[[paste0(lab, " ", d)]] <- ids
@@ -502,19 +498,20 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
     })
     output$deg_preview <- renderUI({
       labs <- deg_contrasts(); req(length(labs))
-      col <- deg_col()
+      fallback <- FALSE                                 # any contrast lacking shrunk?
       rows <- lapply(labs, function(lab) {
         df <- tryCatch(deg_classify_one(lab), error = function(e) NULL); if (is.null(df)) return(NULL)
-        tab <- table(factor(as.character(df[[col]]), levels = c("up", "down", "no_change")))
+        if (isTRUE(input$deg_shrunk) && !deg_shrunk_avail(df)) fallback <<- TRUE
+        tab <- table(factor(as.character(df[[deg_col_for(df)]]), levels = c("up", "down", "no_change")))
         tags$div(class = "small text-muted",
           sprintf("%s: %d up / %d down / %d no-change.", lab,
                   tab[["up"]], tab[["down"]], tab[["no_change"]]))
       })
       n_sets <- length(deg_staged())
       tagList(
-        if (isTRUE(input$deg_shrunk) && !isTRUE(deg_shrunk_ok()))
+        if (fallback)
           tags$div(class = "small text-warning",
-            "Shrunken LFCs are not available for this fit -- using standard LFCs."),
+            "Shrunken LFCs are unavailable for some contrast(s) -- those use standard LFCs."),
         rows,
         tags$div(class = "small text-muted mt-1",
           sprintf("%d set(s) will be staged at padj < %s, |log2FC| >= %s.",
@@ -889,7 +886,7 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
                                         c("up", "down", "no_change")),
                  padj = input$deg_padj %||% 0.05,
                  lfc = input$deg_lfc %||% 1,
-                 shrunk = isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok()),
+                 shrunk = isTRUE(input$deg_shrunk),   # per-contrast fallback where unavailable
                  de_status = de_status(state)),
       topvar = list(n_top = input$topvar_n %||% 100L, input = "vst (endogenous)"),
       file = list(file = (tbl_src() %||% list(name = ""))$name,
@@ -1304,6 +1301,12 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
         showNotification("A set with that name already exists.", type = "warning"); return() }
       if (!identical(to, nm)) {
         sets <- state$gene_sets; names(sets)[names(sets) == nm] <- to; state$gene_sets <- sets
+        # Carry the set's Palette Gene Set config key along (else the rename would
+        # orphan it and the palette's gene_sets-cleanup would drop the colours).
+        if (!is.null((state$palette$geneset %||% list())[[nm]])) {
+          p <- state$palette; p$geneset[[to]] <- p$geneset[[nm]]; p$geneset[[nm]] <- NULL
+          state$palette <- p
+        }
         snapshot_absent()   # re-key the absence baseline, else the rename reads as "newly absent"
         .log(state, list(action = "gene_set_rename", from = nm, to = to))
       }
@@ -1547,7 +1550,8 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       nms <- annotated_names(); if (!length(nms)) return(NULL)
       cond_bar <- sprintf("input['%1$s'] && input['%1$s'].indexOf('bar') > -1", ns("anno_view"))
       cond_tbl <- sprintf("input['%1$s'] && input['%1$s'].indexOf('table') > -1", ns("anno_view"))
-      panels <- lapply(seq_along(utils::head(nms, .anno_pool)), function(k) {
+      shown <- utils::head(nms, .anno_pool)
+      panels <- lapply(seq_along(shown), function(k) {
         nm <- nms[k]; set <- state$gene_sets[[nm]]
         nlev <- length(unique(unname(set$annotation)))
         bslib::accordion_panel(
@@ -1562,7 +1566,15 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
             actionButton(ns(paste0("anno_pdel_", k)), "Delete",
                          class = "btn-sm btn-outline-danger", icon = shiny::icon("trash"))))
       })
-      do.call(bslib::accordion, c(list(id = ns("anno_acc"), open = FALSE), panels))
+      # Keep the panels the user has open across a rebuild (e.g. an in-panel rename
+      # mutates state$gene_sets, which re-renders this) instead of collapsing all.
+      open_now <- intersect(shiny::isolate(input$anno_acc), shown)
+      acc <- do.call(bslib::accordion, c(
+        list(id = ns("anno_acc"), open = if (length(open_now)) open_now else FALSE), panels))
+      trunc <- if (length(nms) > .anno_pool)
+        tags$div(class = "small text-muted mb-2",
+                 sprintf("Showing the first %d of %d annotations.", .anno_pool, length(nms)))
+      tagList(trunc, acc)
     })
     # Pre-register a fixed pool of per-panel outputs + delete observers (index-keyed,
     # reading the annotation currently at that index) -- avoids per-render observer leaks.

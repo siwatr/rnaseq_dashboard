@@ -114,6 +114,14 @@ test_that("combine_gene_set_annotation: label + first strategies", {
   expect_equal(unname(fst$annotation["g2"]), "A")      # first set in input order
 })
 
+test_that("combine_gene_set_annotation: concat overlap label matching a member name is noted", {
+  sets <- list(a = new_gene_set(c("g1", "g2")), b = new_gene_set(c("g2", "g3")),
+               "a;b" = new_gene_set("g4"))
+  r <- combine_gene_set_annotation(sets)     # g2 in a&b -> "a;b" (== the member set "a;b")
+  expect_equal(unname(r$annotation["g2"]), "a;b")
+  expect_match(r$note, "match a member-set name")
+})
+
 test_that("combine_gene_set_annotation: 'label' guards against a member-set-name clash", {
   sets <- list(multiple = new_gene_set("g1"), B = new_gene_set(c("g1", "g2")))
   expect_error(combine_gene_set_annotation(sets, shared = "label"), "collides")

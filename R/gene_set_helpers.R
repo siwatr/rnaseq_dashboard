@@ -272,6 +272,15 @@ combine_gene_set_annotation <- function(sets, shared = c("concat", "label", "fir
   levels  <- c(singles, setdiff(unique(labels), singles))
   note <- if (length(shared_ids))
     sprintf("%d gene(s) belong to more than one set.", length(shared_ids)) else ""
+  # concat can (rarely) produce an overlap label equal to a member-set name (a set
+  # literally named like a concatenation, e.g. "a;b"): the overlap genes then merge
+  # into that set's level. Same hazard the "label" mode guards against -- surface it.
+  if (identical(shared, "concat") && length(shared_ids)) {
+    collide <- intersect(nms, unique(annotation[shared_ids]))
+    if (length(collide))
+      note <- paste0(note, sprintf(" Overlap label(s) %s match a member-set name.",
+                                   paste(collide, collapse = ", ")))
+  }
   list(annotation = annotation, levels = levels, shared_ids = shared_ids, note = note)
 }
 

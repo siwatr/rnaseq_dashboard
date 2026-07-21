@@ -195,8 +195,9 @@ test_that("'Use shrunk LFC' falls back to standard LFCs when shrinkage never ran
     session$setInputs(source = "deg", deg_contrast = "C1", deg_dir = c("up", "down"),
                       deg_padj = 0.05, deg_lfc = 1, deg_shrunk = TRUE)
     session$flushReact()
-    expect_false(deg_shrunk_ok())          # column present but no real values
-    expect_equal(deg_col(), "DEG")         # falls back instead of an empty set
+    df1 <- deg_classify_one("C1")
+    expect_false(deg_shrunk_avail(df1))    # column present but no real values
+    expect_equal(deg_col_for(df1), "DEG")  # falls back instead of an empty set
     # Group build: one set per direction, named "<contrast> <dir>".
     st <- staged()
     expect_setequal(names(st), c("C1 up", "C1 down"))
@@ -268,6 +269,37 @@ test_that("DE group build stages one set per (contrast x direction) and multi-sa
                       names(state$gene_sets)))
     expect_setequal(state$gene_sets[["grp_C2 up"]]$ids, rn[5:7])
     expect_match(state$gene_sets[["grp_C1 up"]]$source, "^DE: C1, C2")
+  })
+})
+
+test_that("DE group build resolves the shrunk column PER contrast (mixed availability)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 3, n_spike = 0, seed = 12))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    mk <- function(shrunk_na) data.frame(
+      baseMean = 100,
+      padj = c(0.001, 0.001, rep(0.9, length(rn) - 2)),
+      log2FoldChange = c(3, -3, rep(0, length(rn) - 2)),
+      log2FoldChange_shrunk = if (shrunk_na) NA_real_ else c(3, -3, rep(0, length(rn) - 2)),
+      row.names = rn)
+    de <- state$de
+    de$results <- list(C1 = mk(FALSE), C2 = mk(TRUE))   # C2's shrunk col is all-NA
+    de$active <- "C1"; state$de <- de
+    session$flushReact()
+    session$setInputs(source = "deg", deg_contrast = c("C1", "C2"),
+                      deg_dir = c("up", "down"), deg_padj = 0.05, deg_lfc = 1,
+                      deg_shrunk = TRUE)
+    session$flushReact()
+    st <- staged()
+    # C2 must NOT be silently emptied by a global shrunk choice off C1 -- it falls
+    # back to standard DEG per contrast, so its up/down sets are populated.
+    expect_setequal(names(st), c("C1 up", "C1 down", "C2 up", "C2 down"))
+    expect_setequal(st[["C2 up"]], rn[1]); expect_setequal(st[["C2 down"]], rn[2])
+    expect_setequal(st[["C1 up"]], rn[1]); expect_setequal(st[["C1 down"]], rn[2])
   })
 })
 
