@@ -210,6 +210,18 @@ test_that("expr_kmeans is reproducible, RNG-safe, and separates clear groups", {
   set.seed(42); expect_equal(runif(1), before)           # global RNG untouched
 })
 
+test_that("expr_kmeans with a blank/NA seed clusters and advances the global RNG", {
+  m <- rbind(matrix(rnorm(20, 0), 5, 4), matrix(rnorm(20, 8), 5, 4))
+  rownames(m) <- paste0("g", 1:10)
+  set.seed(7)
+  before <- get(".Random.seed", envir = .GlobalEnv)
+  cl <- expr_kmeans(m, 2, seed = NA)                    # no seed
+  expect_named(cl, paste0("g", 1:10))
+  expect_equal(sort(as.integer(table(cl))), c(5L, 5L))  # still a valid partition
+  after <- get(".Random.seed", envir = .GlobalEnv)
+  expect_false(identical(before, after))                # RNG advanced (not restored)
+})
+
 test_that("expr_kmeans handles the degenerate k / n edge cases", {
   m <- matrix(rnorm(8), 4, 2, dimnames = list(paste0("g", 1:4), c("A", "B")))
   expect_null(expr_kmeans(m, 1))                          # k < 2 -> no split

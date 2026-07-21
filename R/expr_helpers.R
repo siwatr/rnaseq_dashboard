@@ -337,7 +337,9 @@ expr_label_coverage <- function(selected, present_keys) {
 #'   Non-finite values are treated as 0 before clustering.
 #' @param k Number of clusters. `< 2` (or fewer than 2 rows) returns `NULL`
 #'   (no split). Clamped to the number of rows.
-#' @param seed Integer seed for reproducibility.
+#' @param seed Integer seed for reproducibility, or `NA`/`NULL` for **no seed** --
+#'   a fresh (non-reproducible) clustering each call, which advances the global
+#'   RNG. A concrete seed is RNG-safe (state saved/restored).
 #' @param nstart Passed to [stats::kmeans()] (random restarts).
 #' @return A named integer vector (names = `rownames(mat)`) of cluster ids, or
 #'   `NULL` when no split applies / clustering fails.
@@ -354,11 +356,14 @@ expr_kmeans <- function(mat, k, seed = 1L, nstart = 10L) {
     out <- unname(remap[as.character(cl)]); names(out) <- rownames(mat); out
   }
   if (k >= n) return(relabel(seq_len(n)))        # each row its own cluster
-  old <- if (exists(".Random.seed", envir = .GlobalEnv))
-    get(".Random.seed", envir = .GlobalEnv) else NULL
-  on.exit(if (is.null(old)) suppressWarnings(rm(".Random.seed", envir = .GlobalEnv))
-          else assign(".Random.seed", old, envir = .GlobalEnv), add = TRUE)
-  set.seed(seed)
+  seed <- suppressWarnings(as.integer(seed)[1])
+  if (!is.na(seed)) {                            # fixed seed -> reproducible + RNG-safe
+    old <- if (exists(".Random.seed", envir = .GlobalEnv))
+      get(".Random.seed", envir = .GlobalEnv) else NULL
+    on.exit(if (is.null(old)) suppressWarnings(rm(".Random.seed", envir = .GlobalEnv))
+            else assign(".Random.seed", old, envir = .GlobalEnv), add = TRUE)
+    set.seed(seed)
+  }                                              # else: no seed -> random, RNG advances
   km <- tryCatch(stats::kmeans(mat, centers = k, nstart = nstart),
                  error = function(e) NULL)
   if (is.null(km)) return(NULL)

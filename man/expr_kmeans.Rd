@@ -13,7 +13,9 @@ Non-finite values are treated as 0 before clustering.}
 \item{k}{Number of clusters. \verb{< 2} (or fewer than 2 rows) returns \code{NULL}
 (no split). Clamped to the number of rows.}
 
-\item{seed}{Integer seed for reproducibility.}
+\item{seed}{Integer seed for reproducibility, or \code{NA}/\code{NULL} for \strong{no seed} --
+a fresh (non-reproducible) clustering each call, which advances the global
+RNG. A concrete seed is RNG-safe (state saved/restored).}
 
 \item{nstart}{Passed to \code{\link[stats:kmeans]{stats::kmeans()}} (random restarts).}
 }

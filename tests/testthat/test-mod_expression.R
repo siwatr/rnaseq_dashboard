@@ -366,11 +366,13 @@ test_that("heatmap k-means splits rows/columns and saves clusters as gene sets (
     expect_length(levels(s$col_split), 2L)               # 2 column clusters
     expect_equal(length(s$row_clusters), 20L)            # membership named by id
     expect_true(all(grepl("^C\\d+\n\\(\\d+\\)$", levels(s$row_split))))  # "C1\n(8)" slice labels
+    expect_true(s$cluster_row_slices && s$cluster_col_slices)  # slice ordering (default on)
 
     # Save row clusters as gene sets -> SetA k1/k2/k3 with provenance
     session$setInputs(hm_cluster_prefix = "", hm_save_clusters = 1)
     session$flushReact()
     expect_setequal(names(state$gene_sets), c("SetA", "SetA k1", "SetA k2", "SetA k3"))
+    expect_equal(input$hm_cluster_prefix, "")            # prefix clears on success
     expect_match(state$gene_sets[["SetA k1"]]$source, "kmeans cluster")
     # the saved clusters partition the original set (no overlap, union = plotted rows)
     parts <- lapply(c("SetA k1", "SetA k2", "SetA k3"), function(n) state$gene_sets[[n]]$ids)
@@ -416,5 +418,42 @@ test_that("heatmap saves column clusters to a colData factor (unshown -> unclust
     expect_setequal(levels(cd$sample_km), c("C1", "C2", "unclustered"))
     expect_equal(sum(cd$sample_km == "unclustered"), 4L) # the hidden 'treated' half
     expect_gt(state$data_version, dv0)                    # a real, undoable edit
+  })
+})
+
+test_that("row-cluster save asks before overwriting + clears prefix; colData save keeps annotation", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 4, seed = 3)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:20]))
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "auto", hm_col_mode = "auto",
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto",
+                      hm_row_k = 2, hm_col_k = 2, hm_seed = 1,
+                      hm_anno = "condition", hm_render = 1)
+    session$flushReact()
+    session$setInputs(hm_cluster_prefix = "grp", hm_save_clusters = 1); session$flushReact()
+    ids1 <- state$gene_sets[["grp k1"]]$ids
+    expect_true(!is.null(ids1))
+
+    # Save again with the SAME prefix -> a clash: nothing changes without Overwrite.
+    session$setInputs(hm_cluster_prefix = "grp", hm_save_clusters = 2); session$flushReact()
+    expect_length(state$gene_sets, 3L)                   # SetA + grp k1/k2 (no _2 suffix)
+    # Confirm Overwrite -> replaces in place (still 3 sets, ids refreshed)
+    session$setInputs(hm_row_overwrite = 1); session$flushReact()
+    expect_length(state$gene_sets, 3L)
+    expect_setequal(names(state$gene_sets), c("SetA", "grp k1", "grp k2"))
+
+    # Saving a column-cluster colData column must NOT reset the annotation selection.
+    expect_equal(input$hm_anno, "condition")
+    session$setInputs(hm_col_colname = "sc", hm_save_col_clusters = 1); session$flushReact()
+    expect_true("sc" %in% colnames(SummarizedExperiment::colData(state$working)))
+    expect_equal(input$hm_anno, "condition")             # preserved across the edit
   })
 })
