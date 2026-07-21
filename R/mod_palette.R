@@ -256,6 +256,18 @@ mod_palette_server <- function(id, state) {
       cand <- intersect(.pal_geneset_levels(item), .pal_geneset_simple())
       cand[!vapply(cand, function(s) is.na(.pal_geneset_in_color(s)), logical(1))]
     }
+    # Overlay matching simple-set in-set colours onto a level->hex map. The shared
+    # inheritance mechanic for both the creation default (default_cfg) and the Pull
+    # buttons. `levels` scopes which levels may inherit; returns the map + the levels
+    # that changed (empty = nothing to inherit).
+    .pal_geneset_inherit <- function(levels, cols) {
+      hit <- character(0)
+      for (lev in intersect(levels, .pal_geneset_simple())) {
+        ic <- .pal_geneset_in_color(lev)
+        if (!is.na(ic)) { cols[[lev]] <- ic; hit <- c(hit, lev) }
+      }
+      list(colors = cols, hit = hit)
+    }
     dom_items <- function(dom) {
       switch(dom,
         colData = colnames(dom_df("colData")),
@@ -372,6 +384,14 @@ mod_palette_server <- function(id, state) {
     default_cfg <- function(dom, item) {
       preset <- preset_for(dom, item)
       if (!is.null(preset)) return(preset)
+      # Annotated geneset: inherit matching simple-set in-set colours at creation
+      # (the option-1 default; other levels take the qualitative default).
+      if (dom == "geneset" && .pal_geneset_is_annotated(item)) {
+        lv <- dom_levels(dom, item)
+        r <- .pal_geneset_inherit(lv, palette_discrete(lv, NULL, "Okabe-Ito"))
+        return(list(name = if (length(r$hit)) "Custom palette" else "Okabe-Ito",
+                    colors = r$colors))
+      }
       if (dom_kind(dom, item) == "continuous")
         list(name = "viridis: viridis", min = "", max = "", reverse = FALSE,
              custom = c("#FFFFFF", "#000000"))   # custom-ramp starting point
@@ -564,22 +584,18 @@ mod_palette_server <- function(id, state) {
         apply_pull <- function(which_levels) {
           if (is.null(cur())) return()
           lvls <- dom_levels(dom, item)
-          cols <- palette_discrete(lvls, cur()$colors, cur()$name %||% "Okabe-Ito", cur()$custom)
-          hit <- character(0)
-          for (lev in intersect(which_levels, lvls)) {
-            ic <- .pal_geneset_in_color(lev)
-            if (!is.na(ic)) { cols[[lev]] <- ic; hit <- c(hit, lev) }
-          }
-          if (!length(hit)) {
+          base <- palette_discrete(lvls, cur()$colors, cur()$name %||% "Okabe-Ito", cur()$custom)
+          r <- .pal_geneset_inherit(intersect(which_levels, lvls), base)
+          if (!length(r$hit)) {
             showNotification("No matching gene-set colours to pull.", type = "warning", duration = 3)
             return()
           }
           p <- state$palette
-          p[[dom]][[item]]$colors <- cols; p[[dom]][[item]]$name <- "Custom palette"
+          p[[dom]][[item]]$colors <- r$colors; p[[dom]][[item]]$name <- "Custom palette"
           state$palette <- p
           updateSelectInput(session, iid("name", dom, item), selected = "Custom palette")
-          for (i in seq_along(lvls)) update_picker(pin_id(dom, item, i), unname(cols[[lvls[i]]]))
-          showNotification(sprintf("Pulled colour into %d level(s).", length(hit)),
+          for (i in seq_along(lvls)) update_picker(pin_id(dom, item, i), unname(r$colors[[lvls[i]]]))
+          showNotification(sprintf("Pulled colour into %d level(s).", length(r$hit)),
                            type = "message", duration = 3)
         }
         qpull_obs <- observeEvent(input[[iid("qpull", dom, item)]],
@@ -659,8 +675,17 @@ mod_palette_server <- function(id, state) {
         }, unconfigured)
         choices <- setdiff(unconfigured, over_cap)
         # Friendly labels for the "other" session/derived items (raw ids elsewhere).
-        choice_vec <- if (length(choices))
-          stats::setNames(choices, vapply(choices, function(it) dom_item_label(d, it), "")) else character(0)
+        # geneset splits into Gene set / Annotation optgroups so the two aren't
+        # confused (per the app rule: separate whenever choices mix the two).
+        choice_vec <- if (!length(choices)) character(0)
+          else if (identical(d, "geneset")) {
+            simple <- intersect(choices, .pal_geneset_simple())
+            grp <- list()
+            if (length(simple)) grp[["Gene set"]] <- simple
+            anno <- setdiff(choices, simple)
+            if (length(anno)) grp[["Annotation"]] <- anno
+            grp
+          } else stats::setNames(choices, vapply(choices, function(it) dom_item_label(d, it), ""))
         tagList(
           selectInput(ns(paste0("addsel_", d)), "Add colour mapping for",
                       choices = choice_vec),

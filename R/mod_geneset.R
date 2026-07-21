@@ -63,6 +63,16 @@
       actionButton(ns(paste0(id, "_all")), "Select all", class = "btn-sm btn-outline-secondary"),
       actionButton(ns(paste0(id, "_none")), "Deselect all", class = "btn-sm btn-outline-secondary")))
 }
+
+# Group set names into Gene set / Annotation optgroups for a selectize (per the
+# app rule: separate whenever a selector's choices mix simple sets + annotations).
+.gs_group_by_kind <- function(nms, sets) {
+  anno <- vapply(nms, function(n) identical(sets[[n]]$kind %||% "simple", "annotated"), logical(1))
+  out <- list()
+  if (any(!anno)) out[["Gene set"]]   <- nms[!anno]
+  if (any(anno))  out[["Annotation"]] <- nms[anno]
+  out
+}
 # Wire one .gs_set_multiselect_ui's buttons. Call once per selector in the server.
 .gs_set_multiselect_server <- function(input, output, session, id, choices_fn) {
   observeEvent(input[[paste0(id, "_all")]],
@@ -1231,7 +1241,8 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
                     c("JSON (faithful, recommended)" = "json",
                       "GMT (MSigDB)" = "gmt", "TSV (long: set / id)" = "tsv"),
                     selected = shiny::isolate(input$export_fmt) %||% "json"),
-        .gs_set_multiselect_ui(ns, "export_which", "Sets to export", nms, sel),
+        .gs_set_multiselect_ui(ns, "export_which", "Sets to export",
+                               .gs_group_by_kind(nms, state$gene_sets), sel),
         downloadButton(ns("export_dl"), "Download", class = "btn btn-sm fw-semibold",
                        style = .gs_action_style))
     })
@@ -1510,9 +1521,13 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
         ggplot2::labs(x = NULL, y = NULL, fill = NULL,
           subtitle = sprintf("%d gene(s)%s", sum(comp$n),
             if (isTRUE(input$anno_within)) " in the dataset" else "")) +
-        ggplot2::theme_minimal(base_size = 11) +
-        ggplot2::theme(legend.position = if (many) "none" else "bottom",
+        # .plot_theme lets thematic follow the live light/dark bslib theme (it owns
+        # bg/fg); we only override sizing + the flat single-bar look.
+        .plot_theme(dark()) +
+        ggplot2::theme(text = ggplot2::element_text(size = 11),
+                       legend.position = if (many) "none" else "bottom",
                        panel.grid = ggplot2::element_blank(),
+                       axis.ticks = ggplot2::element_blank(),
                        axis.text.y = ggplot2::element_blank())
       if (many) g + ggplot2::labs(caption = sprintf("%d levels (legend hidden)", nrow(comp))) else g
     }
@@ -1619,7 +1634,8 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
                         "No gene sets yet -- build some on the Gene Sets tab."))
       cur <- shiny::isolate(input$cmp_sets)
       sel <- if (!is.null(cur)) intersect(cur, nms) else nms
-      .gs_set_multiselect_ui(ns, "cmp_sets", "Sets to visualize", nms, sel)
+      .gs_set_multiselect_ui(ns, "cmp_sets", "Sets to visualize",
+                             .gs_group_by_kind(nms, state$gene_sets), sel)
     })
     .gs_set_multiselect_server(input, output, session, "cmp_sets",
                                function() names(state$gene_sets))

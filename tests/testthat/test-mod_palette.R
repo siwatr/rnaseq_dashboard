@@ -163,13 +163,18 @@ test_that("Gene Set pill: simple sets are 2-level in/out; quick pull inherits in
     p$geneset$up$colors[["In set"]]   <- "#FF0000"
     p$geneset$down$colors[["In set"]] <- "#0000FF"
     state$palette <- p; session$flushReact()
-    # Add the annotation, then Quick pull -> its up/down levels inherit red/blue.
+    # Adding the annotation AFTER the gene-set colours exist inherits them at
+    # creation time (the option-1 default), without a Quick pull click.
     session$setInputs(addsel_geneset = "DEdir", addbtn_geneset = 3); session$flushReact()
+    cols0 <- state$palette$geneset$DEdir$colors
+    expect_equal(unname(cols0[["up"]]),   "#FF0000")
+    expect_equal(unname(cols0[["down"]]), "#0000FF")
+    expect_equal(state$palette$geneset$DEdir$name, "Custom palette")
+    # Quick pull re-applies (idempotent here).
     session$setInputs(qpull_geneset__DEdir = 1); session$flushReact()
     cols <- state$palette$geneset$DEdir$colors
     expect_equal(unname(cols[["up"]]),   "#FF0000")
     expect_equal(unname(cols[["down"]]), "#0000FF")
-    expect_equal(state$palette$geneset$DEdir$name, "Custom palette")
   })
 })
 
