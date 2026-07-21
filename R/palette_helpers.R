@@ -355,7 +355,7 @@ palette_gradientn <- function(name, values, min = NULL, max = NULL,
 # continuous), symmetric on both ends.
 
 # Known palette domains, in display/serialization order.
-.pal_known_domains <- c("colData", "rowData", "assays", "other")
+.pal_known_domains <- c("colData", "rowData", "assays", "geneset", "other")
 
 # A config item's kind, inferred from the keys present. The single definition of
 # the discrete/continuous boundary (shared by the JSON validator + the module).

@@ -114,6 +114,33 @@ test_that("Other pill: removal pool + QC metrics are configurable session attrib
   })
 })
 
+test_that("Gene Set pill: an annotated set is configurable + round-trips + reconciles", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 12, n_per_group = 3, n_spike = 0, seed = 3))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list("DE dir" = new_gene_set(
+      rn[1:4], kind = "annotated",
+      annotation = stats::setNames(c("up", "up", "down", "down"), rn[1:4])))
+    session$flushReact()
+    addui <- as.character(output$addui_geneset$html)
+    expect_match(addui, "DE dir", fixed = TRUE)
+    session$setInputs(addsel_geneset = "DE dir", addbtn_geneset = 1); session$flushReact()
+    cfg <- state$palette$geneset[["DE dir"]]
+    expect_equal(cfg$name, "Okabe-Ito")                 # discrete default
+    expect_setequal(names(cfg$colors), c("up", "down"))
+    # geneset is a known domain -> round-trips through JSON.
+    rt <- palette_from_json(palette_to_json(state$palette))
+    expect_setequal(names(rt$geneset[["DE dir"]]$colors), c("up", "down"))
+    # Reconcile drops the config once the annotation is gone.
+    state$gene_sets <- list()
+    rec <- reconcile_palette(state$palette, trim_levels = FALSE)
+    expect_null(rec$palette$geneset[["DE dir"]])
+  })
+})
+
 test_that("discrete attributes above the hard cap are hidden from the add control", {
   skip_if_not_installed("DESeq2")
   withr::local_options(ddsdashboard.palette_max_levels = 1L)   # condition has 2 levels

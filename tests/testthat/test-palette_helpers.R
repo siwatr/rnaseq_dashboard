@@ -156,6 +156,13 @@ test_that("palette_to_json / palette_from_json round-trip a mixed config", {
   expect_equal(rt$other$correlation$min, "-1")
 })
 
+test_that("palette round-trips the geneset (Gene Set) domain", {
+  p <- list(geneset = list("DE dir" = list(
+    name = "Custom palette", colors = c(up = "#FF0000", down = "#0000FF"))))
+  rt <- palette_from_json(palette_to_json(p))
+  expect_equal(rt$geneset[["DE dir"]]$colors, c(up = "#FF0000", down = "#0000FF"))
+})
+
 test_that("palette_to_json drops empty domains; empty config -> {}", {
   expect_match(palette_to_json(list()), "\"palette\": {}", fixed = TRUE)
   # An all-empty / unknown-only config also yields {}.

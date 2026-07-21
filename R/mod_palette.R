@@ -35,9 +35,10 @@
           paste(shown, collapse = ", "), if (more) ", ..." else "")
 }
 
-# The four Setting pills: domain -> display label.
+# The Setting pills: domain -> display label. `geneset` (P7e) colours each
+# annotated gene-set's levels for the Expression heatmap row annotation.
 .pal_domains <- c(colData = "Sample", rowData = "Feature",
-                  assays = "Assay", other = "Other")
+                  assays = "Assay", geneset = "Gene Set", other = "Other")
 # "other" domain items: the customizable session/derived attributes (removal
 # status, removal pool, the per-sample QC metrics; the single source is
 # aes_other_palette_items()) plus the app-internal sample-correlation ramp.
@@ -110,6 +111,7 @@ mod_palette_ui <- function(id) {
   blurb <- c(colData = "Set colours per sample-metadata column (colData). They feed the QC plots and the ComplexHeatmap annotations.",
              rowData = "Set colours per feature-metadata column (rowData). Used for heatmap row annotations (P5).",
              assays  = "Set the expression colour ramp per assay. Used for the expression heatmap / PCA gene colouring (P4/P5).",
+             geneset = "Set colours per gene-set annotation's levels (built on the Gene Sets > Annotation tab). Used for the Expression heatmap's row annotation.",
              other   = "Recolour the session/derived attributes: the QC suggested-removal status, removal-pool membership, the per-sample QC metrics, and the sample-correlation ramp. These feed the QC plots, PCA, and the heatmap annotations.")
   pill <- function(dom) {
     label <- .pal_domains[[dom]]
@@ -224,26 +226,39 @@ mod_palette_server <- function(id, state) {
       if (methods::is(col, "Rle")) col <- as.vector(col)
       col
     }
+    # Annotated gene-set names + a set's annotation levels (the geneset domain,
+    # driven by the session store rather than the dds).
+    .pal_geneset_names <- function()
+      names(Filter(function(s) identical(s$kind %||% "simple", "annotated"),
+                   state$gene_sets %||% list()))
+    .pal_geneset_levels <- function(item) {
+      s <- (state$gene_sets %||% list())[[item]]
+      if (is.null(s) || is.null(s$annotation)) character(0) else unique(unname(s$annotation))
+    }
     dom_items <- function(dom) {
       switch(dom,
         colData = colnames(dom_df("colData")),
         rowData = colnames(dom_df("rowData")),
         assays  = SummarizedExperiment::assayNames(state$working),
+        geneset = .pal_geneset_names(),
         other   = .pal_other_items())
     }
     dom_needs_data <- function(dom) dom %in% c("colData", "rowData", "assays")
     dom_kind <- function(dom, item) {
       if (dom == "assays") return("continuous")
+      if (dom == "geneset") return("discrete")
       if (dom == "other")  return(.pal_other_meta()[[item]]$kind)
       if (is.numeric(dom_col(dom, item))) "continuous" else "discrete"
     }
     dom_levels <- function(dom, item) {
+      if (dom == "geneset") return(.pal_geneset_levels(item))
       if (dom == "other") return(.pal_other_meta()[[item]]$levels %||% character(0))
       .pal_levels(dom_col(dom, item))
     }
     # Underlying data class for the accordion badge (helps the future factor PR).
     dom_class <- function(dom, item) {
       if (dom == "assays") return("numeric")
+      if (dom == "geneset") return("factor")
       if (dom == "other")  return(.pal_other_meta()[[item]]$class %||% "factor")
       class(dom_col(dom, item))[1]
     }
@@ -568,7 +583,10 @@ mod_palette_server <- function(id, state) {
         meta <- if (dom_needs_data(d)) dom_meta(d) else NULL
         over_cap <- Filter(function(it) {
           m <- meta[[it]]
-          !is.null(m) && identical(m$kind, "discrete") && isTRUE(m$nlev > max_levels())
+          if (!is.null(m))
+            return(identical(m$kind, "discrete") && isTRUE(m$nlev > max_levels()))
+          # Non-data domain (geneset / other): compute directly -- cheap (few items).
+          identical(dom_kind(d, it), "discrete") && length(dom_levels(d, it)) > max_levels()
         }, unconfigured)
         choices <- setdiff(unconfigured, over_cap)
         # Friendly labels for the "other" session/derived items (raw ids elsewhere).
