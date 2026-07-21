@@ -311,6 +311,32 @@ test_that("annotation-split stages N sets; multi-save creates one set each", {
   })
 })
 
+test_that("import fast-track combines split groups into one annotated set", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 11))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    path <- .write_import_csv(rn)
+
+    session$setInputs(source = "file",
+                      tbl_file = list(datapath = path, name = "res.csv"),
+                      tbl_header = TRUE, tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_rows = "view", tbl_literal = FALSE,
+                      tbl_anno_cols = "direction", tbl_sep = ".")
+    session$setInputs(tbl_load = 1); session$flushReact()
+    # Fast-track: one annotated set, annotation = the split-group value.
+    session$setInputs(tbl_anno_name = "DE dir", tbl_anno_build = 1); session$flushReact()
+    rec <- state$gene_sets[["DE dir"]]
+    expect_equal(rec$kind, "annotated")
+    expect_equal(unname(rec$annotation[rn[1]]), "up")
+    expect_equal(unname(rec$annotation[rn[3]]), "down")
+    expect_match(rec$source, "^import annotation: res.csv")
+  })
+})
+
 test_that("multi-save blocks name clashes unless auto-rename is on", {
   skip_if_not_installed("DESeq2")
   state <- new_app_state()

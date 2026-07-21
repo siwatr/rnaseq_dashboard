@@ -577,6 +577,20 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
           sprintf("input['%s'] && input['%s'].length > 1", ns("tbl_anno_cols"), ns("tbl_anno_cols")),
           tip(textInput(ns("tbl_sep"), "Group name separator", value = "."),
               "Joins the values of multiple split columns into each set's name (e.g. 'up.brain').")),
+        # Fast-track: combine the split groups into ONE annotated set (each gene
+        # labelled by its group) for the heatmap -- alongside the normal N-set save.
+        conditionalPanel(
+          sprintf("input['%s'] && input['%s'].length >= 1", ns("tbl_anno_cols"), ns("tbl_anno_cols")),
+          tags$hr(class = "my-2"),
+          helpText(class = "small text-muted",
+            "Or combine the split groups into one annotated set (each gene labelled by its group)."),
+          bslib::layout_columns(
+            col_widths = c(7, 5),
+            textInput(ns("tbl_anno_name"), "Annotated set name", placeholder = "e.g. DE direction"),
+            tags$div(class = "d-flex align-items-end pb-3",
+              actionButton(ns("tbl_anno_build"), "Save as annotated set",
+                           class = "btn btn-sm fw-semibold", style = .gs_action_style,
+                           icon = shiny::icon("layer-group"))))),
         radioButtons(ns("tbl_rows"), "Use rows",
                      c("All rows in the current view (filtered)" = "view",
                        "Selected rows only" = "selected"),
@@ -672,6 +686,32 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       out <- split_ids_by_group(sub, ".gs_id", anno, sep = sep)
       if (!length(anno) && length(out)) names(out) <- "Imported genes"
       out
+    })
+    # Annotation fast-track: combine the split groups into one id -> label
+    # annotation (group value = label; overlaps concatenated). Committed as a
+    # kind="annotated" record, independent of the N-simple-set multi-save.
+    observeEvent(input$tbl_anno_build, {
+      groups <- tbl_staged()
+      anno_cols <- intersect(input$tbl_anno_cols %||% character(0), names(tbl_resolved() %||% list()))
+      if (!length(anno_cols) || !length(groups)) {
+        showNotification("Choose split column(s) first.", type = "warning"); return() }
+      res <- tryCatch(combine_gene_set_annotation(groups, shared = "concat"),
+                      error = function(e) NULL)
+      if (is.null(res) || !length(res$annotation)) {
+        showNotification("Nothing to combine.", type = "warning"); return() }
+      nm <- trimws(input$tbl_anno_name %||% "")
+      if (!nzchar(nm)) { showNotification("Enter an annotation name.", type = "warning"); return() }
+      if (!is.null(state$gene_sets[[nm]])) {
+        showNotification("That name is taken -- pick another.", type = "warning"); return() }
+      rec <- new_gene_set(names(res$annotation), kind = "annotated", annotation = res$annotation,
+                          source = paste0("import annotation: ",
+                                          (tbl_src() %||% list(name = "table"))$name))
+      sets <- state$gene_sets; sets[[nm]] <- rec; state$gene_sets <- sets; snapshot_absent()
+      .log(state, list(action = "gene_set_annotation_import", name = nm, levels = res$levels,
+                       params = staged_params()))
+      updateTextInput(session, "tbl_anno_name", value = "")
+      showNotification(sprintf("Built annotation '%s' (%d levels).", nm, length(res$levels)),
+                       type = "message", duration = 4)
     })
     output$tbl_stats <- renderUI({
       df <- tbl_raw(); req(df)
