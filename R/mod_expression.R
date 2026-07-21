@@ -1073,7 +1073,8 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
       # k-means row/column split on the DISPLAYED matrix (follows the z-score
       # toggle). Membership (named by id) is kept so row clusters save as gene sets.
-      # A blank seed = NA -> no seed (fresh random clustering each render).
+      # A blank seed = NA -> no seed (fresh random clustering on each recompute of
+      # this cached reactive; a bare Render re-click with nothing changed reuses it).
       seed <- suppressWarnings(as.integer(input$hm_seed))
       if (length(seed) != 1L) seed <- NA_integer_
       rk <- suppressWarnings(as.integer(input$hm_row_k %||% 1L))
@@ -1112,7 +1113,11 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                           isTRUE(input$hm_cluster_rows %||% TRUE),
                           isTRUE(input$hm_cluster_cols %||% TRUE),
                           input$hm_row_dend, input$hm_col_dend, input$hm_anno,
-                          input$hm_row_k, input$hm_col_k, input$hm_seed,  # k-means gated
+                          # coerced to match hm_spec's effective k/seed, so a
+                          # fractional keystroke doesn't flicker the stale banner
+                          suppressWarnings(as.integer(input$hm_row_k %||% 1L)),
+                          suppressWarnings(as.integer(input$hm_col_k %||% 1L)),
+                          suppressWarnings(as.integer(input$hm_seed)),
                           input$hm_cluster_row_slices, input$hm_cluster_col_slices,
                           input$hm_ramp_src, hm_ramp(), state$palette,  # colours gated too
                           state$data_version)))
