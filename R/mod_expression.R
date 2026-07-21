@@ -403,26 +403,26 @@ mod_expression_ui <- function(id) {
           bslib::accordion_panel(
             "Heatmap elements", icon = icon("sitemap"),
             bslib::input_switch(ns("hm_cluster_rows"), "Cluster rows", value = TRUE),
-            conditionalPanel(
-              sprintf("input['%s']", ns("hm_cluster_rows")),
-              hm_dend_radio(ns("hm_row_dend"), "Row dendrogram")),
             conditionalPanel(              # slice ordering only matters with k >= 2
               sprintf("input['%s'] >= 2", ns("hm_row_k")),
               bslib::input_switch(ns("hm_cluster_row_slices"),
                 bslib::tooltip(tags$span("Cluster row slices"),
                   "Order the k-means row slices by clustering; off keeps them C1, C2, ..."),
                 value = TRUE)),
+            conditionalPanel(
+              sprintf("input['%s']", ns("hm_cluster_rows")),
+              hm_dend_radio(ns("hm_row_dend"), "Row dendrogram")),
             tags$hr(class = "my-2"),
             bslib::input_switch(ns("hm_cluster_cols"), "Cluster columns", value = TRUE),
-            conditionalPanel(
-              sprintf("input['%s']", ns("hm_cluster_cols")),
-              hm_dend_radio(ns("hm_col_dend"), "Column dendrogram")),
             conditionalPanel(
               sprintf("input['%s'] >= 2", ns("hm_col_k")),
               bslib::input_switch(ns("hm_cluster_col_slices"),
                 bslib::tooltip(tags$span("Cluster column slices"),
                   "Order the k-means column slices by clustering; off keeps them C1, C2, ..."),
-                value = TRUE))),
+                value = TRUE)),
+            conditionalPanel(
+              sprintf("input['%s']", ns("hm_cluster_cols")),
+              hm_dend_radio(ns("hm_col_dend"), "Column dendrogram"))),
           bslib::accordion_panel(
             "Clustering (k-means)", icon = icon("object-group"),
             helpText(class = "small text-muted",
