@@ -127,7 +127,7 @@ mod_geneset_ui <- function(id) {
   bslib::navset_card_tab(
     id = ns("tabs"),
     bslib::nav_panel(
-      tags$h3("Manage sets", class = "fs-6 mb-0"),
+      tags$h3("Gene Sets", class = "fs-6 mb-0"),
       bslib::layout_columns(
         fillable = FALSE, col_widths = c(6, 6),
 
@@ -263,13 +263,71 @@ mod_geneset_ui <- function(id) {
       )
     ),
 
+    # ===================== ANNOTATION TAB (P7e) =====================
+    # A second-level object: combine gene sets into one id -> label annotation
+    # (each gene labelled by the set it belongs to), stored as a kind="annotated"
+    # record for the Expression heatmap's row annotation / split. Palette-style:
+    # a sidebar builder + delete, a main-area accordion of per-annotation panels.
+    bslib::nav_panel(
+      tags$h3("Annotation", class = "fs-6 mb-0"),
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          width = 340, open = TRUE,
+          tags$h4("Build an annotation", class = "fs-5 mb-2"),
+          helpText(class = "small text-muted mb-2",
+            "Combine gene sets into one annotation -- each gene is labelled by the ",
+            "set(s) it belongs to. Click Build to save it for the heatmap."),
+          uiOutput(ns("anno_members_ui")),
+          radioButtons(ns("anno_shared"), "Genes in more than one set",
+            c("Combine labels (a;b)" = "concat", "One shared label" = "label",
+              "First set wins" = "first"), selected = "concat"),
+          conditionalPanel(cond("anno_shared", "concat"),
+            textInput(ns("anno_sep"), "Label separator", value = ";")),
+          conditionalPanel(cond("anno_shared", "label"),
+            textInput(ns("anno_label"), "Shared label", value = "multiple")),
+          textInput(ns("anno_name"), "Annotation name", placeholder = "e.g. DE direction"),
+          uiOutput(ns("anno_preview_ui")),
+          tags$div(class = "d-flex gap-2 mt-2",
+            actionButton(ns("anno_build"), "Build", class = "btn btn-sm fw-semibold",
+                         style = .gs_action_style, icon = shiny::icon("layer-group")),
+            actionButton(ns("anno_reset"), "Reset", class = "btn-sm btn-outline-secondary",
+                         icon = shiny::icon("rotate-left"))),
+          tags$hr(),
+          tags$h6("Delete annotations", class = "fs-6"),
+          uiOutput(ns("anno_delete_ui")),
+          tags$div(class = "d-flex gap-2",
+            actionButton(ns("anno_del_sel"), "Delete selected",
+                         class = "btn-sm btn-outline-danger", icon = shiny::icon("trash")),
+            actionButton(ns("anno_del_all"), "Delete all",
+                         class = "btn-sm btn-outline-danger", icon = shiny::icon("xmark"))),
+          tags$hr(),
+          actionButton(ns("anno_collapse"), "Collapse all",
+                       class = "btn-sm btn-outline-secondary", icon = shiny::icon("angles-up"))),
+        bslib::accordion(
+          open = TRUE,
+          bslib::accordion_panel(
+            "View controls", icon = shiny::icon("sliders"),
+            uiOutput(ns("anno_show_cols_ui")),
+            bslib::input_switch(ns("anno_within"), "Within this dataset only", value = FALSE),
+            radioButtons(ns("anno_view"), "Show in each panel",
+              c("Composition bar" = "bar", "Members table" = "table"),
+              selected = "bar", inline = TRUE))),
+        tags$div(class = "mt-3 mb-2",
+          tags$h4("Your annotations", class = "fs-5 mb-0 d-inline"),
+          tags$span(class = "small text-muted ms-2",
+                    "Annotated sets available to the heatmap")),
+        uiOutput(ns("anno_empty_note")),
+        uiOutput(ns("anno_panels"))
+      )
+    ),
+
     # ===================== COMPARE TAB (P6e) =========================
     # Compare the sets you built -- sizes (Stats) and overlaps (Overlap). Following
     # the DE Plots tab: the two SHARED controls (which sets to visualize + the
     # "Within this dataset only" toggle) live in the tab sidebar; each sub-pill's
     # own controls sit above its plot.
     bslib::nav_panel(
-      tags$h3("Compare", class = "fs-6 mb-0"),
+      tags$h3("Compare Sets", class = "fs-6 mb-0"),
       bslib::layout_sidebar(
         sidebar = bslib::sidebar(
           title = "Sets to compare", width = 320,
@@ -1064,9 +1122,10 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
                      selected = sel, multiple = TRUE)
     })
     # id + chosen columns + in-dataset flag. Governs BOTH preview + members tables.
-    members_frame <- function(ids) {
+    # `cols` defaults to the Manage-tab preview control; the Annotation tab passes
+    # its own (input$anno_show_cols).
+    members_frame <- function(ids, cols = input$show_cols) {
       df <- data.frame(ID = ids, check.names = FALSE, stringsAsFactors = FALSE)
-      cols <- input$show_cols
       if (length(cols) && !is.null(state$working)) {
         rd <- SummarizedExperiment::rowData(state$working); hit <- ids %in% rownames(state$working)
         for (co in cols) {
@@ -1080,7 +1139,8 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
     }
 
     sets_df <- reactive({
-      sets <- state$gene_sets
+      # Simple sets only -- annotated sets are listed/managed on the Annotation tab.
+      sets <- Filter(function(s) !identical(s$kind %||% "simple", "annotated"), state$gene_sets)
       if (!length(sets)) return(NULL)
       rn <- working_rn()
       data.frame(
@@ -1243,6 +1303,197 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
     }, ignoreInit = TRUE)
 
     # =====================================================================
+    # ANNOTATION TAB (P7e): build/manage kind="annotated" records.
+    # =====================================================================
+    .anno_pool <- 50L    # max annotation panels with pre-registered outputs
+
+    is_annotated <- function(s) identical(s$kind %||% "simple", "annotated")
+    annotated_names <- reactive(names(Filter(is_annotated, state$gene_sets)))
+    simple_names    <- reactive(names(Filter(Negate(is_annotated), state$gene_sets)))
+
+    # Builder: member sets (simple sets only) -> a live combined annotation.
+    output$anno_members_ui <- renderUI({
+      nms <- simple_names()
+      if (!length(nms))
+        return(helpText(class = "small text-muted",
+          "Build some gene sets first (Gene Sets tab), then combine them here."))
+      cur <- shiny::isolate(input$anno_members)
+      selectizeInput(ns("anno_members"), "Member gene sets", choices = nms,
+                     selected = intersect(cur, nms), multiple = TRUE)
+    })
+    # Combine the selected members; carry the label-collision error as ok = FALSE
+    # (so the preview shows it instead of the app erroring).
+    anno_combined <- reactive({
+      mem <- intersect(input$anno_members %||% character(0), names(state$gene_sets))
+      if (!length(mem)) return(list(ok = FALSE, msg = "Select one or more member sets."))
+      res <- tryCatch(
+        combine_gene_set_annotation(state$gene_sets[mem], shared = input$anno_shared %||% "concat",
+                                    sep = input$anno_sep %||% ";",
+                                    label = input$anno_label %||% "multiple"),
+        error = function(e) e)
+      if (inherits(res, "condition")) return(list(ok = FALSE, msg = conditionMessage(res)))
+      list(ok = TRUE, res = res, members = mem)
+    })
+    output$anno_preview_ui <- renderUI({
+      cb <- anno_combined()
+      if (!isTRUE(cb$ok)) return(tags$div(class = "small text-muted mt-1", cb$msg))
+      res <- cb$res
+      comp <- table(factor(unname(res$annotation), levels = res$levels))
+      shown <- utils::head(sprintf("%s (%d)", names(comp), as.integer(comp)), 8L)
+      more <- if (length(comp) > 8L) sprintf(", +%d more", length(comp) - 8L) else ""
+      nm <- trimws(input$anno_name %||% "")
+      tagList(
+        tags$div(class = "small text-muted mt-1",
+          sprintf("%d gene(s), %d level(s): %s%s", length(res$annotation),
+                  length(res$levels), paste(shown, collapse = ", "), more)),
+        if (nzchar(res$note)) tags$div(class = "small text-warning", res$note),
+        if (nzchar(nm) && !is.null(state$gene_sets[[nm]]))
+          tags$div(class = "small text-danger", "That name is taken -- pick another."))
+    })
+    observeEvent(input$anno_build, {
+      cb <- anno_combined()
+      if (!isTRUE(cb$ok)) { showNotification(cb$msg, type = "warning"); return() }
+      nm <- trimws(input$anno_name %||% "")
+      if (!nzchar(nm)) { showNotification("Enter an annotation name.", type = "warning"); return() }
+      if (!is.null(state$gene_sets[[nm]])) {
+        showNotification("That name is taken -- pick another.", type = "warning"); return() }
+      res <- cb$res
+      rec <- new_gene_set(names(res$annotation), kind = "annotated", annotation = res$annotation,
+                          source = paste0("combine: ", paste(cb$members, collapse = ", ")))
+      sets <- state$gene_sets; sets[[nm]] <- rec; state$gene_sets <- sets; snapshot_absent()
+      .log(state, list(action = "gene_set_annotation_build", name = nm, members = cb$members,
+                       shared = input$anno_shared %||% "concat", levels = res$levels))
+      updateTextInput(session, "anno_name", value = "")
+      showNotification(sprintf("Built annotation '%s' (%d levels).", nm, length(res$levels)),
+                       type = "message", duration = 4)
+    })
+    observeEvent(input$anno_reset, {
+      updateSelectizeInput(session, "anno_members", selected = character(0))
+      updateTextInput(session, "anno_name", value = "")
+      updateRadioButtons(session, "anno_shared", selected = "concat")
+      updateTextInput(session, "anno_sep", value = ";")
+      updateTextInput(session, "anno_label", value = "multiple")
+    })
+
+    # Sidebar delete section (selected / all, both confirmed).
+    output$anno_delete_ui <- renderUI({
+      nms <- annotated_names()
+      if (!length(nms)) return(helpText(class = "small text-muted", "No annotations yet."))
+      cur <- shiny::isolate(input$anno_del_pick)
+      selectizeInput(ns("anno_del_pick"), NULL, choices = nms,
+                     selected = intersect(cur, nms), multiple = TRUE,
+                     options = list(placeholder = "Annotations to delete"))
+    })
+    .anno_delete <- function(pick) {
+      pick <- intersect(pick, annotated_names())
+      sets <- state$gene_sets; for (nm in pick) sets[[nm]] <- NULL; state$gene_sets <- sets
+      snapshot_absent(); .log(state, list(action = "gene_set_annotation_delete", names = pick))
+      showNotification(sprintf("Deleted %d annotation(s).", length(pick)),
+                       type = "message", duration = 3)
+    }
+    observeEvent(input$anno_del_sel, {
+      pick <- intersect(input$anno_del_pick %||% character(0), annotated_names())
+      if (!length(pick)) { showNotification("Select annotation(s) to delete.", type = "warning"); return() }
+      showModal(modalDialog(title = "Delete annotations", size = "s",
+        sprintf("Delete %d annotation(s): %s?", length(pick), paste(pick, collapse = ", ")),
+        footer = tagList(modalButton("Cancel"),
+                         actionButton(ns("anno_del_sel_ok"), "Delete", class = "btn-danger"))))
+    })
+    observeEvent(input$anno_del_sel_ok, {
+      removeModal(); .anno_delete(input$anno_del_pick %||% character(0))
+    })
+    observeEvent(input$anno_del_all, {
+      n <- length(annotated_names())
+      if (!n) { showNotification("No annotations to delete.", type = "warning"); return() }
+      showModal(modalDialog(title = "Delete all annotations", size = "s",
+        sprintf("Delete all %d annotation(s)? This cannot be undone.", n),
+        footer = tagList(modalButton("Cancel"),
+                         actionButton(ns("anno_del_all_ok"), "Delete all", class = "btn-danger"))))
+    })
+    observeEvent(input$anno_del_all_ok, { removeModal(); .anno_delete(annotated_names()) })
+
+    # Global view controls + the "Your annotations" panels.
+    output$anno_show_cols_ui <- renderUI({
+      req(state$working)
+      cols <- names(as.data.frame(SummarizedExperiment::rowData(state$working), optional = TRUE))
+      ft_name <- paste0(feature_type(), "_name")
+      cur <- shiny::isolate(input$anno_show_cols)
+      sel <- if (!is.null(cur)) intersect(cur, cols)
+             else if (ft_name %in% cols) ft_name else character(0)
+      selectizeInput(ns("anno_show_cols"), "Also show columns", choices = cols,
+                     selected = sel, multiple = TRUE)
+    })
+    output$anno_empty_note <- renderUI({
+      if (length(annotated_names())) return(NULL)
+      helpText(class = "small text-muted",
+        "No annotations yet. Combine gene sets on the left and click Build.")
+    })
+    # One annotated set's composition (100%-stacked horizontal bar); colours from
+    # the Palette Gene Set config (default qualitative until one is set).
+    anno_bar_gg <- function(nm) {
+      set <- state$gene_sets[[nm]]; req(!is.null(set))
+      comp <- gene_set_annotation_composition(set, working_rn(), isTRUE(input$anno_within))
+      validate(need(nrow(comp) > 0, "No genes in this annotation for the current view."))
+      comp <- comp[order(comp$n, decreasing = TRUE), , drop = FALSE]
+      comp$level <- factor(comp$level, levels = comp$level)
+      cols <- gene_set_anno_colors(levels(comp$level), state$palette$geneset[[nm]])
+      many <- nrow(comp) > 20L                       # legend cap: hide when too many
+      g <- ggplot2::ggplot(comp, ggplot2::aes(x = .data$n, y = "", fill = .data$level)) +
+        ggplot2::geom_col(position = ggplot2::position_fill(reverse = TRUE), width = 0.6) +
+        ggplot2::scale_x_continuous(labels = function(x) paste0(x * 100, "%")) +
+        ggplot2::scale_fill_manual(values = cols, drop = FALSE) +
+        ggplot2::labs(x = NULL, y = NULL, fill = NULL,
+          subtitle = sprintf("%d gene(s)%s", sum(comp$n),
+            if (isTRUE(input$anno_within)) " in the dataset" else "")) +
+        ggplot2::theme_minimal(base_size = 11) +
+        ggplot2::theme(legend.position = if (many) "none" else "bottom",
+                       panel.grid = ggplot2::element_blank(),
+                       axis.text.y = ggplot2::element_blank())
+      if (many) g + ggplot2::labs(caption = sprintf("%d levels (legend hidden)", nrow(comp))) else g
+    }
+    anno_member_frame <- function(nm) {
+      set <- state$gene_sets[[nm]]; ids <- names(set$annotation)
+      if (isTRUE(input$anno_within)) ids <- ids[ids %in% working_rn()]
+      fr <- members_frame(ids, input$anno_show_cols)
+      fr$Annotation <- unname(set$annotation[ids])
+      keep <- setdiff(names(fr), c("In dataset", "Annotation"))
+      fr[, c(keep, "Annotation", "In dataset"), drop = FALSE]
+    }
+    output$anno_panels <- renderUI({
+      nms <- annotated_names(); if (!length(nms)) return(NULL)
+      view <- input$anno_view %||% "bar"
+      panels <- lapply(seq_along(utils::head(nms, .anno_pool)), function(k) {
+        nm <- nms[k]; set <- state$gene_sets[[nm]]
+        nlev <- length(unique(unname(set$annotation)))
+        body <- if (identical(view, "table")) DT::DTOutput(ns(paste0("anno_dt_", k)))
+                else plotOutput(ns(paste0("anno_bar_", k)), height = "130px")
+        bslib::accordion_panel(
+          sprintf("%s  (%d genes, %d levels)", nm, length(set$ids), nlev), value = nm,
+          body,
+          tags$div(class = "mt-2",
+            actionButton(ns(paste0("anno_pdel_", k)), "Delete",
+                         class = "btn-sm btn-outline-danger", icon = shiny::icon("trash"))))
+      })
+      do.call(bslib::accordion, c(list(id = ns("anno_acc"), open = FALSE), panels))
+    })
+    # Pre-register a fixed pool of per-panel outputs + delete observers (index-keyed,
+    # reading the annotation currently at that index) -- avoids per-render observer leaks.
+    lapply(seq_len(.anno_pool), function(k) {
+      output[[paste0("anno_bar_", k)]] <- renderPlot({
+        nms <- annotated_names(); req(k <= length(nms)); anno_bar_gg(nms[k])
+      })
+      output[[paste0("anno_dt_", k)]] <- DT::renderDT({
+        nms <- annotated_names(); req(k <= length(nms))
+        dt_table(anno_member_frame(nms[k]), page_length = 10L)
+      })
+      observeEvent(input[[paste0("anno_pdel_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); .anno_delete(nms[k])
+      }, ignoreInit = TRUE)
+    })
+    observeEvent(input$anno_collapse,
+                 bslib::accordion_panel_close("anno_acc", values = TRUE))
+
+    # =====================================================================
     # COMPARE TAB (P6e): Stats (set-size bar) + Overlap (Euler/Venn/UpSet).
     # =====================================================================
     # Shared "Sets to visualize" multiselect: all selected by default, preserved
@@ -1252,7 +1503,7 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       nms <- names(state$gene_sets)
       if (!length(nms))
         return(helpText(class = "small text-muted",
-                        "No gene sets yet -- build some on the Manage tab."))
+                        "No gene sets yet -- build some on the Gene Sets tab."))
       cur <- shiny::isolate(input$cmp_sets)
       sel <- if (!is.null(cur)) intersect(cur, nms) else nms
       .gs_set_multiselect_ui(ns, "cmp_sets", "Sets to visualize", nms, sel)

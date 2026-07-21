@@ -9,6 +9,47 @@ test_that("mod_geneset UI mounts the build + your-sets cards", {
   expect_match(ui, "gs-new_name")
   expect_match(ui, "gs-sets_table")        # your gene sets
   expect_match(ui, "gs-members_table")
+  expect_match(ui, "gs-anno_members_ui")   # Annotation tab builder
+  expect_match(ui, "gs-anno_build")
+  expect_match(ui, "gs-anno_panels")
+})
+
+test_that("Annotation tab builds a kind='annotated' record and deletes it", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 5))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    # Two simple member sets with a one-gene overlap (rn[2]).
+    state$gene_sets <- list(up   = new_gene_set(rn[1:2], source = "paste"),
+                            down = new_gene_set(rn[2:3], source = "paste"))
+    session$flushReact()
+    expect_setequal(simple_names(), c("up", "down"))
+
+    session$setInputs(anno_members = c("up", "down"), anno_shared = "concat",
+                      anno_sep = ";", anno_name = "DE dir")
+    session$flushReact()
+    expect_true(anno_combined()$ok)
+    session$setInputs(anno_build = 1); session$flushReact()
+    rec <- state$gene_sets[["DE dir"]]
+    expect_equal(rec$kind, "annotated")
+    expect_equal(unname(rec$annotation[rn[2]]), "up;down")     # overlap concatenated
+    expect_setequal(annotated_names(), "DE dir")
+    expect_match(rec$source, "^combine: up, down")
+
+    # A name clash is rejected (no second record, store unchanged).
+    session$setInputs(anno_name = "DE dir", anno_build = 2); session$flushReact()
+    expect_length(annotated_names(), 1L)
+
+    # Delete via the sidebar selected-delete path.
+    session$setInputs(anno_del_pick = "DE dir", anno_del_sel = 1); session$flushReact()
+    session$setInputs(anno_del_sel_ok = 1); session$flushReact()
+    expect_length(annotated_names(), 0L)
+    # The simple member sets are untouched.
+    expect_setequal(names(state$gene_sets), c("up", "down"))
+  })
 })
 
 # Stage a paste of rownames + create/append via the Save section.

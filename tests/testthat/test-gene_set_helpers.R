@@ -132,6 +132,28 @@ test_that("combine_gene_set_annotation: empty / one-set / NA-blank edges", {
   expect_equal(edge$levels, "A")
 })
 
+test_that("gene_set_annotation_composition counts per level, within-aware", {
+  set <- new_gene_set(c("g1", "g2", "g3", "g4"), kind = "annotated",
+                      annotation = c(g1 = "up", g2 = "up", g3 = "down", g4 = "up"))
+  comp <- gene_set_annotation_composition(set)
+  expect_setequal(comp$level, c("up", "down"))
+  expect_equal(comp$n[comp$level == "up"], 3L)
+  comp2 <- gene_set_annotation_composition(set, feature_ids = c("g1", "g3"), within = TRUE)
+  expect_equal(comp2$n[comp2$level == "up"], 1L)
+  expect_equal(comp2$n[comp2$level == "down"], 1L)
+  expect_equal(nrow(gene_set_annotation_composition(new_gene_set("g1"))), 0L)  # no annotation
+})
+
+test_that("gene_set_anno_colors: default scheme + palette override (normalized hex)", {
+  d <- gene_set_anno_colors(c("up", "down"))
+  expect_setequal(names(d), c("up", "down"))
+  expect_true(all(grepl("^#[0-9A-Fa-f]{6}$", d)))
+  cfg <- list(name = "Custom palette", colors = c(up = "#ff0000", down = "#0000ff"))
+  o <- gene_set_anno_colors(c("up", "down"), cfg)
+  expect_equal(unname(o[["up"]]), "#FF0000")
+  expect_equal(unname(o[["down"]]), "#0000FF")
+})
+
 # ---- File round-trip (P6d): JSON / GMT / TSV serializers ------------------
 
 test_that("JSON round-trips ids, names, kind, source (faithful)", {

@@ -275,6 +275,48 @@ combine_gene_set_annotation <- function(sets, shared = c("concat", "label", "fir
   list(annotation = annotation, levels = levels, shared_ids = shared_ids, note = note)
 }
 
+#' Per-level gene counts for an annotated set (the composition view)
+#'
+#' Powers the Annotation tab's composition bar. Non-destructive: counts derive
+#' live from the record's `annotation` map (id -> label).
+#' @param set An annotated gene-set record (with an `annotation` map).
+#' @param feature_ids Current dataset feature ids (`rownames(dds)`); used when
+#'   `within = TRUE`.
+#' @param within When TRUE, count only genes present in the dataset.
+#' @return A data.frame `level` (character, first-appearance order) / `n`
+#'   (integer), or an empty frame when there is no annotation.
+#' @export
+gene_set_annotation_composition <- function(set, feature_ids = NULL, within = FALSE) {
+  anno <- if (is.list(set)) set$annotation else NULL
+  empty <- data.frame(level = character(0), n = integer(0), stringsAsFactors = FALSE)
+  if (is.null(anno) || !length(anno)) return(empty)
+  ids <- names(anno)
+  if (isTRUE(within) && !is.null(feature_ids)) {
+    keep <- ids %in% feature_ids; anno <- anno[keep]
+  }
+  if (!length(anno)) return(empty)
+  lv <- unique(unname(anno))                        # first-appearance level order
+  n  <- vapply(lv, function(l) sum(anno == l), integer(1))
+  data.frame(level = lv, n = unname(n), stringsAsFactors = FALSE)
+}
+
+#' Colours for a gene-set annotation's levels
+#'
+#' Mirrors [gene_set_presence_colors()] / [removal_status_colors()]: a default
+#' qualitative scheme, overridable by a Palette `Gene Set` config (edited on the
+#' Palette page, keyed by the annotation name).
+#' @param levels The annotation's levels (character).
+#' @param config A palette config `list(name, colors, custom)`, or `NULL` for the
+#'   default qualitative scheme.
+#' @return A named character vector (level -> hex).
+#' @export
+gene_set_anno_colors <- function(levels, config = NULL) {
+  levels <- as.character(levels)
+  if (is.null(config))
+    return(palette_discrete(levels, NULL, "Okabe-Ito"))
+  palette_discrete(levels, config$colors, config$name %||% "Custom palette", config$custom)
+}
+
 # ===========================================================================
 # File round-trip (P6d): JSON / GMT / TSV serializers.
 #
