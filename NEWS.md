@@ -1,4 +1,4 @@
-# ddsdashboard (development version)
+# ddsdashboard 0.4.3
 
 * **Gene sets > Heatmap** (P7c): a `ComplexHeatmap` over a named gene set (blank until you pick
   one). Render-only with a spinner — a heatmap is slow, and a single static plot has no cheap live
@@ -27,9 +27,6 @@
   ordered by clustering. Saving is conflict-guarded — a name clash prompts Overwrite / Abort rather
   than silently overwriting, the name field clears on success, and saving a column-cluster column no
   longer resets the annotation selectors.
-* Next: Phase 7 continues — P7e (annotated gene-set layer + the Palette Gene Set domain), which
-  closes the phase.
-
 # ddsdashboard 0.4.2
 
 * Size-factor normalization is decoupled from assay assignment and gets its own **Size factors**
