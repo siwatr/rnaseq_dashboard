@@ -365,23 +365,25 @@ expr_kmeans <- function(mat, k, seed = 1L, nstart = 10L) {
   relabel(km$cluster)
 }
 
-#' Slice labels carrying member counts, e.g. "1 (n=23)"
+#' Slice labels carrying member counts, e.g. "C1\\n(23)"
 #'
-#' Turns a cluster-assignment vector into a factor whose levels are the member-
-#' count slice titles ComplexHeatmap shows for `row_split`/`column_split`. Numeric
-#' cluster ids order numerically; levels are ordered so the slices read 1, 2, 3, ...
+#' Turns a cluster-assignment vector into a factor whose levels are the two-line
+#' slice titles ComplexHeatmap shows for `row_split`/`column_split`: a `<prefix><id>`
+#' line over a `(count)` line. Numeric cluster ids order numerically; levels are
+#' ordered so the slices read C1, C2, C3, ...
 #'
 #' @param clusters A cluster-assignment vector (from [expr_kmeans()]).
-#' @param prefix Optional label prefix (e.g. "row ").
-#' @return A factor aligned to `clusters`, levels = the "id (n=count)" titles.
+#' @param prefix Label prefix before the cluster id (default `"C"` -> "C1").
+#' @return A factor aligned to `clusters`, levels = the `"<prefix><id>\n(count)"`
+#'   titles.
 #' @export
-split_with_counts <- function(clusters, prefix = "") {
+split_with_counts <- function(clusters, prefix = "C") {
   cl <- as.character(clusters)
   cnt <- table(cl)
   lv <- names(cnt)
   num <- suppressWarnings(as.numeric(lv))
   lv <- if (!any(is.na(num))) lv[order(num)] else lv[order(lv)]
-  lab_for <- function(x) sprintf("%s%s (n=%d)", prefix, x, as.integer(cnt[x]))
+  lab_for <- function(x) sprintf("%s%s\n(%d)", prefix, x, as.integer(cnt[x]))
   factor(lab_for(cl), levels = lab_for(lv))
 }
 

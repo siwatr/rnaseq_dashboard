@@ -284,12 +284,15 @@ after P7a; the heatmap splits into core + k-means; the Phase-6-deferred annotate
   computed *outside* `Heatmap()` via **`expr_kmeans(mat, k, seed)`** (RNG-state-safe; clusters
   relabelled 1 = largest; `k < 2` = off) → `row_split`/`column_split`, run on the **displayed
   matrix** (follows the z-score toggle). **`split_with_counts()`** = the member-count slice-label
-  standard (`1 (n=23)`). A visible **seed** + a **Redo** button (bumps the seed → stale → Render);
-  `k`/seed are gated in the deferred `sig` like everything else. Membership (`cluster_membership()`,
-  named by id) is kept so **row clusters save as gene sets** — a prefix (default = source set name) +
-  a single "Save row clusters as gene sets" reusing **`gene_set_commit()`** (conflict-safe) with
-  kmeans provenance in each set's `source`, so they round-trip through the P6d export; **column
-  clusters stay in-session only**. + tests. + doc-sync (per-PR) + propose `v0.4.3`.
+  standard, two-line `C<id>\n(count)`. A visible **seed** + a **Redo** button (bumps the seed →
+  stale → Render); `k`/seed are gated in the deferred `sig` like everything else. Membership
+  (`cluster_membership()`, named by id) is kept so **row clusters save as gene sets** — a prefix
+  (default = source set name) + a single "Save row clusters as gene sets" reusing
+  **`gene_set_commit()`** (conflict-safe) with kmeans provenance in each set's `source`, so they
+  round-trip through the P6d export. **Column clusters save to a `colData` factor** ("Save column
+  clusters to colData" → `state_mutate`, an undoable edit; samples hidden by the "Showing" subset get
+  an `unclustered` level) so the sample clustering becomes a reusable annotation. + tests. + doc-sync
+  (per-PR) + propose `v0.4.3`.
 - **P7e ⬜** — the Phase-6-deferred **annotated layer** (`kind="annotated"`,
   `combine_gene_set_annotation` with shared-gene **warning**, annotation-driven `row_split` +
   nested k-means) + the `Palette > Gene Set` per-set-colour domain. Closes Phase 7 → propose `v0.5.0`.

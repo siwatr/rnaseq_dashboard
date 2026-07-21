@@ -18,10 +18,11 @@
   stops); the heatmap uses it now and the planned shared heatmap controller will too.
 * **Heatmap k-means** (P7d): a "Clustering (k-means)" panel splits the heatmap into row and/or
   column clusters (k = 1 turns it off), computed on the displayed values with a visible seed and a
-  Redo button for a fresh clustering; slices are labelled with their member counts. Each **row
-  cluster can be saved as a gene set** in one click (prefix defaults to the source set's name, with
-  kmeans provenance recorded), so clusters flow into the rest of the app and the gene-set export.
-  Column clusters are display-only.
+  Redo button for a fresh clustering; slices are labelled `C1 / (count)`. Each **row cluster can be
+  saved as a gene set** in one click (prefix defaults to the source set's name, with kmeans
+  provenance recorded), and the **column clustering can be saved to a colData column** for reuse as
+  a sample annotation (samples hidden by the "Showing" subset are marked `unclustered`). So clusters
+  flow into the rest of the app, the gene-set export, and the annotation controls.
 * Next: Phase 7 continues — P7e (annotated gene-set layer + the Palette Gene Set domain), which
   closes the phase.
 

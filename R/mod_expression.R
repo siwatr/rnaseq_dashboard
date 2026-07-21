@@ -424,9 +424,17 @@ mod_expression_ui <- function(id) {
             conditionalPanel(
               sprintf("input['%s'] >= 2", ns("hm_row_k")),
               tags$hr(class = "my-2"),
-              textInput(ns("hm_cluster_prefix"), "Save clusters: name prefix",
-                        placeholder = "defaults to the set name"),
+              textInput(ns("hm_cluster_prefix"), "Save row cluster to gene set",
+                        placeholder = "name prefix (defaults to the set name)"),
               actionButton(ns("hm_save_clusters"), "Save row clusters as gene sets",
+                           icon = icon("floppy-disk"),
+                           class = "btn-sm btn-outline-primary")),
+            conditionalPanel(
+              sprintf("input['%s'] >= 2", ns("hm_col_k")),
+              tags$hr(class = "my-2"),
+              textInput(ns("hm_col_colname"), "Save column cluster to colData",
+                        placeholder = "column name (default: sample_cluster)"),
+              actionButton(ns("hm_save_col_clusters"), "Save column clusters to colData",
                            icon = icon("floppy-disk"),
                            class = "btn-sm btn-outline-primary"))),
           bslib::accordion_panel(
@@ -881,6 +889,38 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                 if (length(added) == 1L) "" else "s", paste(added, collapse = ", ")),
         type = "message")
     })
+    # Save the column (sample) clustering as a colData factor for later annotation.
+    # A real, undoable edit (state_mutate). Samples not in the plot (dropped by the
+    # "Showing" subset) get an "unclustered" level.
+    observeEvent(input$hm_save_col_clusters, {
+      s <- hm_shown$value()
+      if (is.null(s) || is.null(s$col_clusters)) {
+        showNotification("Render a column-clustered heatmap (column k >= 2) first.",
+                         type = "warning"); return()
+      }
+      colname <- trimws(input$hm_col_colname %||% "")
+      if (!nzchar(colname)) colname <- "sample_cluster"
+      cc <- s$col_clusters                         # named by sample id (shown only)
+      all_s <- colnames(state$working)
+      lab <- stats::setNames(rep("unclustered", length(all_s)), all_s)
+      lab[names(cc)] <- paste0("C", cc)
+      has_unclustered <- any(lab == "unclustered")
+      lv <- c(paste0("C", sort(unique(as.integer(cc)))),
+              if (has_unclustered) "unclustered")
+      fac <- factor(unname(lab[all_s]), levels = lv)
+      state_mutate(state, function(dds) {
+        cd <- SummarizedExperiment::colData(dds)
+        cd[[colname]] <- fac
+        SummarizedExperiment::colData(dds) <- cd
+        dds
+      }, action = list(action = "add_col_cluster", column = colname,
+                       k = length(unique(cc)), seed = s$seed))
+      showNotification(
+        sprintf("Saved column clusters to colData column '%s' (%d cluster%s%s).",
+                colname, length(unique(cc)), if (length(unique(cc)) == 1L) "" else "s",
+                if (has_unclustered) sprintf("; %d unclustered", sum(lab == "unclustered")) else ""),
+        type = "message")
+    })
 
     # The gated snapshot: the value matrix (cached in `derived`), the prepared
     # gene-set matrix, the plotted (column-subset) matrix, resolved labels/marks,
@@ -916,7 +956,8 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                   row_cov = NULL, col_cov = NULL, anno = NULL,
                   cluster_rows = FALSE, cluster_cols = FALSE,
                   show_row_dend = FALSE, show_col_dend = FALSE,
-                  row_split = NULL, col_split = NULL, row_clusters = NULL, seed = 1L,
+                  row_split = NULL, col_split = NULL,
+                  row_clusters = NULL, col_clusters = NULL, seed = 1L,
                   empty_msg = "Pick a saved set or search genes, then click Render.")
       if (is.null(hm$mat)) return(out)
       show <- intersect(colnames(hm$mat), showing_samples())
@@ -965,7 +1006,8 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       rc <- if (length(rk) == 1L && !is.na(rk) && rk >= 2L) expr_kmeans(pm, rk, seed) else NULL
       cc <- if (length(ck) == 1L && !is.na(ck) && ck >= 2L) expr_kmeans(t(pm), ck, seed) else NULL
       out$seed <- seed
-      out$row_clusters <- rc
+      out$row_clusters <- rc                     # named by gene id (save as gene sets)
+      out$col_clusters <- cc                     # named by sample id (save to colData)
       out$row_split <- if (!is.null(rc)) split_with_counts(rc) else NULL
       out$col_split <- if (!is.null(cc)) split_with_counts(cc) else NULL
 

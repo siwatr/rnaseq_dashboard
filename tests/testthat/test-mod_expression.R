@@ -365,7 +365,7 @@ test_that("heatmap k-means splits rows/columns and saves clusters as gene sets (
     expect_length(levels(s$row_split), 3L)               # 3 row clusters
     expect_length(levels(s$col_split), 2L)               # 2 column clusters
     expect_equal(length(s$row_clusters), 20L)            # membership named by id
-    expect_true(all(grepl("n=", levels(s$row_split))))   # counts in the slice labels
+    expect_true(all(grepl("^C\\d+\n\\(\\d+\\)$", levels(s$row_split))))  # "C1\n(8)" slice labels
 
     # Save row clusters as gene sets -> SetA k1/k2/k3 with provenance
     session$setInputs(hm_cluster_prefix = "", hm_save_clusters = 1)
@@ -382,5 +382,39 @@ test_that("heatmap k-means splits rows/columns and saves clusters as gene sets (
     session$flushReact()
     expect_null(hm_out$value()$row_split)
     expect_null(hm_out$value()$row_clusters)
+  })
+})
+
+test_that("heatmap saves column clusters to a colData factor (unshown -> unclustered)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 4, seed = 3)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:20]))
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "auto", hm_col_mode = "auto",
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto",
+                      hm_row_k = 1, hm_col_k = 2, hm_seed = 1)
+    session$flushReact()
+    # hide one condition via the display-only "Showing" subset -> those become "unclustered"
+    session$setInputs(hm_show_by = "condition", hm_show_values = "control")
+    session$flushReact()
+    session$setInputs(hm_render = 1); session$flushReact()
+    expect_equal(ncol(hm_out$value()$mat), 4L)           # only the shown half
+
+    dv0 <- state$data_version
+    session$setInputs(hm_col_colname = "sample_km", hm_save_col_clusters = 1)
+    session$flushReact()
+    cd <- SummarizedExperiment::colData(state$working)
+    expect_true("sample_km" %in% colnames(cd))
+    expect_true(is.factor(cd$sample_km))
+    expect_setequal(levels(cd$sample_km), c("C1", "C2", "unclustered"))
+    expect_equal(sum(cd$sample_km == "unclustered"), 4L) # the hidden 'treated' half
+    expect_gt(state$data_version, dv0)                    # a real, undoable edit
   })
 })

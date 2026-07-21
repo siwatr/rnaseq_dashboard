@@ -2,20 +2,22 @@
 % Please edit documentation in R/expr_helpers.R
 \name{split_with_counts}
 \alias{split_with_counts}
-\title{Slice labels carrying member counts, e.g. "1 (n=23)"}
+\title{Slice labels carrying member counts, e.g. "C1\\n(23)"}
 \usage{
-split_with_counts(clusters, prefix = "")
+split_with_counts(clusters, prefix = "C")
 }
 \arguments{
 \item{clusters}{A cluster-assignment vector (from \code{\link[=expr_kmeans]{expr_kmeans()}}).}
 
-\item{prefix}{Optional label prefix (e.g. "row ").}
+\item{prefix}{Label prefix before the cluster id (default \code{"C"} -> "C1").}
 }
 \value{
-A factor aligned to \code{clusters}, levels = the "id (n=count)" titles.
+A factor aligned to \code{clusters}, levels = the \code{"<prefix><id>\\n(count)"}
+titles.
 }
 \description{
-Turns a cluster-assignment vector into a factor whose levels are the member-
-count slice titles ComplexHeatmap shows for \code{row_split}/\code{column_split}. Numeric
-cluster ids order numerically; levels are ordered so the slices read 1, 2, 3, ...
+Turns a cluster-assignment vector into a factor whose levels are the two-line
+slice titles ComplexHeatmap shows for \code{row_split}/\code{column_split}: a \verb{<prefix><id>}
+line over a \code{(count)} line. Numeric cluster ids order numerically; levels are
+ordered so the slices read C1, C2, C3, ...
 }

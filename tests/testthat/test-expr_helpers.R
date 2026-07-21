@@ -225,14 +225,14 @@ test_that("expr_kmeans relabels clusters by decreasing size (1 = largest)", {
   expect_equal(sum(cl == 2), 2L)
 })
 
-test_that("split_with_counts labels slices with member counts, ordered", {
+test_that("split_with_counts labels slices 'C<id>\\n(count)', ordered", {
   cl <- c(g1 = 2, g2 = 1, g3 = 1, g4 = 2, g5 = 1)
   f <- split_with_counts(cl)
   expect_s3_class(f, "factor")
-  expect_equal(levels(f), c("1 (n=3)", "2 (n=2)"))        # numeric order, counts
-  expect_equal(as.character(f[1]), "2 (n=2)")
-  expect_equal(levels(split_with_counts(cl, prefix = "row ")),
-               c("row 1 (n=3)", "row 2 (n=2)"))
+  expect_equal(levels(f), c("C1\n(3)", "C2\n(2)"))        # numeric order, two-line labels
+  expect_equal(as.character(f[1]), "C2\n(2)")
+  expect_equal(levels(split_with_counts(cl, prefix = "K")),
+               c("K1\n(3)", "K2\n(2)"))
 })
 
 test_that("cluster_membership groups ids by cluster in order", {
