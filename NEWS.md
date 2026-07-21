@@ -7,8 +7,12 @@
   z-score is the default (toggle raw `log10`), with constant rows drawn flat rather than breaking
   the plot. Row/column labels are duplicate- and NA-safe (a gene symbol shared by several ids shows
   for each; a missing label falls back to the id) and can show all / a searched selection / none,
-  defaulting by size. Sample annotation, separate cluster + dendrogram toggles, a divergent ramp
-  centred at 0 for z-scores, and the "Showing:" sample subset round it out.
+  defaulting by size. Sample annotation, separate cluster + 3-state (Off/Auto/On) dendrogram
+  controls, and a divergent ramp centred at 0 for z-scores (the legend keeps the underlying value,
+  e.g. "z-score / log10(TPM + 1)"). Because a redraw is expensive, colour and annotation changes are
+  gated too — they mark the plot stale rather than auto-redrawing. The Render button and stale banner
+  sit above the plot; the sidebar adds Collapse/Expand-all and an in-app Plot-size panel (height px /
+  width %), plus the "Showing:" sample subset.
 * Extracted a reusable **continuous-palette control** (`continuous_palette_ui`/`_server`) from the
   Palette page so any plot can carry its own colour ramp (base palette + anchors + reverse + custom
   stops); the heatmap uses it now and the planned shared heatmap controller will too.

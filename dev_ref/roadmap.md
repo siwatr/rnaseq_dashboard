@@ -267,11 +267,16 @@ after P7a; the heatmap splits into core + k-means; the Phase-6-deferred annotate
   fallback) are safe); modes **Auto/All/Selected/None** (Auto resolves by size, separate row/column
   thresholds — `option()`s `heatmap_row_label_max`/`_col_label_max`/`_dend_max`), **Selected** marks
   searched genes/samples via `anno_mark()` and reports how many can't be shown (`expr_label_coverage()`).
-  Sample (top) annotation via `aes_annotation()` (values-snapshot / colours-live, like the QC
-  correlation heatmap). **Cluster** and **show-dendrogram** are separate controls (dendrograms
-  auto-hide above their threshold). z-score → divergent RdBu centred at 0 (`expr_symmetric_limits()`);
-  raw → sequential viridis. Colour source: a **Custom ramp** (default) or the assay's Palette-page
-  config (raw only). `mod_plot_subset` "Showing:". + a reusable **`mod_continuous_palette.R`**
+  Sample (top) annotation via `aes_annotation()`. **Deliberate exception to the "display aesthetics
+  stay live" rule** (a heatmap redraw isn't cheap): the value ramp AND annotation colours are
+  **snapshotted + gated behind Render** (ramp/`hm_ramp_src`/`state$palette` in the `sig`), so a
+  colour/Palette edit shows the stale banner rather than auto-redrawing. **Cluster** and
+  **show-dendrogram** are separate controls (dendrograms a 3-state **Off/Auto/On** radio, Auto hides
+  above its threshold). z-score → divergent RdBu centred at 0 (`expr_symmetric_limits()`) and the
+  legend keeps the value on a 2nd line (`z-score\n<value>`); raw → sequential viridis. Colour source:
+  a **Custom ramp** (default) or the assay's Palette-page config (raw only). Render + stale banner
+  **above the plot**; sidebar **Collapse/Expand all** + a **Plot size** panel (in-app height px /
+  width % only). `mod_plot_subset` "Showing:". + a reusable **`mod_continuous_palette.R`**
   (`continuous_palette_ui`/`_server`) extracted from the Palette page's per-item continuous panel
   (host-namespace sub-module → reactive `list(name,min,max,custom,reverse)`; the P8 shared heatmap
   controller reuses it). + tests. + doc-sync (per-PR) + propose `v0.4.3`.

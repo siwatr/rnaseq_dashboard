@@ -54,8 +54,10 @@
 # and `col_fun` the value ramp -- both resolved live at draw (a value ramp is a
 # display aesthetic, so it must not enter the deferred sig / stale the plot).
 .hm_build <- function(s, anno, col_fun) {
+  # `name` is a stable matrix id (the legend title comes from heatmap_legend_param,
+  # which may be multi-line e.g. "z-score\nlog10(TPM + 1)" -- unsafe as `name`).
   args <- list(
-    matrix = s$mat, name = s$legend, col = col_fun,
+    matrix = s$mat, name = "value", col = col_fun,
     cluster_rows = isTRUE(s$cluster_rows), cluster_columns = isTRUE(s$cluster_cols),
     show_row_dend = isTRUE(s$show_row_dend), show_column_dend = isTRUE(s$show_col_dend),
     show_row_names = identical(s$row_mode, "all"),
@@ -326,16 +328,23 @@ mod_expression_ui <- function(id) {
                          placeholder = "Genes to label")
         else uiOutput(ns("hm_col_sel_ui"))))
   }
+  # A 3-state dendrogram control (Off / Auto / On) -- inline radio, matching the
+  # label-mode radios; values kept as hide/auto/show so the server switch is unchanged.
+  hm_dend_radio <- function(id, label) radioButtons(
+    id, label, c("Off" = "hide", "Auto" = "auto", "On" = "show"),
+    selected = "auto", inline = TRUE)
   heatmap_pill <- bslib::nav_panel(
     "Heatmap",
     bslib::layout_sidebar(
       sidebar = bslib::sidebar(
         title = tags$h3("Gene-set heatmap", class = "fs-6 mb-0"), width = 350,
-        tags$div(class = "d-flex justify-content-end mb-1",
-                 actionButton(ns("hm_render"), "Render", icon = icon("play"),
-                              class = "btn-primary")),
+        tags$div(class = "d-flex gap-2 mb-2",
+          actionButton(ns("hm_expand_all"), "Expand all", icon = icon("plus"),
+                       class = "btn-sm btn-outline-secondary flex-fill"),
+          actionButton(ns("hm_collapse_all"), "Collapse all", icon = icon("minus"),
+                       class = "btn-sm btn-outline-secondary flex-fill")),
         bslib::accordion(
-          open = "Gene set",
+          id = ns("hm_acc"), open = "Gene set",
           bslib::accordion_panel(
             "Gene set", icon = icon("magnifying-glass"),
             radioButtons(ns("hm_source"), "Source",
@@ -386,24 +395,30 @@ mod_expression_ui <- function(id) {
             bslib::input_switch(ns("hm_cluster_rows"), "Cluster rows", value = TRUE),
             conditionalPanel(
               sprintf("input['%s']", ns("hm_cluster_rows")),
-              selectInput(ns("hm_row_dend"), "Row dendrogram",
-                          c("Auto (by size)" = "auto", "Show" = "show", "Hide" = "hide"),
-                          selected = "auto")),
+              hm_dend_radio(ns("hm_row_dend"), "Row dendrogram")),
             tags$hr(class = "my-2"),
             bslib::input_switch(ns("hm_cluster_cols"), "Cluster columns", value = TRUE),
             conditionalPanel(
               sprintf("input['%s']", ns("hm_cluster_cols")),
-              selectInput(ns("hm_col_dend"), "Column dendrogram",
-                          c("Auto (by size)" = "auto", "Show" = "show", "Hide" = "hide"),
-                          selected = "auto")))),
+              hm_dend_radio(ns("hm_col_dend"), "Column dendrogram"))),
+          bslib::accordion_panel(
+            "Plot size", icon = icon("up-right-and-down-left-from-center"),
+            helpText(class = "small text-muted",
+                     "In-app display size only (not applied to a saved image)."),
+            sliderInput(ns("hm_height"), "Height (px)", min = 300, max = 1400,
+                        value = 560, step = 20),
+            sliderInput(ns("hm_width"), "Width (% of panel)", min = 30, max = 100,
+                        value = 100, step = 5))),
         plot_subset_ui(ns, "hm")
       ),
       bslib::card(
         bslib::card_header(tags$h3("Gene-set expression heatmap", class = "fs-6 mb-0")),
-        uiOutput(ns("hm_stale")),
+        tags$div(class = "d-flex align-items-center gap-2 mb-2",
+                 actionButton(ns("hm_render"), "Render", icon = icon("play"),
+                              class = "btn-primary"),
+                 tags$div(class = "flex-grow-1", uiOutput(ns("hm_stale")))),
         uiOutput(ns("hm_info")),
-        shinycssloaders::withSpinner(plotOutput(ns("hm_plot"), height = "560px"),
-                                     proxy.height = "560px")
+        uiOutput(ns("hm_plot_container"))
       )
     )
   )
@@ -799,11 +814,20 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
     outputOptions(output, "hm_anno_ui", suspendWhenHidden = FALSE)
     observeEvent(input$hm_clear_anno,
                  updateSelectizeInput(session, "hm_anno", selected = character(0)))
+    # Collapse / expand all sidebar accordions (unnamespaced id; sendInputMessage
+    # namespaces -- the app-wide pattern, see mod_palette).
+    observeEvent(input$hm_expand_all,
+                 bslib::accordion_panel_open("hm_acc", values = TRUE))
+    observeEvent(input$hm_collapse_all,
+                 bslib::accordion_panel_close("hm_acc", values = TRUE))
 
     # The gated snapshot: the value matrix (cached in `derived`), the prepared
     # gene-set matrix, the plotted (column-subset) matrix, resolved labels/marks,
-    # cluster/dend flags, ramp config, and annotation *values*. Colours resolve
-    # live at draw. Everything here waits for Render (no cheap live layer).
+    # cluster/dend flags, the ramp config, AND the fully-resolved annotation
+    # (df + colours). Unlike the fast dual_plot pages (where display aesthetics stay
+    # live), a ComplexHeatmap redraw is expensive, so for this plot EVERY aesthetic
+    # -- including the value ramp and annotation colours -- is gated behind Render:
+    # a colour/palette change shows the stale banner instead of auto-redrawing.
     hm_spec <- reactive({
       req(state$working)
       dds <- state$working
@@ -815,9 +839,15 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
               zscore = zsc, only_expressed = isTRUE(input$hm_only_expr %||% TRUE),
               transform = spec$transform, pseudocount = spec$pseudocount)
       base_lab <- if (identical(spec$transform, "none")) vm$label else spec$label
+      # Value ramp snapshot: a Custom ramp, or the assay's Palette-page config for a
+      # raw (non-z-scored) matrix (z-scores always use the divergent Custom ramp).
+      use_palette <- identical(input$hm_ramp_src %||% "custom", "palette") && !zsc
+      ramp <- if (use_palette) (state$palette$assays[[spec$assay]] %||% hm_ramp())
+              else hm_ramp()
 
-      out <- list(hm = hm, mat = NULL, zscored = zsc, assay = spec$assay,
-                  legend = if (zsc) "z-score" else base_lab,
+      out <- list(hm = hm, mat = NULL, zscored = zsc, assay = spec$assay, ramp = ramp,
+                  # z-score keeps the underlying value on a 2nd line (e.g. "z-score\nlog10(TPM + 1)")
+                  legend = if (zsc) paste0("z-score\n", base_lab) else base_lab,
                   row_mode = "none", col_mode = "none",
                   row_labels = character(0), col_labels = character(0),
                   row_mark_at = integer(0), row_mark_lab = character(0),
@@ -866,17 +896,10 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
       valid <- vapply(aes_catalog(state), `[[`, "", "key")
       sel_anno <- intersect(input$hm_anno, valid)
-      if (length(sel_anno)) {
-        built <- Filter(Negate(is.null), lapply(sel_anno, function(k) {
-          r <- aes_resolve(state, k, show)
-          if (is.null(r)) NULL else list(key = k, name = r$label, values = r$values)
-        }))
-        if (length(built)) out$anno <- list(
-          keys = vapply(built, `[[`, "", "key"),
-          df = data.frame(stats::setNames(lapply(built, `[[`, "values"),
-                                          vapply(built, `[[`, "", "name")),
-                          row.names = show, check.names = FALSE, stringsAsFactors = FALSE))
-      }
+      # Fully resolve the annotation (values + colours) NOW, so a Palette edit to an
+      # annotation colour stales the plot (via state$palette in the sig) rather than
+      # auto-recolouring -- consistent with the gated ramp above.
+      out$anno <- if (length(sel_anno)) aes_annotation(state, sel_anno, show) else NULL
       out
     })
     # Render-only (no auto id created -> auto never fires); stale banner still works.
@@ -889,7 +912,8 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                           isTRUE(input$hm_cluster_rows %||% TRUE),
                           isTRUE(input$hm_cluster_cols %||% TRUE),
                           input$hm_row_dend, input$hm_col_dend, input$hm_anno,
-                          state$data_version)))         # ramp is a live aesthetic (not gated)
+                          input$hm_ramp_src, hm_ramp(), state$palette,  # colours gated too
+                          state$data_version)))
     output$hm_stale <- eng$stale_note(hm_shown)
 
     output$hm_info <- renderUI({
@@ -922,26 +946,21 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       validate(need(!is.null(s$mat) && nrow(s$mat) > 0,
                     s$empty_msg %||% "No genes to plot."))
       validate(need(ncol(s$mat) > 0, "No samples in the current 'Showing' selection."))
-      # Colour ramp resolved LIVE (a display aesthetic, not gated): a Custom ramp,
-      # or the assay's Palette-page config for a raw (non-z-scored) matrix. So a
-      # ramp / Palette edit recolours without a re-render (mirrors the QC heatmap).
-      ramp <- if (identical(input$hm_ramp_src %||% "custom", "palette") && !s$zscored)
-                (state$palette$assays[[s$assay]] %||% hm_ramp()) else hm_ramp()
-      col_fun <- .hm_col_fun(s$mat, ramp, s$zscored)
+      # Everything comes from the gated snapshot (ramp + annotation resolved in
+      # hm_spec) -- nothing colour-related is read live here, so a Palette edit
+      # stales the plot rather than auto-redrawing this slow static heatmap.
+      col_fun <- .hm_col_fun(s$mat, s$ramp, s$zscored)
       validate(need(!is.null(col_fun), "Install 'circlize' for the heatmap colour scale."))
-      anno <- NULL
-      if (!is.null(s$anno)) {
-        show <- colnames(s$mat)
-        res_list <- Filter(Negate(is.null),
-                           lapply(s$anno$keys, function(k) aes_resolve(state, k, show)))
-        if (length(res_list)) {
-          anno_col <- stats::setNames(lapply(res_list, aes_heatmap_col),
-                                      vapply(res_list, function(r) r$label, ""))
-          anno <- ComplexHeatmap::HeatmapAnnotation(
-            df = s$anno$df[show, , drop = FALSE], col = anno_col)
-        }
-      }
+      anno <- if (!is.null(s$anno))
+        ComplexHeatmap::HeatmapAnnotation(df = s$anno$df, col = s$anno$col) else NULL
       ComplexHeatmap::draw(.hm_build(s, anno, col_fun))
+    })
+    # In-app plot size (display-only): a resize re-renders live (not a gated change).
+    output$hm_plot_container <- renderUI({
+      h <- paste0(input$hm_height %||% 560, "px")
+      w <- paste0(input$hm_width %||% 100, "%")
+      shinycssloaders::withSpinner(
+        plotOutput(ns("hm_plot"), height = h, width = w), proxy.height = h)
     })
     # Exposed for tests.
     hm_out <- hm_shown

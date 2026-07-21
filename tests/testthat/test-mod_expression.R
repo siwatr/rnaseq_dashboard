@@ -13,11 +13,16 @@ test_that("Expression UI mounts the tabs + single-gene containers", {
 
 test_that("Expression UI mounts the gene-set heatmap pill (P7c)", {
   ui <- as.character(mod_expression_ui("ex"))
-  expect_match(ui, "ex-hm_plot")
+  expect_match(ui, "ex-hm_plot_container")       # reactive-size container
   expect_match(ui, "ex-hm_render")
   expect_match(ui, "ex-hm_zscore")
   expect_match(ui, "ex-hm_cluster_rows")
   expect_match(ui, "ex-hm_ramp_cname")          # extracted continuous-palette control
+  expect_match(ui, "ex-hm_height")              # plot-size sliders
+  expect_match(ui, "ex-hm_width")
+  expect_match(ui, "ex-hm_collapse_all")        # collapse / expand all
+  expect_match(ui, "ex-hm_expand_all")
+  expect_match(ui, "ex-hm_acc")                 # accordion id (collapse/expand target)
   expect_match(ui, "Heatmap")
 })
 
@@ -264,9 +269,10 @@ test_that("heatmap snapshot builds from a saved set; value matrix caches; draws"
     # value matrix cached in derived under expr_hm_value_mat, keyed on the assay
     expect_equal(get("expr_hm_value_mat", envir = state$derived)$params, list("logcounts"))
 
+    expect_match(s$legend, "z-score")                    # z-score keeps the value label
     skip_if_not_installed("ComplexHeatmap")
     skip_if_not_installed("circlize")
-    cf <- .hm_col_fun(s$mat, .hm_ramp_default(TRUE), s$zscored)   # ramp resolved live
+    cf <- .hm_col_fun(s$mat, s$ramp, s$zscored)          # ramp from the snapshot
     ht <- .hm_build(s, NULL, cf)                          # snapshot -> a real Heatmap
     expect_s4_class(ht, "Heatmap")
   })
@@ -298,10 +304,11 @@ test_that("heatmap respects the Render gate (no auto-render) + stale banner", {
     expect_equal(nrow(hm_out$value()$mat), 15L)          # SetB (rn[10:24])
     expect_false(hm_out$stale())
 
-    # The colour ramp is a live aesthetic, NOT gated: changing its source must not
-    # stale the plot (mirrors the QC correlation heatmap - colours recolour live).
+    # For this slow static heatmap ALL aesthetics are gated behind Render (unlike
+    # the fast dual_plot pages): changing the colour source must STALE the plot,
+    # not auto-recolour.
     session$setInputs(hm_ramp_src = "palette"); session$flushReact()
-    expect_false(hm_out$stale())
+    expect_true(hm_out$stale())
   })
 })
 
