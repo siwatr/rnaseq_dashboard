@@ -384,6 +384,14 @@ test_that("heatmap k-means splits rows/columns and saves clusters as gene sets (
     session$flushReact()
     expect_null(hm_out$value()$row_split)
     expect_null(hm_out$value()$row_clusters)
+
+    # row k >= genes shown -> each its own cluster + a degenerate-k warning flag
+    state$gene_sets$Tiny <- new_gene_set(rn[1:5])
+    session$setInputs(hm_pick = "Tiny", hm_row_k = 8, hm_col_k = 1, hm_render = 3)
+    session$flushReact()
+    s2 <- hm_out$value()
+    expect_true(s2$row_k_degenerate)
+    expect_equal(length(unique(s2$row_clusters)), nrow(s2$mat))   # all singletons
   })
 })
 

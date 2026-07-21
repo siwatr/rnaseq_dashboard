@@ -1031,6 +1031,7 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                   row_split = NULL, col_split = NULL,
                   row_clusters = NULL, col_clusters = NULL, seed = NA_integer_,
                   cluster_row_slices = TRUE, cluster_col_slices = TRUE,
+                  row_k_degenerate = FALSE, col_k_degenerate = FALSE,
                   empty_msg = "Pick a saved set or search genes, then click Render.")
       if (is.null(hm$mat)) return(out)
       show <- intersect(colnames(hm$mat), showing_samples())
@@ -1084,6 +1085,10 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       out$col_clusters <- cc                     # named by sample id (save to colData)
       out$row_split <- if (!is.null(rc)) split_with_counts(rc) else NULL
       out$col_split <- if (!is.null(cc)) split_with_counts(cc) else NULL
+      # k >= the number of genes/samples shown -> every item its own cluster
+      # (expr_kmeans caps k at n); flag it so the info line can warn.
+      out$row_k_degenerate <- length(rk) == 1L && !is.na(rk) && rk >= 2L && rk >= n_row
+      out$col_k_degenerate <- length(ck) == 1L && !is.na(ck) && ck >= 2L && ck >= n_col
       # Whether the k-means slices themselves are ordered by clustering (only
       # meaningful when there are slices); off keeps them in C1, C2, ... order.
       out$cluster_row_slices <- isTRUE(input$hm_cluster_row_slices %||% TRUE)
@@ -1132,7 +1137,13 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
         lines <- c(lines, list(tags$div(sprintf(
           "Column labels: %d of %d selected not shown (outside the current 'Showing').",
           s$col_cov$n_hidden, s$col_cov$n_selected))))
-      tags$div(class = "small text-muted mb-2", lines)
+      warn <- function(txt) tags$div(class = "text-warning",
+                                     icon("triangle-exclamation"), " ", txt)
+      if (isTRUE(s$row_k_degenerate))
+        lines <- c(lines, list(warn("Row k is at least the number of genes shown - every gene forms its own cluster.")))
+      if (isTRUE(s$col_k_degenerate))
+        lines <- c(lines, list(warn("Column k is at least the number of samples shown - every sample forms its own cluster.")))
+      tags$div(class = "small mb-2 text-muted", lines)
     })
 
     output$hm_plot <- renderPlot({
