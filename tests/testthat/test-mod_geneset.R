@@ -116,12 +116,15 @@ test_that("'Use shrunk LFC' falls back to standard LFCs when shrinkage never ran
     de <- state$de; de$results <- list("C1" = df); de$active <- "C1"; state$de <- de
     session$flushReact()
 
-    session$setInputs(source = "deg", deg_contrast = "C1", deg_dir = "both",
+    session$setInputs(source = "deg", deg_contrast = "C1", deg_dir = c("up", "down"),
                       deg_padj = 0.05, deg_lfc = 1, deg_shrunk = TRUE)
     session$flushReact()
     expect_false(deg_shrunk_ok())          # column present but no real values
     expect_equal(deg_col(), "DEG")         # falls back instead of an empty set
-    expect_setequal(staged()[[1]], rn[1:2])
+    # Group build: one set per direction, named "<contrast> <dir>".
+    st <- staged()
+    expect_setequal(names(st), c("C1 up", "C1 down"))
+    expect_setequal(unlist(st, use.names = FALSE), rn[1:2])
   })
 })
 
@@ -149,6 +152,46 @@ test_that("DE DEGs + top-variable sources stage the right ids", {
     session$setInputs(source = "topvar", topvar_n = 5); session$flushReact()
     expect_length(staged()[[1]], 5L)
     expect_false(any(grepl("^ERCC", staged()[[1]])))     # endogenous only
+  })
+})
+
+test_that("DE group build stages one set per (contrast x direction) and multi-saves", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 3, n_spike = 0, seed = 9))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    mk <- function(up, down) data.frame(
+      baseMean = 100,
+      padj = c(rep(0.001, length(up) + length(down)), rep(0.9, length(rn) - length(up) - length(down))),
+      log2FoldChange = c(rep(3, length(up)), rep(-3, length(down)), rep(0, length(rn) - length(up) - length(down))),
+      row.names = c(up, down, setdiff(rn, c(up, down))))
+    de <- state$de
+    de$results <- list(C1 = mk(rn[1:2], rn[3:4]), C2 = mk(rn[5:7], rn[8]))
+    de$active <- "C1"; state$de <- de
+    session$flushReact()
+
+    session$setInputs(source = "deg", deg_contrast = c("C1", "C2"),
+                      deg_dir = c("up", "down"), deg_padj = 0.05, deg_lfc = 1,
+                      deg_shrunk = FALSE)
+    session$flushReact()
+    st <- staged()
+    expect_setequal(names(st), c("C1 up", "C1 down", "C2 up", "C2 down"))
+    expect_setequal(st[["C1 up"]], rn[1:2])
+    expect_setequal(st[["C2 up"]], rn[5:7])
+    expect_setequal(st[["C2 down"]], rn[8])
+
+    # >1 staged set -> the multi-set Save path. Create all four under a prefix.
+    session$setInputs(multi_pick = names(st), multi_prefix = "grp_",
+                      multi_autoname = FALSE)
+    session$flushReact()
+    session$setInputs(multi_create = 1); session$flushReact()
+    expect_true(all(c("grp_C1 up", "grp_C1 down", "grp_C2 up", "grp_C2 down") %in%
+                      names(state$gene_sets)))
+    expect_setequal(state$gene_sets[["grp_C2 up"]]$ids, rn[5:7])
+    expect_match(state$gene_sets[["grp_C1 up"]]$source, "^DE: C1, C2")
   })
 })
 

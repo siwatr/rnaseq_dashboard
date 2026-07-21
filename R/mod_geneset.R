@@ -377,10 +377,11 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
         if (identical(de_status(state), "stale"))
           tags$div(class = "small text-warning mb-2",
             "These DE results are out of date (the data changed since the fit). Re-run DESeq2 on the DE page before seeding a set."),
-        selectInput(ns("deg_contrast"), "Contrast", choices = names(res)),
-        radioButtons(ns("deg_dir"), "Direction",
-                     c("Up" = "up", "Down" = "down", "Both" = "both"),
-                     selected = "both", inline = TRUE),
+        selectizeInput(ns("deg_contrast"), "Contrast(s)", choices = names(res),
+                       selected = names(res)[1], multiple = TRUE),
+        checkboxGroupInput(ns("deg_dir"), "Stage as sets (by direction)",
+                     c("Up" = "up", "Down" = "down", "No change" = "no_change"),
+                     selected = c("up", "down"), inline = TRUE),
         bslib::layout_columns(
           col_widths = c(6, 6),
           numericInput(ns("deg_padj"), "padj <", value = 0.05, min = 0, max = 1, step = 0.01),
@@ -388,39 +389,67 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
         bslib::input_switch(ns("deg_shrunk"), "Use shrunk LFC", value = FALSE),
         uiOutput(ns("deg_preview")))
     })
-    deg_classified <- reactive({
-      res <- (state$de %||% list())$results; lab <- input$deg_contrast
-      req(length(res), !is.null(lab), lab %in% names(res))
-      de_classify_table(res[[lab]], input$deg_padj %||% 0.05, input$deg_lfc %||% log2(2))
+    deg_contrasts <- reactive({
+      res <- (state$de %||% list())$results
+      intersect(input$deg_contrast %||% character(0), names(res))
     })
+    # Classify one contrast's results at the current thresholds.
+    deg_classify_one <- function(lab) {
+      res <- (state$de %||% list())$results
+      req(!is.null(lab), lab %in% names(res))
+      de_classify_table(res[[lab]], input$deg_padj %||% 0.05, input$deg_lfc %||% log2(2))
+    }
     # de_results() ALWAYS creates log2FoldChange_shrunk -- all-NA when shrinkage
     # was "none" or every fallback failed. A column-presence check would pass and
     # DEG_shrunk would be uniformly no_change (an empty set with no explanation),
-    # so test for real shrunk values instead.
+    # so test for real shrunk values instead (checked on the first selected contrast).
     deg_shrunk_ok <- reactive({
-      df <- tryCatch(deg_classified(), error = function(e) NULL)
+      labs <- deg_contrasts(); if (!length(labs)) return(FALSE)
+      df <- tryCatch(deg_classify_one(labs[1]), error = function(e) NULL)
       !is.null(df) && "log2FoldChange_shrunk" %in% names(df) &&
         any(!is.na(df$log2FoldChange_shrunk))
     })
     deg_col <- reactive({
       if (isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok())) "DEG_shrunk" else "DEG"
     })
-    deg_ids <- reactive({
-      df <- deg_classified()
-      want <- switch(input$deg_dir %||% "both", up = "up", down = "down", both = c("up", "down"))
-      rownames(df)[as.character(df[[deg_col()]]) %in% want]
+    # Group build: one staged set per (contrast x selected direction), named
+    # "<contrast> <dir>". Empty directions are dropped. Two+ sets flow through the
+    # existing multi-set Save (New/Add) path; a single set uses the New/Add box.
+    deg_staged <- reactive({
+      labs <- deg_contrasts(); if (!length(labs)) return(list())
+      dirs <- intersect(input$deg_dir %||% c("up", "down"), c("up", "down", "no_change"))
+      if (!length(dirs)) return(list())
+      col <- deg_col()
+      out <- list()
+      for (lab in labs) {
+        df <- tryCatch(deg_classify_one(lab), error = function(e) NULL); if (is.null(df)) next
+        v <- as.character(df[[col]])
+        for (d in dirs) {
+          ids <- rownames(df)[v == d]
+          if (length(ids)) out[[paste0(lab, " ", d)]] <- ids
+        }
+      }
+      out
     })
     output$deg_preview <- renderUI({
-      df <- tryCatch(deg_classified(), error = function(e) NULL); req(df)
-      tab <- table(factor(as.character(df[[deg_col()]]), levels = c("up", "down", "no_change")))
+      labs <- deg_contrasts(); req(length(labs))
+      col <- deg_col()
+      rows <- lapply(labs, function(lab) {
+        df <- tryCatch(deg_classify_one(lab), error = function(e) NULL); if (is.null(df)) return(NULL)
+        tab <- table(factor(as.character(df[[col]]), levels = c("up", "down", "no_change")))
+        tags$div(class = "small text-muted",
+          sprintf("%s: %d up / %d down / %d no-change.", lab,
+                  tab[["up"]], tab[["down"]], tab[["no_change"]]))
+      })
+      n_sets <- length(deg_staged())
       tagList(
         if (isTRUE(input$deg_shrunk) && !isTRUE(deg_shrunk_ok()))
           tags$div(class = "small text-warning",
             "Shrunken LFCs are not available for this fit -- using standard LFCs."),
-        helpText(class = "small text-muted",
-          sprintf("%d up / %d down at padj < %s, |log2FC| >= %s.",
-                  tab[["up"]], tab[["down"]], format(input$deg_padj %||% 0.05),
-                  format(input$deg_lfc %||% 1))))
+        rows,
+        tags$div(class = "small text-muted mt-1",
+          sprintf("%d set(s) will be staged at padj < %s, |log2FC| >= %s.",
+                  n_sets, format(input$deg_padj %||% 0.05), format(input$deg_lfc %||% 1))))
     })
 
     # Top-variable: rank once per dataset (cached), slice top-n for the preview.
@@ -731,7 +760,7 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     # The active source's provenance label + its staged sets (named list).
     staged_source <- function() switch(input$source %||% "paste",
-      paste = "paste", deg = paste0("DE: ", input$deg_contrast %||% ""),
+      paste = "paste", deg = paste0("DE: ", paste(deg_contrasts(), collapse = ", ")),
       topvar = "top-variable",
       file = paste0("import: ", (tbl_src() %||% list(name = "table"))$name),
       gsfile = paste0("import: ", (gsfile_parsed() %||% list(name = "file"))$name),
@@ -746,8 +775,9 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
                    case_insensitive = isTRUE(input$paste_ci),
                    literal_unmatched = isTRUE(input$paste_literal) &&
                      .paste_literal_ok(input$paste_mode)),
-      deg = list(contrast = input$deg_contrast %||% "",
-                 direction = input$deg_dir %||% "both",
+      deg = list(contrasts = deg_contrasts(),
+                 directions = intersect(input$deg_dir %||% c("up", "down"),
+                                        c("up", "down", "no_change")),
                  padj = input$deg_padj %||% 0.05,
                  lfc = input$deg_lfc %||% 1,
                  shrunk = isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok()),
@@ -775,15 +805,14 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       src <- input$source %||% "paste"
       if (identical(src, "file")) return(tbl_staged())
       if (identical(src, "gsfile")) return(gsfile_staged())
+      if (identical(src, "deg")) return(tryCatch(deg_staged(), error = function(e) list()))
       ids <- switch(src,
         paste  = paste_ids(),
-        deg    = tryCatch(deg_ids(), error = function(e) character(0)),
         topvar = topvar_ids(),
         character(0))
       ids <- unique(as.character(ids)); ids <- ids[!is.na(ids) & nzchar(ids)]
       if (!length(ids)) return(list())
-      nm <- switch(src, paste = "Pasted genes", deg = staged_source(),
-                   topvar = "Top-variable", "Staged")
+      nm <- switch(src, paste = "Pasted genes", topvar = "Top-variable", "Staged")
       stats::setNames(list(ids), nm)
     })
 
@@ -841,7 +870,7 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
     observeEvent(input$clear_staged, {
       switch(input$source %||% "paste",
         paste  = updateTextAreaInput(session, "paste_q", value = ""),
-        deg    = { updateRadioButtons(session, "deg_dir", selected = "both")
+        deg    = { updateCheckboxGroupInput(session, "deg_dir", selected = c("up", "down"))
                    updateNumericInput(session, "deg_padj", value = 0.05)
                    updateNumericInput(session, "deg_lfc", value = 1) },
         topvar = updateNumericInput(session, "topvar_n", value = 100),
