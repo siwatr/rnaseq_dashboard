@@ -9,6 +9,110 @@ test_that("mod_geneset UI mounts the build + your-sets cards", {
   expect_match(ui, "gs-new_name")
   expect_match(ui, "gs-sets_table")        # your gene sets
   expect_match(ui, "gs-members_table")
+  expect_match(ui, "gs-anno_members_ui")   # Annotation tab builder
+  expect_match(ui, "gs-anno_build")
+  expect_match(ui, "gs-anno_panels")
+})
+
+test_that(".gs_group_by_kind builds optgroups as named lists (single-item safe)", {
+  sets <- list(A = new_gene_set("g1"), B = new_gene_set("g2"),
+               AB = new_gene_set("g3", kind = "annotated", annotation = c(g3 = "x")))
+  g <- .gs_group_by_kind(names(sets), sets)
+  expect_named(g, c("Gene set", "Annotation"))
+  # Named lists (not bare vectors) so a single-item group renders as an optgroup,
+  # not a leaf labelled with the group name.
+  expect_equal(g[["Gene set"]], list(A = "A", B = "B"))
+  g1 <- .gs_group_by_kind(c("A", "AB"), sets)
+  expect_equal(g1[["Gene set"]], list(A = "A"))         # length-1 group still a list
+  expect_equal(g1[["Annotation"]], list(AB = "AB"))
+})
+
+test_that(".gs_filter_by_kind narrows a selection to one kind; empty stays empty", {
+  sets <- list(A = new_gene_set("g1"),
+               AB = new_gene_set("g2", kind = "annotated", annotation = c(g2 = "x")))
+  expect_equal(.gs_filter_by_kind(c("A", "AB"), sets, "gs"), "A")
+  expect_equal(.gs_filter_by_kind(c("A", "AB"), sets, "anno"), "AB")
+  expect_length(.gs_filter_by_kind(character(0), sets, "gs"), 0L)
+})
+
+test_that("Annotation tab builds a kind='annotated' record and deletes it", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 5))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    # Two simple member sets with a one-gene overlap (rn[2]).
+    state$gene_sets <- list(up   = new_gene_set(rn[1:2], source = "paste"),
+                            down = new_gene_set(rn[2:3], source = "paste"))
+    session$flushReact()
+    expect_setequal(simple_names(), c("up", "down"))
+
+    # Guard: a single member set is refused (an annotation groups multiple sets).
+    session$setInputs(anno_members = "up", anno_shared = "concat", anno_name = "solo")
+    session$flushReact()
+    expect_false(anno_combined()$ok)
+    session$setInputs(anno_build = 1); session$flushReact()
+    expect_null(state$gene_sets[["solo"]])
+
+    session$setInputs(anno_members = c("up", "down"), anno_shared = "concat",
+                      anno_sep = ";", anno_name = "DE dir")
+    session$flushReact()
+    expect_true(anno_combined()$ok)
+    session$setInputs(anno_build = 2); session$flushReact()
+    rec <- state$gene_sets[["DE dir"]]
+    expect_equal(rec$kind, "annotated")
+    expect_equal(unname(rec$annotation[rn[2]]), "up;down")     # overlap concatenated
+    expect_setequal(annotated_names(), "DE dir")
+    expect_match(rec$source, "^combine: up, down")
+
+    # A name clash is rejected (no second record, store unchanged).
+    session$setInputs(anno_name = "DE dir", anno_build = 3); session$flushReact()
+    expect_length(annotated_names(), 1L)
+
+    # Delete via the sidebar selected-delete path.
+    session$setInputs(anno_del_pick = "DE dir", anno_del_sel = 1); session$flushReact()
+    session$setInputs(anno_del_sel_ok = 1); session$flushReact()
+    expect_length(annotated_names(), 0L)
+    # The simple member sets are untouched.
+    expect_setequal(names(state$gene_sets), c("up", "down"))
+  })
+})
+
+test_that("annotation rename (set + level) propagates to the Palette geneset config", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 12, n_per_group = 3, n_spike = 0, seed = 6))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    state$gene_sets <- list(A = new_gene_set(rn[1:4], kind = "annotated",
+      annotation = stats::setNames(c("up", "up", "down", "down"), rn[1:4])))
+    state$palette <- list(geneset = list(A = list(name = "Custom palette",
+      colors = c(up = "#FF0000", down = "#0000FF"))))
+    session$flushReact()
+
+    # Rename set A -> B via the panel modal (k = 1): store + palette key follow.
+    session$setInputs(anno_rename_to_1 = "B", anno_rename_ok_1 = 1); session$flushReact()
+    expect_null(state$gene_sets[["A"]])
+    expect_false(is.null(state$gene_sets[["B"]]))
+    expect_equal(state$palette$geneset[["B"]]$colors[["up"]], "#FF0000")
+    expect_null(state$palette$geneset[["A"]])
+
+    # Rename level up -> UP: annotation map + palette colour key follow.
+    session$setInputs(anno_level_from_1 = "up", anno_level_to_1 = "UP", anno_level_ok_1 = 1)
+    session$flushReact()
+    expect_equal(unname(state$gene_sets$B$annotation[rn[1]]), "UP")
+    expect_equal(state$palette$geneset$B$colors[["UP"]], "#FF0000")
+    expect_false("up" %in% names(state$palette$geneset$B$colors))
+
+    # Merge guard: renaming UP -> down (an existing level) is refused.
+    session$setInputs(anno_level_from_1 = "UP", anno_level_to_1 = "down", anno_level_ok_1 = 2)
+    session$flushReact()
+    expect_true(all(c("UP", "down") %in% unique(unname(state$gene_sets$B$annotation))))
+  })
 })
 
 # Stage a paste of rownames + create/append via the Save section.
@@ -116,12 +220,16 @@ test_that("'Use shrunk LFC' falls back to standard LFCs when shrinkage never ran
     de <- state$de; de$results <- list("C1" = df); de$active <- "C1"; state$de <- de
     session$flushReact()
 
-    session$setInputs(source = "deg", deg_contrast = "C1", deg_dir = "both",
+    session$setInputs(source = "deg", deg_contrast = "C1", deg_dir = c("up", "down"),
                       deg_padj = 0.05, deg_lfc = 1, deg_shrunk = TRUE)
     session$flushReact()
-    expect_false(deg_shrunk_ok())          # column present but no real values
-    expect_equal(deg_col(), "DEG")         # falls back instead of an empty set
-    expect_setequal(staged()[[1]], rn[1:2])
+    df1 <- deg_classify_one("C1")
+    expect_false(deg_shrunk_avail(df1))    # column present but no real values
+    expect_equal(deg_col_for(df1), "DEG")  # falls back instead of an empty set
+    # Group build: one set per direction, named "<contrast> <dir>".
+    st <- staged()
+    expect_setequal(names(st), c("C1 up", "C1 down"))
+    expect_setequal(unlist(st, use.names = FALSE), rn[1:2])
   })
 })
 
@@ -149,6 +257,77 @@ test_that("DE DEGs + top-variable sources stage the right ids", {
     session$setInputs(source = "topvar", topvar_n = 5); session$flushReact()
     expect_length(staged()[[1]], 5L)
     expect_false(any(grepl("^ERCC", staged()[[1]])))     # endogenous only
+  })
+})
+
+test_that("DE group build stages one set per (contrast x direction) and multi-saves", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 3, n_spike = 0, seed = 9))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    mk <- function(up, down) data.frame(
+      baseMean = 100,
+      padj = c(rep(0.001, length(up) + length(down)), rep(0.9, length(rn) - length(up) - length(down))),
+      log2FoldChange = c(rep(3, length(up)), rep(-3, length(down)), rep(0, length(rn) - length(up) - length(down))),
+      row.names = c(up, down, setdiff(rn, c(up, down))))
+    de <- state$de
+    de$results <- list(C1 = mk(rn[1:2], rn[3:4]), C2 = mk(rn[5:7], rn[8]))
+    de$active <- "C1"; state$de <- de
+    session$flushReact()
+
+    session$setInputs(source = "deg", deg_contrast = c("C1", "C2"),
+                      deg_dir = c("up", "down"), deg_padj = 0.05, deg_lfc = 1,
+                      deg_shrunk = FALSE)
+    session$flushReact()
+    st <- staged()
+    expect_setequal(names(st), c("C1 up", "C1 down", "C2 up", "C2 down"))
+    expect_setequal(st[["C1 up"]], rn[1:2])
+    expect_setequal(st[["C2 up"]], rn[5:7])
+    expect_setequal(st[["C2 down"]], rn[8])
+
+    # >1 staged set -> the multi-set Save path. Create all four under a prefix.
+    session$setInputs(multi_pick = names(st), multi_prefix = "grp_",
+                      multi_autoname = FALSE)
+    session$flushReact()
+    session$setInputs(multi_create = 1); session$flushReact()
+    expect_true(all(c("grp_C1 up", "grp_C1 down", "grp_C2 up", "grp_C2 down") %in%
+                      names(state$gene_sets)))
+    expect_setequal(state$gene_sets[["grp_C2 up"]]$ids, rn[5:7])
+    expect_match(state$gene_sets[["grp_C1 up"]]$source, "^DE: C1, C2")
+  })
+})
+
+test_that("DE group build resolves the shrunk column PER contrast (mixed availability)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 30, n_per_group = 3, n_spike = 0, seed = 12))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    mk <- function(shrunk_na) data.frame(
+      baseMean = 100,
+      padj = c(0.001, 0.001, rep(0.9, length(rn) - 2)),
+      log2FoldChange = c(3, -3, rep(0, length(rn) - 2)),
+      log2FoldChange_shrunk = if (shrunk_na) NA_real_ else c(3, -3, rep(0, length(rn) - 2)),
+      row.names = rn)
+    de <- state$de
+    de$results <- list(C1 = mk(FALSE), C2 = mk(TRUE))   # C2's shrunk col is all-NA
+    de$active <- "C1"; state$de <- de
+    session$flushReact()
+    session$setInputs(source = "deg", deg_contrast = c("C1", "C2"),
+                      deg_dir = c("up", "down"), deg_padj = 0.05, deg_lfc = 1,
+                      deg_shrunk = TRUE)
+    session$flushReact()
+    st <- staged()
+    # C2 must NOT be silently emptied by a global shrunk choice off C1 -- it falls
+    # back to standard DEG per contrast, so its up/down sets are populated.
+    expect_setequal(names(st), c("C1 up", "C1 down", "C2 up", "C2 down"))
+    expect_setequal(st[["C2 up"]], rn[1]); expect_setequal(st[["C2 down"]], rn[2])
+    expect_setequal(st[["C1 up"]], rn[1]); expect_setequal(st[["C1 down"]], rn[2])
   })
 })
 
@@ -224,6 +403,32 @@ test_that("annotation-split stages N sets; multi-save creates one set each", {
     expect_setequal(names(state$gene_sets), c("res_up", "res_down"))
     expect_setequal(state$gene_sets$res_up$ids, rn[1:2])
     expect_match(state$gene_sets$res_up$source, "^import: res.csv")
+  })
+})
+
+test_that("import fast-track combines split groups into one annotated set", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_geneset_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 20, n_per_group = 3, n_spike = 0, seed = 11))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    rn <- rownames(state$working)
+    path <- .write_import_csv(rn)
+
+    session$setInputs(source = "file",
+                      tbl_file = list(datapath = path, name = "res.csv"),
+                      tbl_header = TRUE, tbl_id_col = "gene", tbl_match_by = "__rownames__",
+                      tbl_rows = "view", tbl_literal = FALSE,
+                      tbl_anno_cols = "direction", tbl_sep = ".")
+    session$setInputs(tbl_load = 1); session$flushReact()
+    # Fast-track: one annotated set, annotation = the split-group value.
+    session$setInputs(tbl_anno_name = "DE dir", tbl_anno_build = 1); session$flushReact()
+    rec <- state$gene_sets[["DE dir"]]
+    expect_equal(rec$kind, "annotated")
+    expect_equal(unname(rec$annotation[rn[1]]), "up")
+    expect_equal(unname(rec$annotation[rn[3]]), "down")
+    expect_match(rec$source, "^import annotation: res.csv")
   })
 })
 

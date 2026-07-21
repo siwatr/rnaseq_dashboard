@@ -114,6 +114,91 @@ test_that("Other pill: removal pool + QC metrics are configurable session attrib
   })
 })
 
+test_that("Gene Set pill: an annotated set is configurable + round-trips + reconciles", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 12, n_per_group = 3, n_spike = 0, seed = 3))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list("DE dir" = new_gene_set(
+      rn[1:4], kind = "annotated",
+      annotation = stats::setNames(c("up", "up", "down", "down"), rn[1:4])))
+    session$flushReact()
+    addui <- as.character(output$addui_geneset$html)
+    expect_match(addui, "DE dir", fixed = TRUE)
+    session$setInputs(addsel_geneset = "DE dir", addbtn_geneset = 1); session$flushReact()
+    cfg <- state$palette$geneset[["DE dir"]]
+    expect_equal(cfg$name, "Okabe-Ito")                 # discrete default
+    expect_setequal(names(cfg$colors), c("up", "down"))
+    # geneset is a known domain -> round-trips through JSON.
+    rt <- palette_from_json(palette_to_json(state$palette))
+    expect_setequal(names(rt$geneset[["DE dir"]]$colors), c("up", "down"))
+    # Reconcile drops the config once the annotation is gone.
+    state$gene_sets <- list()
+    rec <- reconcile_palette(state$palette, trim_levels = FALSE)
+    expect_null(rec$palette$geneset[["DE dir"]])
+  })
+})
+
+test_that("Gene Set pill reacts to gene_sets changes (offers new sets; drops deleted configs)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 12, n_per_group = 3, n_spike = 0, seed = 7))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    session$flushReact()
+    # Build a set AFTER the pill already rendered -> the add-selector refreshes to
+    # offer it (this failed before: the domain only reacted to data_version).
+    expect_false(grepl("later_set", as.character(output$addui_geneset$html), fixed = TRUE))
+    state$gene_sets <- list(later_set = new_gene_set(rownames(state$working)[1:3]))
+    session$flushReact()
+    expect_match(as.character(output$addui_geneset$html), "later_set", fixed = TRUE)
+    # Configure it, then delete the set -> its geneset config is cleaned up.
+    session$setInputs(addsel_geneset = "later_set", addbtn_geneset = 1); session$flushReact()
+    expect_false(is.null(state$palette$geneset[["later_set"]]))
+    state$gene_sets <- list(); session$flushReact()
+    expect_null(state$palette$geneset[["later_set"]])
+  })
+})
+
+test_that("Gene Set pill: simple sets are 2-level in/out; quick pull inherits into an annotation", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_palette_server, args = list(state = state), {
+    dds <- ensure_logcounts(make_mock_dds(n_genes = 12, n_per_group = 3, n_spike = 0, seed = 4))
+    state_load(state, dds, source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(
+      up   = new_gene_set(rn[1:3]),
+      down = new_gene_set(rn[4:6]),
+      DEdir = new_gene_set(rn[1:6], kind = "annotated",
+                annotation = stats::setNames(c("up", "up", "up", "down", "down", "down"), rn[1:6])))
+    session$flushReact()
+    # A simple set is a 2-level in/out palette (with the in/out preset).
+    session$setInputs(addsel_geneset = "up", addbtn_geneset = 1); session$flushReact()
+    expect_setequal(names(state$palette$geneset$up$colors), c("In set", "Outside set"))
+    session$setInputs(addsel_geneset = "down", addbtn_geneset = 2); session$flushReact()
+    # Give up/down distinct in-set colours.
+    p <- state$palette
+    p$geneset$up$colors[["In set"]]   <- "#FF0000"
+    p$geneset$down$colors[["In set"]] <- "#0000FF"
+    state$palette <- p; session$flushReact()
+    # Adding the annotation AFTER the gene-set colours exist inherits them at
+    # creation time (the option-1 default), without a Quick pull click.
+    session$setInputs(addsel_geneset = "DEdir", addbtn_geneset = 3); session$flushReact()
+    cols0 <- state$palette$geneset$DEdir$colors
+    expect_equal(unname(cols0[["up"]]),   "#FF0000")
+    expect_equal(unname(cols0[["down"]]), "#0000FF")
+    expect_equal(state$palette$geneset$DEdir$name, "Custom palette")
+    # Quick pull re-applies (idempotent here).
+    session$setInputs(qpull_geneset__DEdir = 1); session$flushReact()
+    cols <- state$palette$geneset$DEdir$colors
+    expect_equal(unname(cols[["up"]]),   "#FF0000")
+    expect_equal(unname(cols[["down"]]), "#0000FF")
+  })
+})
+
 test_that("discrete attributes above the hard cap are hidden from the add control", {
   skip_if_not_installed("DESeq2")
   withr::local_options(ddsdashboard.palette_max_levels = 1L)   # condition has 2 levels

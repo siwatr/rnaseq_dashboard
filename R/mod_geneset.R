@@ -53,7 +53,8 @@
 # control and the Export selector. The buttons wire via .gs_set_multiselect_server
 # (keyed on `<id>_all` / `<id>_none`); `choices`/`selected` are supplied live by the
 # renderUI that draws it (so it re-renders on add/delete, preserving the selection).
-.gs_set_multiselect_ui <- function(ns, id, label, choices, selected = choices) {
+.gs_set_multiselect_ui <- function(ns, id, label, choices, selected = choices,
+                                   kind_filter = FALSE) {
   tagList(
     tags$style(HTML(sprintf(
       "#%s + .selectize-control .selectize-input { max-height: 110px; overflow-y: auto; }",
@@ -61,14 +62,52 @@
     selectizeInput(ns(id), label, choices = choices, selected = selected, multiple = TRUE),
     tags$div(class = "d-flex gap-2 mb-2",
       actionButton(ns(paste0(id, "_all")), "Select all", class = "btn-sm btn-outline-secondary"),
-      actionButton(ns(paste0(id, "_none")), "Deselect all", class = "btn-sm btn-outline-secondary")))
+      actionButton(ns(paste0(id, "_none")), "Deselect all", class = "btn-sm btn-outline-secondary")),
+    # Narrow the current selection to one kind (leaves an empty box untouched).
+    if (kind_filter) tags$div(class = "d-flex gap-2 mb-2",
+      actionButton(ns(paste0(id, "_gsonly")), "Gene set only",
+                   class = "btn-sm btn-outline-secondary"),
+      actionButton(ns(paste0(id, "_annoonly")), "Annotation only",
+                   class = "btn-sm btn-outline-secondary")))
+}
+
+# Group set names into Gene set / Annotation optgroups for a selectize (per the
+# app rule: separate whenever a selector's choices mix simple sets + annotations).
+# Each group is a NAMED LIST (not a bare vector) so a single-item group still
+# renders as an optgroup -- a length-1 vector collapses to a leaf option labelled
+# with the group name (value = the lone set), the classic selectize quirk.
+.gs_group_by_kind <- function(nms, sets) {
+  anno <- vapply(nms, function(n) identical(sets[[n]]$kind %||% "simple", "annotated"), logical(1))
+  grp <- function(v) stats::setNames(as.list(v), v)
+  out <- list()
+  if (any(!anno)) out[["Gene set"]]   <- grp(nms[!anno])
+  if (any(anno))  out[["Annotation"]] <- grp(nms[anno])
+  out
+}
+# Filter a selection down to one kind (used by the Compare selector's "Gene set
+# only" / "Annotation only" buttons). An empty selection stays empty.
+.gs_filter_by_kind <- function(selection, sets, kind = c("gs", "anno")) {
+  kind <- match.arg(kind)
+  is_anno <- function(n) identical(sets[[n]]$kind %||% "simple", "annotated")
+  Filter(if (identical(kind, "anno")) is_anno else Negate(is_anno), selection)
 }
 # Wire one .gs_set_multiselect_ui's buttons. Call once per selector in the server.
-.gs_set_multiselect_server <- function(input, output, session, id, choices_fn) {
+# `sets_fn` (the named gene_sets list) enables the Gene-set-only / Annotation-only
+# filter buttons (only meaningful when kind_filter = TRUE in the UI).
+.gs_set_multiselect_server <- function(input, output, session, id, choices_fn,
+                                       sets_fn = NULL) {
   observeEvent(input[[paste0(id, "_all")]],
     updateSelectizeInput(session, id, selected = choices_fn()))
   observeEvent(input[[paste0(id, "_none")]],
     updateSelectizeInput(session, id, selected = character(0)))
+  if (!is.null(sets_fn)) {
+    observeEvent(input[[paste0(id, "_gsonly")]],
+      updateSelectizeInput(session, id,
+        selected = .gs_filter_by_kind(input[[id]] %||% character(0), sets_fn(), "gs")))
+    observeEvent(input[[paste0(id, "_annoonly")]],
+      updateSelectizeInput(session, id,
+        selected = .gs_filter_by_kind(input[[id]] %||% character(0), sets_fn(), "anno")))
+  }
   invisible(NULL)
 }
 
@@ -127,7 +166,7 @@ mod_geneset_ui <- function(id) {
   bslib::navset_card_tab(
     id = ns("tabs"),
     bslib::nav_panel(
-      tags$h3("Manage sets", class = "fs-6 mb-0"),
+      tags$h3("Gene Sets", class = "fs-6 mb-0"),
       bslib::layout_columns(
         fillable = FALSE, col_widths = c(6, 6),
 
@@ -263,13 +302,72 @@ mod_geneset_ui <- function(id) {
       )
     ),
 
+    # ===================== ANNOTATION TAB (P7e) =====================
+    # A second-level object: combine gene sets into one id -> label annotation
+    # (each gene labelled by the set it belongs to), stored as a kind="annotated"
+    # record for the Expression heatmap's row annotation / split. Palette-style:
+    # a sidebar builder + delete, a main-area accordion of per-annotation panels.
+    bslib::nav_panel(
+      tags$h3("Annotation", class = "fs-6 mb-0"),
+      bslib::layout_sidebar(
+        sidebar = bslib::sidebar(
+          width = 340, open = TRUE,
+          tags$h4("Build an annotation", class = "fs-5 mb-2"),
+          helpText(class = "small text-muted mb-2",
+            "Combine gene sets into one annotation -- each gene is labelled by the ",
+            "set(s) it belongs to. Click Build to save it for the heatmap."),
+          uiOutput(ns("anno_members_ui")),
+          radioButtons(ns("anno_shared"), "Genes in more than one set",
+            c("Combine labels (a;b)" = "concat", "One shared label" = "label",
+              "First set wins" = "first"), selected = "concat"),
+          conditionalPanel(cond("anno_shared", "concat"),
+            textInput(ns("anno_sep"), "Label separator", value = ";")),
+          conditionalPanel(cond("anno_shared", "label"),
+            textInput(ns("anno_label"), "Shared label", value = "multiple")),
+          textInput(ns("anno_name"), "Annotation name", placeholder = "e.g. DE direction"),
+          uiOutput(ns("anno_preview_ui")),
+          tags$div(class = "d-flex gap-2 mt-2",
+            actionButton(ns("anno_build"), "Build", class = "btn btn-sm fw-semibold",
+                         style = .gs_action_style, icon = shiny::icon("layer-group")),
+            actionButton(ns("anno_reset"), "Reset", class = "btn-sm btn-outline-secondary",
+                         icon = shiny::icon("rotate-left"))),
+          tags$hr(),
+          tags$h6("Delete annotations", class = "fs-6"),
+          uiOutput(ns("anno_delete_ui")),
+          tags$div(class = "d-flex gap-2",
+            actionButton(ns("anno_del_sel"), "Delete selected",
+                         class = "btn-sm btn-outline-danger", icon = shiny::icon("trash")),
+            actionButton(ns("anno_del_all"), "Delete all",
+                         class = "btn-sm btn-outline-danger", icon = shiny::icon("xmark")))),
+        bslib::accordion(
+          open = TRUE,
+          bslib::accordion_panel(
+            "View controls", icon = shiny::icon("sliders"),
+            uiOutput(ns("anno_show_cols_ui")),
+            bslib::input_switch(ns("anno_within"), "Within this dataset only", value = FALSE),
+            checkboxGroupInput(ns("anno_view"), "Show in each panel",
+              c("Composition bar" = "bar", "Members table" = "table"),
+              selected = "bar", inline = TRUE))),
+        tags$div(
+          class = "mt-3 mb-2 d-flex justify-content-between align-items-center",
+          tags$div(
+            tags$h4("Your annotations", class = "fs-5 mb-0 d-inline"),
+            tags$span(class = "small text-muted ms-2",
+                      "Annotated sets available to the heatmap")),
+          actionButton(ns("anno_collapse"), "Collapse all",
+                       class = "btn-sm btn-outline-secondary", icon = shiny::icon("angles-up"))),
+        uiOutput(ns("anno_empty_note")),
+        uiOutput(ns("anno_panels"))
+      )
+    ),
+
     # ===================== COMPARE TAB (P6e) =========================
     # Compare the sets you built -- sizes (Stats) and overlaps (Overlap). Following
     # the DE Plots tab: the two SHARED controls (which sets to visualize + the
     # "Within this dataset only" toggle) live in the tab sidebar; each sub-pill's
     # own controls sit above its plot.
     bslib::nav_panel(
-      tags$h3("Compare", class = "fs-6 mb-0"),
+      tags$h3("Compare Sets", class = "fs-6 mb-0"),
       bslib::layout_sidebar(
         sidebar = bslib::sidebar(
           title = "Sets to compare", width = 320,
@@ -377,10 +475,11 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
         if (identical(de_status(state), "stale"))
           tags$div(class = "small text-warning mb-2",
             "These DE results are out of date (the data changed since the fit). Re-run DESeq2 on the DE page before seeding a set."),
-        selectInput(ns("deg_contrast"), "Contrast", choices = names(res)),
-        radioButtons(ns("deg_dir"), "Direction",
-                     c("Up" = "up", "Down" = "down", "Both" = "both"),
-                     selected = "both", inline = TRUE),
+        selectizeInput(ns("deg_contrast"), "Contrast(s)", choices = names(res),
+                       selected = names(res)[1], multiple = TRUE),
+        checkboxGroupInput(ns("deg_dir"), "Stage as sets (by direction)",
+                     c("Up" = "up", "Down" = "down", "No change" = "no_change"),
+                     selected = c("up", "down"), inline = TRUE),
         bslib::layout_columns(
           col_widths = c(6, 6),
           numericInput(ns("deg_padj"), "padj <", value = 0.05, min = 0, max = 1, step = 0.01),
@@ -388,39 +487,64 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
         bslib::input_switch(ns("deg_shrunk"), "Use shrunk LFC", value = FALSE),
         uiOutput(ns("deg_preview")))
     })
-    deg_classified <- reactive({
-      res <- (state$de %||% list())$results; lab <- input$deg_contrast
-      req(length(res), !is.null(lab), lab %in% names(res))
+    deg_contrasts <- reactive({
+      res <- (state$de %||% list())$results
+      intersect(input$deg_contrast %||% character(0), names(res))
+    })
+    # Classify one contrast's results at the current thresholds.
+    deg_classify_one <- function(lab) {
+      res <- (state$de %||% list())$results
+      req(!is.null(lab), lab %in% names(res))
       de_classify_table(res[[lab]], input$deg_padj %||% 0.05, input$deg_lfc %||% log2(2))
-    })
+    }
     # de_results() ALWAYS creates log2FoldChange_shrunk -- all-NA when shrinkage
-    # was "none" or every fallback failed. A column-presence check would pass and
-    # DEG_shrunk would be uniformly no_change (an empty set with no explanation),
-    # so test for real shrunk values instead.
-    deg_shrunk_ok <- reactive({
-      df <- tryCatch(deg_classified(), error = function(e) NULL)
-      !is.null(df) && "log2FoldChange_shrunk" %in% names(df) &&
-        any(!is.na(df$log2FoldChange_shrunk))
-    })
-    deg_col <- reactive({
-      if (isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok())) "DEG_shrunk" else "DEG"
-    })
-    deg_ids <- reactive({
-      df <- deg_classified()
-      want <- switch(input$deg_dir %||% "both", up = "up", down = "down", both = c("up", "down"))
-      rownames(df)[as.character(df[[deg_col()]]) %in% want]
+    # was "none" or every fallback failed. Shrinkage is computed PER CONTRAST
+    # (apeglm/normal need a coef; ashr may be absent), so a column-presence check
+    # would pass and DEG_shrunk would be uniformly no_change. Resolve the DEG column
+    # PER CONTRAST (test each contrast's real shrunk values) -- a global choice off
+    # the first contrast would silently empty a contrast whose shrunk col is all-NA.
+    deg_shrunk_avail <- function(df)
+      "log2FoldChange_shrunk" %in% names(df) && any(!is.na(df$log2FoldChange_shrunk))
+    deg_col_for <- function(df)
+      if (isTRUE(input$deg_shrunk) && deg_shrunk_avail(df)) "DEG_shrunk" else "DEG"
+    # Group build: one staged set per (contrast x selected direction), named
+    # "<contrast> <dir>". Empty directions are dropped. Two+ sets flow through the
+    # existing multi-set Save (New/Add) path; a single set uses the New/Add box.
+    deg_staged <- reactive({
+      labs <- deg_contrasts(); if (!length(labs)) return(list())
+      dirs <- intersect(input$deg_dir %||% c("up", "down"), c("up", "down", "no_change"))
+      if (!length(dirs)) return(list())
+      out <- list()
+      for (lab in labs) {
+        df <- tryCatch(deg_classify_one(lab), error = function(e) NULL); if (is.null(df)) next
+        v <- as.character(df[[deg_col_for(df)]])       # per-contrast shrunk choice
+        for (d in dirs) {
+          ids <- rownames(df)[v == d]
+          if (length(ids)) out[[paste0(lab, " ", d)]] <- ids
+        }
+      }
+      out
     })
     output$deg_preview <- renderUI({
-      df <- tryCatch(deg_classified(), error = function(e) NULL); req(df)
-      tab <- table(factor(as.character(df[[deg_col()]]), levels = c("up", "down", "no_change")))
+      labs <- deg_contrasts(); req(length(labs))
+      fallback <- FALSE                                 # any contrast lacking shrunk?
+      rows <- lapply(labs, function(lab) {
+        df <- tryCatch(deg_classify_one(lab), error = function(e) NULL); if (is.null(df)) return(NULL)
+        if (isTRUE(input$deg_shrunk) && !deg_shrunk_avail(df)) fallback <<- TRUE
+        tab <- table(factor(as.character(df[[deg_col_for(df)]]), levels = c("up", "down", "no_change")))
+        tags$div(class = "small text-muted",
+          sprintf("%s: %d up / %d down / %d no-change.", lab,
+                  tab[["up"]], tab[["down"]], tab[["no_change"]]))
+      })
+      n_sets <- length(deg_staged())
       tagList(
-        if (isTRUE(input$deg_shrunk) && !isTRUE(deg_shrunk_ok()))
+        if (fallback)
           tags$div(class = "small text-warning",
-            "Shrunken LFCs are not available for this fit -- using standard LFCs."),
-        helpText(class = "small text-muted",
-          sprintf("%d up / %d down at padj < %s, |log2FC| >= %s.",
-                  tab[["up"]], tab[["down"]], format(input$deg_padj %||% 0.05),
-                  format(input$deg_lfc %||% 1))))
+            "Shrunken LFCs are unavailable for some contrast(s) -- those use standard LFCs."),
+        rows,
+        tags$div(class = "small text-muted mt-1",
+          sprintf("%d set(s) will be staged at padj < %s, |log2FC| >= %s.",
+                  n_sets, format(input$deg_padj %||% 0.05), format(input$deg_lfc %||% 1))))
     })
 
     # Top-variable: rank once per dataset (cached), slice top-n for the preview.
@@ -490,6 +614,20 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
           sprintf("input['%s'] && input['%s'].length > 1", ns("tbl_anno_cols"), ns("tbl_anno_cols")),
           tip(textInput(ns("tbl_sep"), "Group name separator", value = "."),
               "Joins the values of multiple split columns into each set's name (e.g. 'up.brain').")),
+        # Fast-track: combine the split groups into ONE annotated set (each gene
+        # labelled by its group) for the heatmap -- alongside the normal N-set save.
+        conditionalPanel(
+          sprintf("input['%s'] && input['%s'].length >= 1", ns("tbl_anno_cols"), ns("tbl_anno_cols")),
+          tags$hr(class = "my-2"),
+          helpText(class = "small text-muted",
+            "Or combine the split groups into one annotated set (each gene labelled by its group)."),
+          bslib::layout_columns(
+            col_widths = c(7, 5),
+            textInput(ns("tbl_anno_name"), "Annotated set name", placeholder = "e.g. DE direction"),
+            tags$div(class = "d-flex align-items-end pb-3",
+              actionButton(ns("tbl_anno_build"), "Save as annotated set",
+                           class = "btn btn-sm fw-semibold", style = .gs_action_style,
+                           icon = shiny::icon("layer-group"))))),
         radioButtons(ns("tbl_rows"), "Use rows",
                      c("All rows in the current view (filtered)" = "view",
                        "Selected rows only" = "selected"),
@@ -585,6 +723,36 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       out <- split_ids_by_group(sub, ".gs_id", anno, sep = sep)
       if (!length(anno) && length(out)) names(out) <- "Imported genes"
       out
+    })
+    # Annotation fast-track: combine the split groups into one id -> label
+    # annotation (group value = label; overlaps concatenated). Committed as a
+    # kind="annotated" record, independent of the N-simple-set multi-save.
+    observeEvent(input$tbl_anno_build, {
+      groups <- tbl_staged()
+      anno_cols <- intersect(input$tbl_anno_cols %||% character(0), names(tbl_resolved() %||% list()))
+      if (!length(anno_cols) || !length(groups)) {
+        showNotification("Choose split column(s) first.", type = "warning"); return() }
+      res <- tryCatch(combine_gene_set_annotation(groups, shared = "concat"),
+                      error = function(e) NULL)
+      if (is.null(res) || !length(res$annotation)) {
+        showNotification("Nothing to combine.", type = "warning"); return() }
+      # An annotation needs 2+ levels (a single split group is just one gene set).
+      if (length(res$levels) < 2L) {
+        showNotification("Splitting produced a single group -- pick column(s) that split into 2+ groups, or save as a normal gene set.",
+                         type = "warning"); return() }
+      nm <- trimws(input$tbl_anno_name %||% "")
+      if (!nzchar(nm)) { showNotification("Enter an annotation name.", type = "warning"); return() }
+      if (!is.null(state$gene_sets[[nm]])) {
+        showNotification("That name is taken -- pick another.", type = "warning"); return() }
+      rec <- new_gene_set(names(res$annotation), kind = "annotated", annotation = res$annotation,
+                          source = paste0("import annotation: ",
+                                          (tbl_src() %||% list(name = "table"))$name))
+      sets <- state$gene_sets; sets[[nm]] <- rec; state$gene_sets <- sets; snapshot_absent()
+      .log(state, list(action = "gene_set_annotation_import", name = nm, levels = res$levels,
+                       params = staged_params()))
+      updateTextInput(session, "tbl_anno_name", value = "")
+      showNotification(sprintf("Built annotation '%s' (%d levels).", nm, length(res$levels)),
+                       type = "message", duration = 4)
     })
     output$tbl_stats <- renderUI({
       df <- tbl_raw(); req(df)
@@ -731,7 +899,7 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     # The active source's provenance label + its staged sets (named list).
     staged_source <- function() switch(input$source %||% "paste",
-      paste = "paste", deg = paste0("DE: ", input$deg_contrast %||% ""),
+      paste = "paste", deg = paste0("DE: ", paste(deg_contrasts(), collapse = ", ")),
       topvar = "top-variable",
       file = paste0("import: ", (tbl_src() %||% list(name = "table"))$name),
       gsfile = paste0("import: ", (gsfile_parsed() %||% list(name = "file"))$name),
@@ -746,11 +914,12 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
                    case_insensitive = isTRUE(input$paste_ci),
                    literal_unmatched = isTRUE(input$paste_literal) &&
                      .paste_literal_ok(input$paste_mode)),
-      deg = list(contrast = input$deg_contrast %||% "",
-                 direction = input$deg_dir %||% "both",
+      deg = list(contrasts = deg_contrasts(),
+                 directions = intersect(input$deg_dir %||% c("up", "down"),
+                                        c("up", "down", "no_change")),
                  padj = input$deg_padj %||% 0.05,
                  lfc = input$deg_lfc %||% 1,
-                 shrunk = isTRUE(input$deg_shrunk) && isTRUE(deg_shrunk_ok()),
+                 shrunk = isTRUE(input$deg_shrunk),   # per-contrast fallback where unavailable
                  de_status = de_status(state)),
       topvar = list(n_top = input$topvar_n %||% 100L, input = "vst (endogenous)"),
       file = list(file = (tbl_src() %||% list(name = ""))$name,
@@ -775,15 +944,14 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       src <- input$source %||% "paste"
       if (identical(src, "file")) return(tbl_staged())
       if (identical(src, "gsfile")) return(gsfile_staged())
+      if (identical(src, "deg")) return(tryCatch(deg_staged(), error = function(e) list()))
       ids <- switch(src,
         paste  = paste_ids(),
-        deg    = tryCatch(deg_ids(), error = function(e) character(0)),
         topvar = topvar_ids(),
         character(0))
       ids <- unique(as.character(ids)); ids <- ids[!is.na(ids) & nzchar(ids)]
       if (!length(ids)) return(list())
-      nm <- switch(src, paste = "Pasted genes", deg = staged_source(),
-                   topvar = "Top-variable", "Staged")
+      nm <- switch(src, paste = "Pasted genes", topvar = "Top-variable", "Staged")
       stats::setNames(list(ids), nm)
     })
 
@@ -841,7 +1009,7 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
     observeEvent(input$clear_staged, {
       switch(input$source %||% "paste",
         paste  = updateTextAreaInput(session, "paste_q", value = ""),
-        deg    = { updateRadioButtons(session, "deg_dir", selected = "both")
+        deg    = { updateCheckboxGroupInput(session, "deg_dir", selected = c("up", "down"))
                    updateNumericInput(session, "deg_padj", value = 0.05)
                    updateNumericInput(session, "deg_lfc", value = 1) },
         topvar = updateNumericInput(session, "topvar_n", value = 100),
@@ -1035,9 +1203,10 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
                      selected = sel, multiple = TRUE)
     })
     # id + chosen columns + in-dataset flag. Governs BOTH preview + members tables.
-    members_frame <- function(ids) {
+    # `cols` defaults to the Manage-tab preview control; the Annotation tab passes
+    # its own (input$anno_show_cols).
+    members_frame <- function(ids, cols = input$show_cols) {
       df <- data.frame(ID = ids, check.names = FALSE, stringsAsFactors = FALSE)
-      cols <- input$show_cols
       if (length(cols) && !is.null(state$working)) {
         rd <- SummarizedExperiment::rowData(state$working); hit <- ids %in% rownames(state$working)
         for (co in cols) {
@@ -1051,7 +1220,8 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
     }
 
     sets_df <- reactive({
-      sets <- state$gene_sets
+      # Simple sets only -- annotated sets are listed/managed on the Annotation tab.
+      sets <- Filter(function(s) !identical(s$kind %||% "simple", "annotated"), state$gene_sets)
       if (!length(sets)) return(NULL)
       rn <- working_rn()
       data.frame(
@@ -1101,7 +1271,8 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
                     c("JSON (faithful, recommended)" = "json",
                       "GMT (MSigDB)" = "gmt", "TSV (long: set / id)" = "tsv"),
                     selected = shiny::isolate(input$export_fmt) %||% "json"),
-        .gs_set_multiselect_ui(ns, "export_which", "Sets to export", nms, sel),
+        .gs_set_multiselect_ui(ns, "export_which", "Sets to export",
+                               .gs_group_by_kind(nms, state$gene_sets), sel),
         downloadButton(ns("export_dl"), "Download", class = "btn btn-sm fw-semibold",
                        style = .gs_action_style))
     })
@@ -1163,6 +1334,12 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
         showNotification("A set with that name already exists.", type = "warning"); return() }
       if (!identical(to, nm)) {
         sets <- state$gene_sets; names(sets)[names(sets) == nm] <- to; state$gene_sets <- sets
+        # Carry the set's Palette Gene Set config key along (else the rename would
+        # orphan it and the palette's gene_sets-cleanup would drop the colours).
+        if (!is.null((state$palette$geneset %||% list())[[nm]])) {
+          p <- state$palette; p$geneset[[to]] <- p$geneset[[nm]]; p$geneset[[nm]] <- NULL
+          state$palette <- p
+        }
         snapshot_absent()   # re-key the absence baseline, else the rename reads as "newly absent"
         .log(state, list(action = "gene_set_rename", from = nm, to = to))
       }
@@ -1214,6 +1391,288 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
     }, ignoreInit = TRUE)
 
     # =====================================================================
+    # ANNOTATION TAB (P7e): build/manage kind="annotated" records.
+    # =====================================================================
+    .anno_pool <- 50L    # max annotation panels with pre-registered outputs
+
+    is_annotated <- function(s) identical(s$kind %||% "simple", "annotated")
+    annotated_names <- reactive(names(Filter(is_annotated, state$gene_sets)))
+    simple_names    <- reactive(names(Filter(Negate(is_annotated), state$gene_sets)))
+
+    # Builder: member sets (simple sets only) -> a live combined annotation.
+    output$anno_members_ui <- renderUI({
+      nms <- simple_names()
+      if (!length(nms))
+        return(helpText(class = "small text-muted",
+          "Build some gene sets first (Gene Sets tab), then combine them here."))
+      cur <- shiny::isolate(input$anno_members)
+      selectizeInput(ns("anno_members"), "Member gene sets", choices = nms,
+                     selected = intersect(cur, nms), multiple = TRUE)
+    })
+    # Combine the selected members; carry the label-collision error as ok = FALSE
+    # (so the preview shows it instead of the app erroring).
+    anno_combined <- reactive({
+      mem <- intersect(input$anno_members %||% character(0), names(state$gene_sets))
+      # An annotation groups MULTIPLE sets -- a single set collapses to one level
+      # (redundant with that set's own in/out Gene Set palette).
+      if (length(mem) < 2L)
+        return(list(ok = FALSE, msg = "Select at least two gene sets -- an annotation groups multiple sets."))
+      res <- tryCatch(
+        combine_gene_set_annotation(state$gene_sets[mem], shared = input$anno_shared %||% "concat",
+                                    sep = input$anno_sep %||% ";",
+                                    label = input$anno_label %||% "multiple"),
+        error = function(e) e)
+      if (inherits(res, "condition")) return(list(ok = FALSE, msg = conditionMessage(res)))
+      # Safety net: 2+ sets that share all genes still yield a single label.
+      if (length(res$levels) < 2L)
+        return(list(ok = FALSE, msg = "These sets produce a single label -- pick sets that differ."))
+      list(ok = TRUE, res = res, members = mem)
+    })
+    output$anno_preview_ui <- renderUI({
+      cb <- anno_combined()
+      if (!isTRUE(cb$ok)) return(tags$div(class = "small text-muted mt-1", cb$msg))
+      res <- cb$res
+      comp <- table(factor(unname(res$annotation), levels = res$levels))
+      shown <- utils::head(sprintf("%s (%d)", names(comp), as.integer(comp)), 8L)
+      more <- if (length(comp) > 8L) sprintf(", +%d more", length(comp) - 8L) else ""
+      nm <- trimws(input$anno_name %||% "")
+      tagList(
+        tags$div(class = "small text-muted mt-1",
+          sprintf("%d gene(s), %d level(s): %s%s", length(res$annotation),
+                  length(res$levels), paste(shown, collapse = ", "), more)),
+        if (nzchar(res$note)) tags$div(class = "small text-warning", res$note),
+        if (nzchar(nm) && !is.null(state$gene_sets[[nm]]))
+          tags$div(class = "small text-danger", "That name is taken -- pick another."))
+    })
+    observeEvent(input$anno_build, {
+      cb <- anno_combined()
+      if (!isTRUE(cb$ok)) { showNotification(cb$msg, type = "warning"); return() }
+      nm <- trimws(input$anno_name %||% "")
+      if (!nzchar(nm)) { showNotification("Enter an annotation name.", type = "warning"); return() }
+      if (!is.null(state$gene_sets[[nm]])) {
+        showNotification("That name is taken -- pick another.", type = "warning"); return() }
+      res <- cb$res
+      rec <- new_gene_set(names(res$annotation), kind = "annotated", annotation = res$annotation,
+                          source = paste0("combine: ", paste(cb$members, collapse = ", ")))
+      sets <- state$gene_sets; sets[[nm]] <- rec; state$gene_sets <- sets; snapshot_absent()
+      .log(state, list(action = "gene_set_annotation_build", name = nm, members = cb$members,
+                       shared = input$anno_shared %||% "concat", levels = res$levels))
+      updateTextInput(session, "anno_name", value = "")
+      showNotification(sprintf("Built annotation '%s' (%d levels).", nm, length(res$levels)),
+                       type = "message", duration = 4)
+    })
+    observeEvent(input$anno_reset, {
+      updateSelectizeInput(session, "anno_members", selected = character(0))
+      updateTextInput(session, "anno_name", value = "")
+      updateRadioButtons(session, "anno_shared", selected = "concat")
+      updateTextInput(session, "anno_sep", value = ";")
+      updateTextInput(session, "anno_label", value = "multiple")
+    })
+
+    # Sidebar delete section (selected / all, both confirmed).
+    output$anno_delete_ui <- renderUI({
+      nms <- annotated_names()
+      if (!length(nms)) return(helpText(class = "small text-muted", "No annotations yet."))
+      cur <- shiny::isolate(input$anno_del_pick)
+      selectizeInput(ns("anno_del_pick"), NULL, choices = nms,
+                     selected = intersect(cur, nms), multiple = TRUE,
+                     options = list(placeholder = "Annotations to delete"))
+    })
+    .anno_delete <- function(pick) {
+      pick <- intersect(pick, annotated_names())
+      sets <- state$gene_sets; for (nm in pick) sets[[nm]] <- NULL; state$gene_sets <- sets
+      snapshot_absent(); .log(state, list(action = "gene_set_annotation_delete", names = pick))
+      showNotification(sprintf("Deleted %d annotation(s).", length(pick)),
+                       type = "message", duration = 3)
+    }
+    # Non-structural edits (membership unchanged): rename the annotation set, or a
+    # single level. Both propagate to the Palette Gene Set config key so colours
+    # follow, and stale the heatmap via state$gene_sets (P7e-2's sig).
+    .anno_rename_set <- function(from, to) {
+      sets <- state$gene_sets; names(sets)[names(sets) == from] <- to; state$gene_sets <- sets
+      if (!is.null((state$palette$geneset %||% list())[[from]])) {
+        p <- state$palette; p$geneset[[to]] <- p$geneset[[from]]; p$geneset[[from]] <- NULL
+        state$palette <- p
+      }
+      snapshot_absent()
+      .log(state, list(action = "gene_set_annotation_rename", from = from, to = to))
+    }
+    .anno_rename_level <- function(nm, from, to) {
+      set <- state$gene_sets[[nm]]; anno <- set$annotation
+      anno[anno == from] <- to
+      sets <- state$gene_sets; sets[[nm]]$annotation <- anno; state$gene_sets <- sets
+      cfg <- (state$palette$geneset %||% list())[[nm]]
+      if (!is.null(cfg) && !is.null(cfg$colors) && from %in% names(cfg$colors)) {
+        p <- state$palette; cols <- p$geneset[[nm]]$colors
+        names(cols)[names(cols) == from] <- to; p$geneset[[nm]]$colors <- cols; state$palette <- p
+      }
+      snapshot_absent()
+      .log(state, list(action = "gene_set_annotation_level_rename", set = nm, from = from, to = to))
+    }
+    observeEvent(input$anno_del_sel, {
+      pick <- intersect(input$anno_del_pick %||% character(0), annotated_names())
+      if (!length(pick)) { showNotification("Select annotation(s) to delete.", type = "warning"); return() }
+      showModal(modalDialog(title = "Delete annotations", size = "s",
+        sprintf("Delete %d annotation(s): %s?", length(pick), paste(pick, collapse = ", ")),
+        footer = tagList(modalButton("Cancel"),
+                         actionButton(ns("anno_del_sel_ok"), "Delete", class = "btn-danger"))))
+    })
+    observeEvent(input$anno_del_sel_ok, {
+      removeModal(); .anno_delete(input$anno_del_pick %||% character(0))
+    })
+    observeEvent(input$anno_del_all, {
+      n <- length(annotated_names())
+      if (!n) { showNotification("No annotations to delete.", type = "warning"); return() }
+      showModal(modalDialog(title = "Delete all annotations", size = "s",
+        sprintf("Delete all %d annotation(s)? This cannot be undone.", n),
+        footer = tagList(modalButton("Cancel"),
+                         actionButton(ns("anno_del_all_ok"), "Delete all", class = "btn-danger"))))
+    })
+    observeEvent(input$anno_del_all_ok, { removeModal(); .anno_delete(annotated_names()) })
+
+    # Global view controls + the "Your annotations" panels.
+    output$anno_show_cols_ui <- renderUI({
+      req(state$working)
+      cols <- names(as.data.frame(SummarizedExperiment::rowData(state$working), optional = TRUE))
+      ft_name <- paste0(feature_type(), "_name")
+      cur <- shiny::isolate(input$anno_show_cols)
+      sel <- if (!is.null(cur)) intersect(cur, cols)
+             else if (ft_name %in% cols) ft_name else character(0)
+      selectizeInput(ns("anno_show_cols"), "Also show columns", choices = cols,
+                     selected = sel, multiple = TRUE)
+    })
+    output$anno_empty_note <- renderUI({
+      if (length(annotated_names())) return(NULL)
+      helpText(class = "small text-muted",
+        "No annotations yet. Combine gene sets on the left and click Build.")
+    })
+    # One annotated set's composition (100%-stacked horizontal bar); colours from
+    # the Palette Gene Set config (default qualitative until one is set).
+    anno_bar_gg <- function(nm) {
+      set <- state$gene_sets[[nm]]; req(!is.null(set))
+      comp <- gene_set_annotation_composition(set, working_rn(), isTRUE(input$anno_within))
+      validate(need(nrow(comp) > 0, "No genes in this annotation for the current view."))
+      comp <- comp[order(comp$n, decreasing = TRUE), , drop = FALSE]
+      comp$level <- factor(comp$level, levels = comp$level)
+      cols <- gene_set_anno_colors(levels(comp$level), state$palette$geneset[[nm]])
+      many <- nrow(comp) > 20L                       # legend cap: hide when too many
+      g <- ggplot2::ggplot(comp, ggplot2::aes(x = .data$n, y = "", fill = .data$level)) +
+        ggplot2::geom_col(position = ggplot2::position_fill(reverse = TRUE), width = 0.6) +
+        ggplot2::scale_x_continuous(labels = function(x) paste0(x * 100, "%")) +
+        ggplot2::scale_fill_manual(values = cols, drop = FALSE) +
+        ggplot2::labs(x = NULL, y = NULL, fill = NULL,
+          subtitle = sprintf("%d gene(s)%s", sum(comp$n),
+            if (isTRUE(input$anno_within)) " in the dataset" else "")) +
+        # .plot_theme lets thematic follow the live light/dark bslib theme (it owns
+        # bg/fg); we only override sizing + the flat single-bar look.
+        .plot_theme(dark()) +
+        ggplot2::theme(text = ggplot2::element_text(size = 11),
+                       legend.position = if (many) "none" else "bottom",
+                       panel.grid = ggplot2::element_blank(),
+                       axis.ticks = ggplot2::element_blank(),
+                       axis.text.y = ggplot2::element_blank())
+      if (many) g + ggplot2::labs(caption = sprintf("%d levels (legend hidden)", nrow(comp))) else g
+    }
+    anno_member_frame <- function(nm) {
+      set <- state$gene_sets[[nm]]; ids <- names(set$annotation)
+      if (isTRUE(input$anno_within)) ids <- ids[ids %in% working_rn()]
+      fr <- members_frame(ids, input$anno_show_cols)
+      fr$Annotation <- unname(set$annotation[ids])
+      keep <- setdiff(names(fr), c("In dataset", "Annotation"))
+      fr[, c(keep, "Annotation", "In dataset"), drop = FALSE]
+    }
+    # Both bar + table live in every panel, gated by the view checkboxes via
+    # conditionalPanel (NOT input$anno_view here) -- so toggling the view is a
+    # client-side show/hide that never rebuilds the accordion (open panels stay
+    # open). Bar sits above the table when both are shown.
+    output$anno_panels <- renderUI({
+      nms <- annotated_names(); if (!length(nms)) return(NULL)
+      cond_bar <- sprintf("input['%1$s'] && input['%1$s'].indexOf('bar') > -1", ns("anno_view"))
+      cond_tbl <- sprintf("input['%1$s'] && input['%1$s'].indexOf('table') > -1", ns("anno_view"))
+      shown <- utils::head(nms, .anno_pool)
+      panels <- lapply(seq_along(shown), function(k) {
+        nm <- nms[k]; set <- state$gene_sets[[nm]]
+        nlev <- length(unique(unname(set$annotation)))
+        bslib::accordion_panel(
+          sprintf("%s  (%d genes, %d levels)", nm, length(set$ids), nlev), value = nm,
+          conditionalPanel(cond_bar, plotOutput(ns(paste0("anno_bar_", k)), height = "130px")),
+          conditionalPanel(cond_tbl, DT::DTOutput(ns(paste0("anno_dt_", k)))),
+          tags$div(class = "mt-2 d-flex gap-2 flex-wrap",
+            actionButton(ns(paste0("anno_prename_", k)), "Rename",
+                         class = "btn-sm btn-outline-secondary", icon = shiny::icon("pen")),
+            actionButton(ns(paste0("anno_plevel_", k)), "Rename level",
+                         class = "btn-sm btn-outline-secondary", icon = shiny::icon("tag")),
+            actionButton(ns(paste0("anno_pdel_", k)), "Delete",
+                         class = "btn-sm btn-outline-danger", icon = shiny::icon("trash"))))
+      })
+      # Keep the panels the user has open across a rebuild (e.g. an in-panel rename
+      # mutates state$gene_sets, which re-renders this) instead of collapsing all.
+      open_now <- intersect(shiny::isolate(input$anno_acc), shown)
+      acc <- do.call(bslib::accordion, c(
+        list(id = ns("anno_acc"), open = if (length(open_now)) open_now else FALSE), panels))
+      trunc <- if (length(nms) > .anno_pool)
+        tags$div(class = "small text-muted mb-2",
+                 sprintf("Showing the first %d of %d annotations.", .anno_pool, length(nms)))
+      tagList(trunc, acc)
+    })
+    # Pre-register a fixed pool of per-panel outputs + delete observers (index-keyed,
+    # reading the annotation currently at that index) -- avoids per-render observer leaks.
+    lapply(seq_len(.anno_pool), function(k) {
+      output[[paste0("anno_bar_", k)]] <- renderPlot({
+        nms <- annotated_names(); req(k <= length(nms)); anno_bar_gg(nms[k])
+      })
+      output[[paste0("anno_dt_", k)]] <- DT::renderDT({
+        nms <- annotated_names(); req(k <= length(nms))
+        dt_table(anno_member_frame(nms[k]), page_length = 10L)
+      })
+      observeEvent(input[[paste0("anno_pdel_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); .anno_delete(nms[k])
+      }, ignoreInit = TRUE)
+      # Rename the annotation set (conflict-guarded; Palette key follows).
+      observeEvent(input[[paste0("anno_prename_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); nm <- nms[k]
+        showModal(modalDialog(title = "Rename annotation", size = "s",
+          textInput(ns(paste0("anno_rename_to_", k)), "New name", value = nm),
+          footer = tagList(modalButton("Cancel"),
+            actionButton(ns(paste0("anno_rename_ok_", k)), "Rename", class = "btn-primary"))))
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("anno_rename_ok_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); nm <- nms[k]
+        to <- trimws(input[[paste0("anno_rename_to_", k)]] %||% "")
+        if (!nzchar(to)) { showNotification("Enter a name.", type = "warning"); return() }
+        if (!identical(to, nm) && !is.null(state$gene_sets[[to]])) {
+          showNotification("A set with that name already exists.", type = "warning"); return() }
+        if (!identical(to, nm)) .anno_rename_set(nm, to)
+        removeModal()
+      }, ignoreInit = TRUE)
+      # Rename a single level (guarded against merging into an existing level).
+      observeEvent(input[[paste0("anno_plevel_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); nm <- nms[k]
+        levs <- unique(unname(state$gene_sets[[nm]]$annotation))
+        showModal(modalDialog(title = sprintf("Rename a level of '%s'", nm), size = "s",
+          selectInput(ns(paste0("anno_level_from_", k)), "Level", choices = levs),
+          textInput(ns(paste0("anno_level_to_", k)), "New name"),
+          footer = tagList(modalButton("Cancel"),
+            actionButton(ns(paste0("anno_level_ok_", k)), "Rename", class = "btn-primary"))))
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("anno_level_ok_", k)]], {
+        nms <- annotated_names(); req(k <= length(nms)); nm <- nms[k]
+        from <- input[[paste0("anno_level_from_", k)]]
+        to <- trimws(input[[paste0("anno_level_to_", k)]] %||% "")
+        levs <- unique(unname(state$gene_sets[[nm]]$annotation))
+        if (is.null(from) || !from %in% levs) { removeModal(); return() }
+        if (!nzchar(to)) { showNotification("Enter a level name.", type = "warning"); return() }
+        if (!identical(to, from) && to %in% levs) {
+          showNotification("That level already exists -- merging is not allowed.",
+                           type = "warning"); return() }
+        if (!identical(to, from)) .anno_rename_level(nm, from, to)
+        removeModal()
+      }, ignoreInit = TRUE)
+    })
+    observeEvent(input$anno_collapse,
+                 bslib::accordion_panel_close("anno_acc", values = TRUE))
+
+    # =====================================================================
     # COMPARE TAB (P6e): Stats (set-size bar) + Overlap (Euler/Venn/UpSet).
     # =====================================================================
     # Shared "Sets to visualize" multiselect: all selected by default, preserved
@@ -1223,13 +1682,15 @@ mod_geneset_server <- function(id, state, dark_mode = reactive(FALSE)) {
       nms <- names(state$gene_sets)
       if (!length(nms))
         return(helpText(class = "small text-muted",
-                        "No gene sets yet -- build some on the Manage tab."))
+                        "No gene sets yet -- build some on the Gene Sets tab."))
       cur <- shiny::isolate(input$cmp_sets)
       sel <- if (!is.null(cur)) intersect(cur, nms) else nms
-      .gs_set_multiselect_ui(ns, "cmp_sets", "Sets to visualize", nms, sel)
+      .gs_set_multiselect_ui(ns, "cmp_sets", "Sets to visualize",
+                             .gs_group_by_kind(nms, state$gene_sets), sel, kind_filter = TRUE)
     })
     .gs_set_multiselect_server(input, output, session, "cmp_sets",
-                               function() names(state$gene_sets))
+                               function() names(state$gene_sets),
+                               sets_fn = function() state$gene_sets)
     cmp_selected <- reactive(intersect(input$cmp_sets %||% character(0), names(state$gene_sets)))
     have_eulerr <- function() requireNamespace("eulerr", quietly = TRUE)
 

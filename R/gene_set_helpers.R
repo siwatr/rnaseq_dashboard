@@ -208,6 +208,124 @@ split_ids_by_group <- function(df, id_col, anno_cols = character(0), sep = ".") 
   sp[vapply(sp, length, integer(1)) > 0L]
 }
 
+#' Combine several gene sets into one id -> label annotation
+#'
+#' The P7 "annotated" layer: a second-level object grouping several member gene
+#' sets, where each gene's label = the member set it belongs to. Non-destructive
+#' -- it reads each set's authored ids and produces one label per gene over the
+#' union. Feeds `new_gene_set(kind = "annotated", annotation = <result$annotation>)`.
+#'
+#' A gene in more than one member set is resolved by `shared`:
+#' - `"concat"` (default): the member-set names joined by `sep` (in input order),
+#'   e.g. `"up;hypoxia"` -- stays one label per gene, so `row_split` / saving keep
+#'   working, and overlaps read as their own level.
+#' - `"label"`: a single distinct level named `label` (default `"multiple"`).
+#'   **Rejected when `label` collides with a member-set name** (it would silently
+#'   merge a real set into the overlap bucket).
+#' - `"first"`: the first member set (in input order) the gene appears in.
+#'
+#' @param sets A **named** list of gene-set records (or bare id vectors); each
+#'   name is the label for genes in that set. `NULL` / empty yields empty output.
+#' @param shared How to label a gene in >1 set (see above).
+#' @param sep Separator for `shared = "concat"` (default `";"`).
+#' @param label Level name for `shared = "label"` (default `"multiple"`).
+#' @return A list `list(annotation, levels, shared_ids, note)` -- `annotation` a
+#'   named character vector (id -> label), `levels` the labels in display order
+#'   (member-set names in input order, then any overlap labels in first-appearance
+#'   order), `shared_ids` the genes in >1 set, `note` a human summary string.
+#' @export
+combine_gene_set_annotation <- function(sets, shared = c("concat", "label", "first"),
+                                        sep = ";", label = "multiple") {
+  shared <- match.arg(shared)
+  empty <- list(annotation = stats::setNames(character(0), character(0)),
+                levels = character(0), shared_ids = character(0), note = "")
+  if (is.null(sets) || !length(sets)) return(empty)
+  nms <- names(sets)
+  if (is.null(nms)) stop("`sets` must be a named list.", call. = FALSE)
+  keep <- nzchar(nms) & !is.na(nms)
+  sets <- sets[keep]; nms <- nms[keep]
+  if (!length(sets)) return(empty)
+  if (identical(shared, "label")) {
+    label <- trimws(as.character(label)[1])
+    if (!nzchar(label)) stop("`label` must be non-empty.", call. = FALSE)
+    if (label %in% nms)
+      stop("`label` ('", label, "') collides with a member-set name; pick another.",
+           call. = FALSE)
+  }
+  # (id, set) pairs in input set order; drop NA / blank ids.
+  pairs <- do.call(rbind, lapply(nms, function(nm) {
+    ids <- .gs_ids(sets[[nm]]); ids <- ids[!is.na(ids) & nzchar(ids)]
+    if (!length(ids)) return(NULL)
+    data.frame(id = ids, set = nm, stringsAsFactors = FALSE)
+  }))
+  if (is.null(pairs)) return(empty)
+  # Membership per id (set names in input order), keyed by first-appearance id order.
+  by <- split(pairs$set, factor(pairs$id, levels = unique(pairs$id)))
+  label_for <- function(s) {
+    if (length(s) == 1L) return(s)
+    switch(shared, concat = paste(s, collapse = sep), label = label, first = s[1])
+  }
+  labels <- vapply(by, label_for, character(1))
+  annotation <- stats::setNames(unname(labels), names(by))
+  shared_ids <- names(by)[lengths(by) > 1L]
+  singles <- intersect(nms, labels)             # member-set names used as labels
+  levels  <- c(singles, setdiff(unique(labels), singles))
+  note <- if (length(shared_ids))
+    sprintf("%d gene(s) belong to more than one set.", length(shared_ids)) else ""
+  # concat can (rarely) produce an overlap label equal to a member-set name (a set
+  # literally named like a concatenation, e.g. "a;b"): the overlap genes then merge
+  # into that set's level. Same hazard the "label" mode guards against -- surface it.
+  if (identical(shared, "concat") && length(shared_ids)) {
+    collide <- intersect(nms, unique(annotation[shared_ids]))
+    if (length(collide))
+      note <- paste0(note, sprintf(" Overlap label(s) %s match a member-set name.",
+                                   paste(collide, collapse = ", ")))
+  }
+  list(annotation = annotation, levels = levels, shared_ids = shared_ids, note = note)
+}
+
+#' Per-level gene counts for an annotated set (the composition view)
+#'
+#' Powers the Annotation tab's composition bar. Non-destructive: counts derive
+#' live from the record's `annotation` map (id -> label).
+#' @param set An annotated gene-set record (with an `annotation` map).
+#' @param feature_ids Current dataset feature ids (`rownames(dds)`); used when
+#'   `within = TRUE`.
+#' @param within When TRUE, count only genes present in the dataset.
+#' @return A data.frame `level` (character, first-appearance order) / `n`
+#'   (integer), or an empty frame when there is no annotation.
+#' @export
+gene_set_annotation_composition <- function(set, feature_ids = NULL, within = FALSE) {
+  anno <- if (is.list(set)) set$annotation else NULL
+  empty <- data.frame(level = character(0), n = integer(0), stringsAsFactors = FALSE)
+  if (is.null(anno) || !length(anno)) return(empty)
+  ids <- names(anno)
+  if (isTRUE(within) && !is.null(feature_ids)) {
+    keep <- ids %in% feature_ids; anno <- anno[keep]
+  }
+  if (!length(anno)) return(empty)
+  lv <- unique(unname(anno))                        # first-appearance level order
+  n  <- vapply(lv, function(l) sum(anno == l), integer(1))
+  data.frame(level = lv, n = unname(n), stringsAsFactors = FALSE)
+}
+
+#' Colours for a gene-set annotation's levels
+#'
+#' Mirrors [gene_set_presence_colors()] / [removal_status_colors()]: a default
+#' qualitative scheme, overridable by a Palette `Gene Set` config (edited on the
+#' Palette page, keyed by the annotation name).
+#' @param levels The annotation's levels (character).
+#' @param config A palette config `list(name, colors, custom)`, or `NULL` for the
+#'   default qualitative scheme.
+#' @return A named character vector (level -> hex).
+#' @export
+gene_set_anno_colors <- function(levels, config = NULL) {
+  levels <- as.character(levels)
+  if (is.null(config))
+    return(palette_discrete(levels, NULL, "Okabe-Ito"))
+  palette_discrete(levels, config$colors, config$name %||% "Custom palette", config$custom)
+}
+
 # ===========================================================================
 # File round-trip (P6d): JSON / GMT / TSV serializers.
 #

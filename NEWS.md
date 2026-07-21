@@ -1,5 +1,18 @@
 # ddsdashboard (development version)
 
+* **Gene set annotations** (P7e-1): the Gene Sets page gains an **Annotation** tab (tabs are now
+  Gene Sets | Annotation | Compare Sets) for combining gene sets into a second-level *annotation* --
+  each gene labelled by the set it belongs to -- stored as a reusable, exportable record for the
+  Expression heatmap. A gene in more than one set is resolved by your choice of strategy (combine
+  the labels, a single shared label, or first-set-wins), always with a shared-gene warning. Build
+  annotations from scratch (combine member sets), from a **DE group build** (the From-DE source now
+  stages up/down/no-change sets across one or more contrasts at once), or as a fast-track when
+  importing a table split by column. Each annotation shows a composition bar (coloured by a new
+  **Palette > Gene Set** domain) and/or a members table; rename an annotation or one of its levels,
+  and delete individually or in bulk. The **Palette > Gene Set** pill colours both a simple set (a
+  2-level in/out palette) and an annotated set (per level), with a **"Pull color from gene sets"**
+  control so an annotation can inherit its member sets' colours.
+
 # ddsdashboard 0.4.3
 
 * **Gene sets > Heatmap** (P7c): a `ComplexHeatmap` over a named gene set (blank until you pick

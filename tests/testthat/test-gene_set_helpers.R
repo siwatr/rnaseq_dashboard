@@ -79,6 +79,89 @@ test_that("gene_set_present / gene_set_absent derive the live view (order-preser
   expect_equal(gene_set_absent(c("g1", "gX"), feats), "gX")
 })
 
+# ---- combine_gene_set_annotation (P7e) ------------------------------------
+
+test_that("combine_gene_set_annotation: single-set membership + level order", {
+  sets <- list(up = new_gene_set(c("g1", "g2")), down = new_gene_set(c("g3", "g4")))
+  r <- combine_gene_set_annotation(sets)
+  expect_equal(unname(r$annotation[c("g1", "g2", "g3", "g4")]),
+               c("up", "up", "down", "down"))
+  expect_equal(r$levels, c("up", "down"))       # member-set input order
+  expect_length(r$shared_ids, 0L)
+  expect_identical(r$note, "")
+})
+
+test_that("combine_gene_set_annotation: concat is the default for shared genes", {
+  sets <- list(up = new_gene_set(c("g1", "g2")), hyp = new_gene_set(c("g2", "g3")))
+  r <- combine_gene_set_annotation(sets)               # sep = ";"
+  expect_equal(unname(r$annotation["g2"]), "up;hyp")   # input order, joined
+  expect_setequal(r$shared_ids, "g2")
+  expect_match(r$note, "1 gene")
+  expect_equal(r$levels, c("up", "hyp", "up;hyp"))     # singles first, combo last
+  # Custom separator.
+  expect_equal(unname(combine_gene_set_annotation(sets, sep = "|")$annotation["g2"]),
+               "up|hyp")
+})
+
+test_that("combine_gene_set_annotation: label + first strategies", {
+  sets <- list(A = new_gene_set(c("g1", "g2")), B = new_gene_set(c("g2", "g3")))
+  lab <- combine_gene_set_annotation(sets, shared = "label")
+  expect_equal(unname(lab$annotation["g2"]), "multiple")
+  expect_true("multiple" %in% lab$levels)
+  expect_equal(unname(combine_gene_set_annotation(sets, shared = "label",
+                                                  label = "both")$annotation["g2"]), "both")
+  fst <- combine_gene_set_annotation(sets, shared = "first")
+  expect_equal(unname(fst$annotation["g2"]), "A")      # first set in input order
+})
+
+test_that("combine_gene_set_annotation: concat overlap label matching a member name is noted", {
+  sets <- list(a = new_gene_set(c("g1", "g2")), b = new_gene_set(c("g2", "g3")),
+               "a;b" = new_gene_set("g4"))
+  r <- combine_gene_set_annotation(sets)     # g2 in a&b -> "a;b" (== the member set "a;b")
+  expect_equal(unname(r$annotation["g2"]), "a;b")
+  expect_match(r$note, "match a member-set name")
+})
+
+test_that("combine_gene_set_annotation: 'label' guards against a member-set-name clash", {
+  sets <- list(multiple = new_gene_set("g1"), B = new_gene_set(c("g1", "g2")))
+  expect_error(combine_gene_set_annotation(sets, shared = "label"), "collides")
+  expect_error(combine_gene_set_annotation(sets, shared = "label", label = ""), "non-empty")
+})
+
+test_that("combine_gene_set_annotation: empty / one-set / NA-blank edges", {
+  expect_length(combine_gene_set_annotation(list())$annotation, 0L)
+  expect_length(combine_gene_set_annotation(NULL)$levels, 0L)
+  one <- combine_gene_set_annotation(list(S = new_gene_set(c("g1", "g2"))))
+  expect_equal(one$levels, "S")
+  expect_length(one$shared_ids, 0L)
+  # Blank ids dropped; a set with no ids contributes nothing.
+  edge <- combine_gene_set_annotation(list(A = c("g1", "", NA), B = character(0)))
+  expect_equal(names(edge$annotation), "g1")
+  expect_equal(edge$levels, "A")
+})
+
+test_that("gene_set_annotation_composition counts per level, within-aware", {
+  set <- new_gene_set(c("g1", "g2", "g3", "g4"), kind = "annotated",
+                      annotation = c(g1 = "up", g2 = "up", g3 = "down", g4 = "up"))
+  comp <- gene_set_annotation_composition(set)
+  expect_setequal(comp$level, c("up", "down"))
+  expect_equal(comp$n[comp$level == "up"], 3L)
+  comp2 <- gene_set_annotation_composition(set, feature_ids = c("g1", "g3"), within = TRUE)
+  expect_equal(comp2$n[comp2$level == "up"], 1L)
+  expect_equal(comp2$n[comp2$level == "down"], 1L)
+  expect_equal(nrow(gene_set_annotation_composition(new_gene_set("g1"))), 0L)  # no annotation
+})
+
+test_that("gene_set_anno_colors: default scheme + palette override (normalized hex)", {
+  d <- gene_set_anno_colors(c("up", "down"))
+  expect_setequal(names(d), c("up", "down"))
+  expect_true(all(grepl("^#[0-9A-Fa-f]{6}$", d)))
+  cfg <- list(name = "Custom palette", colors = c(up = "#ff0000", down = "#0000ff"))
+  o <- gene_set_anno_colors(c("up", "down"), cfg)
+  expect_equal(unname(o[["up"]]), "#FF0000")
+  expect_equal(unname(o[["down"]]), "#0000FF")
+})
+
 # ---- File round-trip (P6d): JSON / GMT / TSV serializers ------------------
 
 test_that("JSON round-trips ids, names, kind, source (faithful)", {

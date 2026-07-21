@@ -299,9 +299,18 @@ after P7a; the heatmap splits into core + k-means; the Phase-6-deferred annotate
   overwrite or auto-suffix), the prefix/column-name field clears on success, and the annotation/label
   selectors preserve their pick across the edit's `data_version` bump. + tests. + doc-sync (per-PR) +
   propose `v0.4.3`.
-- **P7e ⬜** — the Phase-6-deferred **annotated layer** (`kind="annotated"`,
-  `combine_gene_set_annotation` with shared-gene **warning**, annotation-driven `row_split` +
-  nested k-means) + the `Palette > Gene Set` per-set-colour domain. Closes Phase 7 → propose `v0.5.0`.
+- **P7e** — the Phase-6-deferred **annotated layer** + heatmap consumer, split into two sub-PRs:
+  - **P7e-1 ✅ (branch `p7e1-geneset-annotation`)** — the Gene Sets **Annotation** layer (no heatmap
+    changes): the page renames to **Gene Sets | Annotation | Compare Sets**; the **From DE** source
+    becomes a **group build** (contrast(s) × up/down/no_change → N staged sets); a pure
+    **`combine_gene_set_annotation()`** (shared-gene concat/label/first + **warning**); a palette-style
+    **Annotation tab** (sidebar builder Build/Reset + delete selected/all; per-annotation composition
+    bar / members table) authoring `kind="annotated"` records into `state$gene_sets`; the table-import
+    **"Save as annotated set"** fast-track; and a **`Palette > Gene Set`** discrete colour domain
+    (`gene_set_anno_colors()`, `gene_set_annotation_composition()`). + tests + doc-sync.
+  - **P7e-2 ⬜** — the heatmap consumer: **row annotation** (gene set(s) / annotated set / rowData),
+    multi-source nested **`row_split`** (+ colData `col_split`) with the k-means nesting radio, and
+    leaf-slice save. Closes Phase 7 → propose `v0.5.0`.
 
 ### Interlude — Size factors tab (branch `size-factors-tab`, a fix PR during P7)
 - **Decouple size-factor estimation from assay assignment** into its own **Dataset > Size factors**
