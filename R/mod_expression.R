@@ -15,6 +15,69 @@
 # `derived` behind the Render button, keyed on the assay; the per-gene lookup / the
 # set aggregation, grouping, colour, and geom toggles are cheap live re-plots.
 
+# --- Gene-set heatmap (P7c) tuning knobs (option()s, like the distribution
+# guards) -- row (genes) and column (samples) label defaults resolve separately,
+# and the dendrogram auto-hides above its own threshold.
+.hm_row_label_max <- function() getOption("ddsdashboard.heatmap_row_label_max", 50L)
+.hm_col_label_max <- function() getOption("ddsdashboard.heatmap_col_label_max", 30L)
+.hm_dend_max      <- function() getOption("ddsdashboard.heatmap_dend_max", 100L)
+
+# Build the ComplexHeatmap colour function from a continuous-palette config. In
+# z-score mode with both anchors blank the divergent ramp is centred at 0
+# (symmetric limits); otherwise the anchors / data range apply. Returns NULL when
+# circlize is unavailable (callers validate()).
+.hm_col_fun <- function(mat, ramp_cfg, zscored) {
+  if (!requireNamespace("circlize", quietly = TRUE)) return(NULL)
+  vals <- as.numeric(mat)
+  mn <- ramp_cfg$min; mx <- ramp_cfg$max
+  blank <- function(a) is.null(a) || !nzchar(trimws(as.character(a)))
+  if (isTRUE(zscored) && blank(mn) && blank(mx)) {
+    lim <- expr_symmetric_limits(vals); mn <- lim[1]; mx <- lim[2]
+  }
+  palette_colorramp2(ramp_cfg$name %||% "RColorBrewer: RdBu", values = vals,
+                     min = if (blank(mn)) NULL else mn,
+                     max = if (blank(mx)) NULL else mx,
+                     custom = ramp_cfg$custom, reverse = isTRUE(ramp_cfg$reverse))
+}
+
+# Default ramp config by scaling mode: divergent RdBu (centred at 0) for z-scores,
+# sequential viridis for raw values.
+.hm_ramp_default <- function(zscore = TRUE) {
+  if (isTRUE(zscore))
+    continuous_palette_default(name = "RColorBrewer: RdBu", reverse = TRUE)
+  else continuous_palette_default(name = "viridis: viridis")
+}
+
+# Assemble the Heatmap object from a rendered snapshot `s` + live annotation.
+# `s` carries the matrix, resolved labels/marks, cluster/dend flags, ramp config,
+# and legend title; `anno` is a HeatmapAnnotation (or NULL) resolved live.
+.hm_build <- function(s, anno) {
+  col_fun <- .hm_col_fun(s$mat, s$ramp, s$zscored)
+  args <- list(
+    matrix = s$mat, name = s$legend, col = col_fun,
+    cluster_rows = isTRUE(s$cluster_rows), cluster_columns = isTRUE(s$cluster_cols),
+    show_row_dend = isTRUE(s$show_row_dend), show_column_dend = isTRUE(s$show_col_dend),
+    show_row_names = identical(s$row_mode, "all"),
+    show_column_names = identical(s$col_mode, "all"),
+    row_names_gp = grid::gpar(fontsize = 8),
+    column_names_gp = grid::gpar(fontsize = 9),
+    top_annotation = anno,
+    heatmap_legend_param = list(title = s$legend))
+  if (identical(s$row_mode, "all")) args$row_labels <- s$row_labels
+  if (identical(s$col_mode, "all")) args$column_labels <- s$col_labels
+  # "Selected": names off, mark just the searched rows/columns via anno_mark.
+  if (identical(s$row_mode, "selected") && length(s$row_mark_at))
+    args$right_annotation <- ComplexHeatmap::rowAnnotation(
+      mark = ComplexHeatmap::anno_mark(at = s$row_mark_at, labels = s$row_mark_lab,
+                                       labels_gp = grid::gpar(fontsize = 8)))
+  if (identical(s$col_mode, "selected") && length(s$col_mark_at))
+    args$bottom_annotation <- ComplexHeatmap::columnAnnotation(
+      mark = ComplexHeatmap::anno_mark(at = s$col_mark_at, labels = s$col_mark_lab,
+                                       which = "column",
+                                       labels_gp = grid::gpar(fontsize = 8)))
+  do.call(ComplexHeatmap::Heatmap, args)
+}
+
 # Colour/fill scale + layered plot for one value vector. `df` carries
 # sample/group/value (+ optional `colour`). Distribution geoms fill by a discrete
 # colour attribute; dots colour by it. ggbeeswarm draws the dots (geom_jitter
@@ -240,12 +303,106 @@ mod_expression_ui <- function(id) {
   )
 
   # --- Gene sets > Heatmap (P7c) ------------------------------------------
+  # A ComplexHeatmap over a named set. No auto-render (a heatmap can be slow):
+  # Render-only + a spinner. Everything -- matrix, labels, clustering, ramp,
+  # annotation -- is snapshotted on Render (a single static plot has no cheap live
+  # layer), so a settings change shows a stale banner until the next Render.
+  hm_label_panel <- function(axis, title, icon_name) {
+    p <- function(x) paste0("hm_", axis, "_", x)
+    is_row <- identical(axis, "row")
+    bslib::accordion_panel(
+      title, icon = icon(icon_name),
+      uiOutput(ns(p("source_ui"))),
+      radioButtons(ns(p("mode")), "Show labels",
+                   c("Auto (by size)" = "auto", "All" = "all",
+                     "Selected" = "selected", "None" = "none"),
+                   selected = "auto", inline = TRUE),
+      conditionalPanel(
+        sprintf("input['%s'] == 'selected'", ns(p("mode"))),
+        if (is_row)
+          gene_search_ui(ns, "hmrowsel", multiple = TRUE,
+                         search_modes = c("exact", "contains", "regex"),
+                         placeholder = "Genes to label")
+        else uiOutput(ns("hm_col_sel_ui"))))
+  }
   heatmap_pill <- bslib::nav_panel(
     "Heatmap",
-    bslib::card(
-      bslib::card_body(
-        tags$p(class = "text-muted",
-               "The gene-set expression heatmap is coming in the next update (P7c).")
+    bslib::layout_sidebar(
+      sidebar = bslib::sidebar(
+        title = tags$h3("Gene-set heatmap", class = "fs-6 mb-0"), width = 350,
+        tags$div(class = "d-flex justify-content-end mb-1",
+                 actionButton(ns("hm_render"), "Render", icon = icon("play"),
+                              class = "btn-primary")),
+        bslib::accordion(
+          open = "Gene set",
+          bslib::accordion_panel(
+            "Gene set", icon = icon("magnifying-glass"),
+            radioButtons(ns("hm_source"), "Source",
+                         c("Saved set" = "saved", "Quick search" = "search"),
+                         inline = TRUE),
+            conditionalPanel(
+              sprintf("input['%s'] == 'saved'", ns("hm_source")),
+              uiOutput(ns("hm_pick_ui"))),
+            conditionalPanel(
+              sprintf("input['%s'] == 'search'", ns("hm_source")),
+              gene_search_ui(ns, "hmsearch", multiple = TRUE,
+                             search_modes = c("exact", "contains", "regex"),
+                             placeholder = "e.g. Actb, Gapdh, ENSG..."))),
+          bslib::accordion_panel(
+            "Expression value", icon = icon("calculator"),
+            expr_value_ui(ns, "hm_val"),
+            bslib::input_switch(
+              ns("hm_zscore"),
+              bslib::tooltip(tags$span("Z-score each gene"),
+                "Standardize every gene across samples (centre 0, sd 1) so genes on different scales are comparable. Recommended."),
+              value = TRUE),
+            bslib::input_switch(
+              ns("hm_only_expr"),
+              bslib::tooltip(tags$span("Only genes with expression"),
+                "Drop genes with zero counts in every sample."),
+              value = TRUE)),
+          bslib::accordion_panel(
+            "Colour", icon = icon("palette"),
+            radioButtons(ns("hm_ramp_src"), "Colour scale",
+                         c("Custom" = "custom", "From Palette page (assay)" = "palette"),
+                         selected = "custom", inline = TRUE),
+            conditionalPanel(
+              sprintf("input['%s'] == 'palette'", ns("hm_ramp_src")),
+              helpText(class = "small text-muted",
+                       "Uses the assay's continuous ramp from the Palette page. Applies to raw values; z-scored data always uses the custom divergent ramp.")),
+            conditionalPanel(
+              sprintf("input['%s'] == 'custom'", ns("hm_ramp_src")),
+              continuous_palette_ui(ns, "hm_ramp", .hm_ramp_default(TRUE)))),
+          hm_label_panel("row", "Row labels", "align-left"),
+          hm_label_panel("col", "Column labels", "align-left"),
+          bslib::accordion_panel(
+            "Sample annotation", icon = icon("table-cells"),
+            uiOutput(ns("hm_anno_ui")),
+            actionButton(ns("hm_clear_anno"), "Clear annotation",
+                         icon = icon("xmark"), class = "btn-sm btn-outline-secondary")),
+          bslib::accordion_panel(
+            "Heatmap elements", icon = icon("sitemap"),
+            bslib::input_switch(ns("hm_cluster_rows"), "Cluster rows", value = TRUE),
+            conditionalPanel(
+              sprintf("input['%s']", ns("hm_cluster_rows")),
+              selectInput(ns("hm_row_dend"), "Row dendrogram",
+                          c("Auto (by size)" = "auto", "Show" = "show", "Hide" = "hide"),
+                          selected = "auto")),
+            tags$hr(class = "my-2"),
+            bslib::input_switch(ns("hm_cluster_cols"), "Cluster columns", value = TRUE),
+            conditionalPanel(
+              sprintf("input['%s']", ns("hm_cluster_cols")),
+              selectInput(ns("hm_col_dend"), "Column dendrogram",
+                          c("Auto (by size)" = "auto", "Show" = "show", "Hide" = "hide"),
+                          selected = "auto")))),
+        plot_subset_ui(ns, "hm")
+      ),
+      bslib::card(
+        bslib::card_header(tags$h3("Gene-set expression heatmap", class = "fs-6 mb-0")),
+        uiOutput(ns("hm_stale")),
+        uiOutput(ns("hm_info")),
+        shinycssloaders::withSpinner(plotOutput(ns("hm_plot"), height = "560px"),
+                                     proxy.height = "560px")
       )
     )
   )
@@ -462,7 +619,7 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
     eng <- plot_engine_server(input, output, session, state)
     # One "Showing:" selection shared (synced) across both plot pills.
     showing_samples <- plot_subset_server(input, output, session, state,
-                                          suffixes = c("expr", "expr_set"))
+                                          suffixes = c("expr", "expr_set", "hm"))
 
     # ---- Single genes: gene search -> one row of the value matrix ----------
     gene_search <- gene_search_server(input, output, session, state, "gene",
@@ -572,6 +729,217 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
     set_values <- set$reduce               # exposed for tests
     build_set_gg <- set$build_gg
     set_out <- set$out
+
+    # ---- Gene sets > Heatmap (P7c) -----------------------------------------
+    hm_search <- gene_search_server(input, output, session, state, "hmsearch",
+      multiple = TRUE, search_modes = c("exact", "contains", "regex"))
+    hm_rowsel <- gene_search_server(input, output, session, state, "hmrowsel",
+      multiple = TRUE, search_modes = c("exact", "contains", "regex"))
+    hm_val <- expr_value_server(input, output, session, state, "hm_val",
+      include_vst = TRUE, include_norm = TRUE, default_fn = expr_default_assay)
+    hm_ramp <- continuous_palette_server(input, output, session, "hm_ramp",
+                                         .hm_ramp_default(TRUE))
+
+    hm_coldata <- function() as.data.frame(SummarizedExperiment::colData(state$working))
+    hm_rowdata <- function() as.data.frame(SummarizedExperiment::rowData(state$working))
+    hm_disc <- function(df) names(df)[vapply(df, function(x)
+      is.factor(x) || is.character(x) || is.logical(x), logical(1))]
+
+    hm_ids <- reactive({
+      if (identical(input$hm_source %||% "saved", "search")) hm_search()$ids
+      else {
+        gs <- state$gene_sets %||% list(); nm <- input$hm_pick
+        if (is.null(nm) || !nm %in% names(gs)) character(0)
+        else gene_set_ids_for(gs[[nm]])                  # full authored membership
+      }
+    })
+    output$hm_pick_ui <- renderUI({
+      gs <- state$gene_sets %||% list()
+      if (!length(gs))
+        return(helpText(class = "small text-muted",
+          "No saved gene sets yet - define one on Gene Sets > Manage, or use Quick search."))
+      cur <- shiny::isolate(input$hm_pick)
+      sel <- if (!is.null(cur) && cur %in% names(gs)) cur else names(gs)[1]
+      selectInput(ns("hm_pick"), "Saved gene set", choices = names(gs), selected = sel)
+    })
+
+    # Label-source selectors (default row = <feature_type>_name -> rownames; col =
+    # colnames). Forced to init while hidden so their defaults hold when collapsed.
+    output$hm_row_source_ui <- renderUI({
+      req(state$working)
+      cols <- hm_disc(hm_rowdata())
+      guess <- paste0(state$meta$feature_type %||% "gene", "_name")
+      def <- if (guess %in% cols) guess else "__id__"
+      selectInput(ns("hm_row_source"), "Label by",
+                  c("Feature ID (rownames)" = "__id__", stats::setNames(cols, cols)),
+                  selected = def)
+    })
+    output$hm_col_source_ui <- renderUI({
+      req(state$working)
+      cols <- hm_disc(hm_coldata())
+      selectInput(ns("hm_col_source"), "Label by",
+                  c("Sample ID (colnames)" = "__id__", stats::setNames(cols, cols)),
+                  selected = "__id__")
+    })
+    output$hm_col_sel_ui <- renderUI({
+      req(state$working)
+      selectizeInput(ns("hm_col_sel"), NULL, choices = colnames(state$working),
+                     multiple = TRUE, options = list(placeholder = "Samples to label"))
+    })
+    output$hm_anno_ui <- renderUI({
+      req(state$working)
+      pv <- primary_design_var(state$working)
+      selectizeInput(ns("hm_anno"), "Annotate by (one or more)",
+                     choices = aes_choices(aes_catalog(state), none = FALSE),
+                     selected = if (!is.na(pv)) pv else character(0), multiple = TRUE)
+    })
+    outputOptions(output, "hm_row_source_ui", suspendWhenHidden = FALSE)
+    outputOptions(output, "hm_col_source_ui", suspendWhenHidden = FALSE)
+    outputOptions(output, "hm_anno_ui", suspendWhenHidden = FALSE)
+    observeEvent(input$hm_clear_anno,
+                 updateSelectizeInput(session, "hm_anno", selected = character(0)))
+
+    # The gated snapshot: the value matrix (cached in `derived`), the prepared
+    # gene-set matrix, the plotted (column-subset) matrix, resolved labels/marks,
+    # cluster/dend flags, ramp config, and annotation *values*. Colours resolve
+    # live at draw. Everything here waits for Render (no cheap live layer).
+    hm_spec <- reactive({
+      req(state$working)
+      dds <- state$working
+      spec <- hm_val()
+      vm <- state_derive(state, "expr_hm_value_mat", params = list(spec$assay),
+                         expr = function() expr_value_matrix(dds, spec$assay))
+      zsc <- isTRUE(input$hm_zscore %||% TRUE)
+      hm <- expr_heatmap_matrix(vm$mat, hm_ids(), counts = DESeq2::counts(dds),
+              zscore = zsc, only_expressed = isTRUE(input$hm_only_expr %||% TRUE),
+              transform = spec$transform, pseudocount = spec$pseudocount)
+      base_lab <- if (identical(spec$transform, "none")) vm$label else spec$label
+      use_palette <- identical(input$hm_ramp_src %||% "custom", "palette") && !zsc
+      ramp <- if (use_palette) (state$palette$assays[[spec$assay]] %||% hm_ramp())
+              else hm_ramp()
+
+      out <- list(hm = hm, mat = NULL, zscored = zsc,
+                  legend = if (zsc) "z-score" else base_lab, ramp = ramp,
+                  row_mode = "none", col_mode = "none",
+                  row_labels = character(0), col_labels = character(0),
+                  row_mark_at = integer(0), row_mark_lab = character(0),
+                  col_mark_at = integer(0), col_mark_lab = character(0),
+                  row_cov = NULL, col_cov = NULL, anno = NULL,
+                  cluster_rows = FALSE, cluster_cols = FALSE,
+                  show_row_dend = FALSE, show_col_dend = FALSE,
+                  empty_msg = "Pick a saved set or search genes, then click Render.")
+      if (is.null(hm$mat)) return(out)
+      show <- intersect(colnames(hm$mat), showing_samples())
+      if (!length(show)) { out$empty_msg <- "No samples in the current 'Showing' selection."; return(out) }
+      pm <- hm$mat[, show, drop = FALSE]
+      out$mat <- pm
+      n_row <- nrow(pm); n_col <- ncol(pm)
+
+      rd <- hm_rowdata(); cd <- hm_coldata()
+      out$row_labels <- expr_heatmap_labels(rownames(pm), input$hm_row_source %||% "__id__",
+                                            meta = rd, meta_keys = rownames(dds))
+      out$col_labels <- expr_heatmap_labels(colnames(pm), input$hm_col_source %||% "__id__",
+                                            meta = cd, meta_keys = colnames(dds))
+      rmode <- input$hm_row_mode %||% "auto"
+      if (identical(rmode, "auto")) rmode <- heatmap_label_default(n_row, .hm_row_label_max())
+      cmode <- input$hm_col_mode %||% "auto"
+      if (identical(cmode, "auto")) cmode <- heatmap_label_default(n_col, .hm_col_label_max())
+      out$row_mode <- rmode; out$col_mode <- cmode
+      if (identical(rmode, "selected")) {
+        sel <- hm_rowsel()$ids
+        out$row_cov <- expr_label_coverage(sel, rownames(pm))
+        at <- which(rownames(pm) %in% sel)
+        out$row_mark_at <- at; out$row_mark_lab <- out$row_labels[at]
+      }
+      if (identical(cmode, "selected")) {
+        sel <- input$hm_col_sel %||% character(0)
+        out$col_cov <- expr_label_coverage(sel, colnames(pm))
+        at <- which(colnames(pm) %in% sel)
+        out$col_mark_at <- at; out$col_mark_lab <- out$col_labels[at]
+      }
+      cl_r <- isTRUE(input$hm_cluster_rows %||% TRUE)
+      cl_c <- isTRUE(input$hm_cluster_cols %||% TRUE)
+      out$cluster_rows <- cl_r && n_row > 1L
+      out$cluster_cols <- cl_c && n_col > 1L
+      dend <- function(mode, cl, n)
+        cl && switch(mode %||% "auto", show = TRUE, hide = FALSE, n <= .hm_dend_max())
+      out$show_row_dend <- dend(input$hm_row_dend, out$cluster_rows, n_row)
+      out$show_col_dend <- dend(input$hm_col_dend, out$cluster_cols, n_col)
+
+      valid <- vapply(aes_catalog(state), `[[`, "", "key")
+      sel_anno <- intersect(input$hm_anno, valid)
+      if (length(sel_anno)) {
+        built <- Filter(Negate(is.null), lapply(sel_anno, function(k) {
+          r <- aes_resolve(state, k, show)
+          if (is.null(r)) NULL else list(key = k, name = r$label, values = r$values)
+        }))
+        if (length(built)) out$anno <- list(
+          keys = vapply(built, `[[`, "", "key"),
+          df = data.frame(stats::setNames(lapply(built, `[[`, "values"),
+                                          vapply(built, `[[`, "", "name")),
+                          row.names = show, check.names = FALSE, stringsAsFactors = FALSE))
+      }
+      out
+    })
+    # Render-only (no auto id created -> auto never fires); stale banner still works.
+    hm_shown <- eng$deferred("hm_no_auto", "hm_render", hm_spec,
+      sig = reactive(list(hm_val(), hm_ids(), isTRUE(input$hm_zscore %||% TRUE),
+                          isTRUE(input$hm_only_expr %||% TRUE), showing_samples(),
+                          input$hm_row_source, input$hm_col_source,
+                          input$hm_row_mode, input$hm_col_mode,
+                          hm_rowsel()$ids, input$hm_col_sel,
+                          isTRUE(input$hm_cluster_rows %||% TRUE),
+                          isTRUE(input$hm_cluster_cols %||% TRUE),
+                          input$hm_row_dend, input$hm_col_dend,
+                          input$hm_ramp_src, hm_ramp(), input$hm_anno,
+                          state$data_version)))
+    output$hm_stale <- eng$stale_note(hm_shown)
+
+    output$hm_info <- renderUI({
+      s <- hm_shown$value(); if (is.null(s)) return(NULL)
+      hm <- s$hm
+      m <- sprintf("%d of %d genes shown%s%s.", hm$n_used, hm$n_total,
+                   if (hm$n_absent > 0) sprintf("; %d absent from the dataset", hm$n_absent) else "",
+                   if (s$zscored && hm$n_nonvar > 0)
+                     sprintf("; %d non-varying (flat row)", hm$n_nonvar) else "")
+      lines <- list(tags$div(m))
+      if (!is.null(s$row_cov) && s$row_cov$n_hidden > 0)
+        lines <- c(lines, list(tags$div(sprintf(
+          "Row labels: %d of %d selected not shown (not in the set / current view).",
+          s$row_cov$n_hidden, s$row_cov$n_selected))))
+      if (!is.null(s$col_cov) && s$col_cov$n_hidden > 0)
+        lines <- c(lines, list(tags$div(sprintf(
+          "Column labels: %d of %d selected not shown (outside the current 'Showing').",
+          s$col_cov$n_hidden, s$col_cov$n_selected))))
+      tags$div(class = "small text-muted mb-2", lines)
+    })
+
+    output$hm_plot <- renderPlot({
+      validate(need(!is.null(hm_shown$value()), "Click Render to draw the heatmap."))
+      validate(need(requireNamespace("ComplexHeatmap", quietly = TRUE),
+                    "Install 'ComplexHeatmap' to show the gene-set heatmap."))
+      s <- hm_shown$value()
+      validate(need(!is.null(s$mat) && nrow(s$mat) > 0,
+                    s$empty_msg %||% "No genes to plot."))
+      validate(need(ncol(s$mat) > 0, "No samples in the current 'Showing' selection."))
+      validate(need(!is.null(.hm_col_fun(s$mat, s$ramp, s$zscored)),
+                    "Install 'circlize' for the heatmap colour scale."))
+      anno <- NULL
+      if (!is.null(s$anno)) {
+        show <- colnames(s$mat)
+        res_list <- Filter(Negate(is.null),
+                           lapply(s$anno$keys, function(k) aes_resolve(state, k, show)))
+        if (length(res_list)) {
+          anno_col <- stats::setNames(lapply(res_list, aes_heatmap_col),
+                                      vapply(res_list, function(r) r$label, ""))
+          anno <- ComplexHeatmap::HeatmapAnnotation(
+            df = s$anno$df[show, , drop = FALSE], col = anno_col)
+        }
+      }
+      ComplexHeatmap::draw(.hm_build(s, anno))
+    })
+    # Exposed for tests.
+    hm_out <- hm_shown
 
     invisible(NULL)
   })

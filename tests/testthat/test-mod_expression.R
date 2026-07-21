@@ -11,6 +11,16 @@ test_that("Expression UI mounts the tabs + single-gene containers", {
   expect_match(ui, "Gene sets")
 })
 
+test_that("Expression UI mounts the gene-set heatmap pill (P7c)", {
+  ui <- as.character(mod_expression_ui("ex"))
+  expect_match(ui, "ex-hm_plot")
+  expect_match(ui, "ex-hm_render")
+  expect_match(ui, "ex-hm_zscore")
+  expect_match(ui, "ex-hm_cluster_rows")
+  expect_match(ui, "ex-hm_ramp_cname")          # extracted continuous-palette control
+  expect_match(ui, "Heatmap")
+})
+
 test_that(".expr_single_plot clamps out-of-range points to boundary triangles", {
   df <- data.frame(sample = paste0("S", 1:6),
                    group = factor(rep(c("a", "b"), each = 3)),
@@ -220,5 +230,99 @@ test_that("distribution geoms appear only for large groups; 'Showing' is display
     session$flushReact()
     expect_equal(state$data_version, dv)                 # display subset, no data bump
     expect_equal(group_sizes(), 12L)                     # only the kept group remains
+  })
+})
+
+# --- P7c: gene-set heatmap pill --------------------------------------------
+
+test_that("heatmap snapshot builds from a saved set; value matrix caches; draws", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 4, n_spike = 4, seed = 3)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:8]))
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "auto", hm_col_mode = "auto",
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto",
+                      hm_anno = "condition", hm_render = 1)
+    session$flushReact()
+
+    s <- hm_out$value()
+    expect_false(is.null(s))
+    expect_equal(s$hm$n_present, 8L)
+    expect_equal(nrow(s$mat), 8L)
+    expect_equal(ncol(s$mat), ncol(state$working))       # all samples (no Showing filter)
+    expect_true(s$zscored)
+    expect_equal(s$row_mode, "all")                      # 8 rows < row-label threshold
+    expect_true(s$cluster_rows && s$cluster_cols)
+    expect_false(is.null(s$anno))                        # condition annotation snapshot
+    # value matrix cached in derived under expr_hm_value_mat, keyed on the assay
+    expect_equal(get("expr_hm_value_mat", envir = state$derived)$params, list("logcounts"))
+
+    skip_if_not_installed("ComplexHeatmap")
+    skip_if_not_installed("circlize")
+    ht <- .hm_build(s, NULL)                              # snapshot -> a real Heatmap
+    expect_s4_class(ht, "Heatmap")
+  })
+})
+
+test_that("heatmap respects the Render gate (no auto-render) + stale banner", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 4, n_spike = 4, seed = 6)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:6]), SetB = new_gene_set(rn[10:24]))
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "auto", hm_col_mode = "auto",
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto", hm_render = 1)
+    session$flushReact()
+    expect_equal(nrow(hm_out$value()$mat), 6L)           # SetA
+
+    # switch set WITHOUT rendering -> snapshot unchanged, stale banner fires
+    session$setInputs(hm_pick = "SetB"); session$flushReact()
+    expect_equal(nrow(hm_out$value()$mat), 6L)           # still SetA
+    expect_true(hm_out$stale())
+
+    session$setInputs(hm_render = 2); session$flushReact()
+    expect_equal(nrow(hm_out$value()$mat), 15L)          # SetB (rn[10:24])
+    expect_false(hm_out$stale())
+  })
+})
+
+test_that("heatmap 'selected' row labels mark searched genes + report coverage", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 60, n_per_group = 4, n_spike = 4, seed = 7)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:10]))
+    gn <- SummarizedExperiment::rowData(state$working)$gene_name
+    in_set  <- gn[1:2]     # two genes inside SetA (plotted rows)
+    out_set <- gn[20]      # resolves to a real dds id, but NOT in SetA -> unshowable
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "selected", hm_col_mode = "none",
+                      hmrowsel_searchby = "gene_name",
+                      hmrowsel_q = paste(c(in_set, out_set), collapse = ", "),
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto", hm_render = 1)
+    session$flushReact()
+    s <- hm_out$value()
+    expect_equal(s$row_mode, "selected")
+    expect_length(s$row_mark_at, 2L)                     # 2 in-set genes marked
+    expect_false(is.null(s$row_cov))
+    expect_equal(s$row_cov$n_hidden, 1L)                 # the out-of-set gene can't be shown
   })
 })

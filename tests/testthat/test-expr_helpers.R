@@ -130,3 +130,69 @@ test_that("expr_long_frame joins values/groups and drops missing groups", {
   expect_true("colour" %in% names(df2))
   expect_error(expr_long_frame(1:3, 1:2), "length")
 })
+
+# --- P7c: gene-set heatmap helpers -----------------------------------------
+
+test_that("expr_heatmap_matrix selects present genes, drops all-zero, keeps shape", {
+  mat <- matrix(c(1, 2, 3, 4, 5, 6, 0, 0), nrow = 4, byrow = TRUE,
+                dimnames = list(c("g1", "g2", "g3", "g0"), c("S1", "S2")))
+  counts <- matrix(c(5, 6, 7, 8, 9, 10, 0, 0), nrow = 4, byrow = TRUE,
+                   dimnames = list(c("g1", "g2", "g3", "g0"), c("S1", "S2")))
+  h <- expr_heatmap_matrix(mat, c("g1", "g2", "g0", "absent"), counts = counts,
+                           zscore = FALSE, only_expressed = TRUE)
+  expect_equal(h$n_total, 4L)                 # 4 authored (deduped)
+  expect_equal(h$n_present, 3L)               # g1,g2,g0 present; "absent" not
+  expect_equal(h$n_absent, 1L)
+  expect_equal(h$n_used, 2L)                  # g0 dropped (all-zero counts)
+  expect_equal(rownames(h$mat), c("g1", "g2"))
+  expect_equal(ncol(h$mat), 2L)
+})
+
+test_that("expr_heatmap_matrix z-scores rows and counts non-varying ones", {
+  mat <- matrix(c(1, 3, 5,      # varies
+                  2, 2, 2),     # flat -> z-score 0, counted as non-varying
+                nrow = 2, byrow = TRUE, dimnames = list(c("g1", "g2"), c("A", "B", "C")))
+  h <- expr_heatmap_matrix(mat, c("g1", "g2"), counts = NULL,
+                           zscore = TRUE, only_expressed = FALSE)
+  expect_equal(h$n_used, 2L)
+  expect_equal(h$n_nonvar, 1L)                # the flat row
+  expect_true(all(h$mat["g2", ] == 0))        # constant -> 0, not NaN
+  expect_equal(unname(rowMeans(h$mat)), c(0, 0), tolerance = 1e-8)
+})
+
+test_that("expr_heatmap_matrix returns NULL mat when no gene survives", {
+  mat <- matrix(1:4, 2, dimnames = list(c("g1", "g2"), c("S1", "S2")))
+  h <- expr_heatmap_matrix(mat, c("x", "y"), zscore = TRUE)
+  expect_null(h$mat)
+  expect_equal(h$n_used, 0L)
+})
+
+test_that("expr_heatmap_labels maps to a column with duplicate + NA-safe fallback", {
+  meta <- data.frame(gene_name = c("Actb", "Actb", NA, ""),
+                     row.names = c("id1", "id2", "id3", "id4"),
+                     stringsAsFactors = FALSE)
+  lab <- expr_heatmap_labels(c("id1", "id2", "id3", "id4"), "gene_name",
+                             meta = meta, meta_keys = rownames(meta))
+  expect_equal(lab, c("Actb", "Actb", "id3", "id4"))   # duplicates kept; NA/"" -> id
+  # "__id__" and an unknown column both return the keys verbatim
+  expect_equal(expr_heatmap_labels(c("id1", "id2"), "__id__", meta = meta), c("id1", "id2"))
+  expect_equal(expr_heatmap_labels(c("id1"), "nope", meta = meta), "id1")
+})
+
+test_that("heatmap_label_default follows the size threshold", {
+  expect_equal(heatmap_label_default(50, 50), "all")
+  expect_equal(heatmap_label_default(51, 50), "none")
+})
+
+test_that("expr_label_coverage counts searched labels that cannot be shown", {
+  cov <- expr_label_coverage(c("a", "b", "c", "a"), present_keys = c("a", "b", "z"))
+  expect_equal(cov$n_selected, 3L)            # deduped
+  expect_equal(cov$n_shown, 2L)               # a, b
+  expect_equal(cov$n_hidden, 1L)              # c
+})
+
+test_that("expr_symmetric_limits centres on zero (and guards empty/zero)", {
+  expect_equal(expr_symmetric_limits(c(-1, 0.5, 2)), c(-2, 2))
+  expect_equal(expr_symmetric_limits(c(0, 0, 0)), c(-1, 1))
+  expect_equal(expr_symmetric_limits(c(NA, NaN, Inf)), c(-1, 1))
+})
