@@ -68,6 +68,9 @@
     heatmap_legend_param = list(title = s$legend))
   if (identical(s$row_mode, "all")) args$row_labels <- s$row_labels
   if (identical(s$col_mode, "all")) args$column_labels <- s$col_labels
+  # k-means slices (computed outside Heatmap(); factor levels carry member counts).
+  if (!is.null(s$row_split)) args$row_split <- s$row_split
+  if (!is.null(s$col_split)) args$column_split <- s$col_split
   # "Selected": names off, mark just the searched rows/columns via anno_mark.
   if (identical(s$row_mode, "selected") && length(s$row_mark_at))
     args$right_annotation <- ComplexHeatmap::rowAnnotation(
@@ -401,6 +404,31 @@ mod_expression_ui <- function(id) {
             conditionalPanel(
               sprintf("input['%s']", ns("hm_cluster_cols")),
               hm_dend_radio(ns("hm_col_dend"), "Column dendrogram"))),
+          bslib::accordion_panel(
+            "Clustering (k-means)", icon = icon("object-group"),
+            helpText(class = "small text-muted",
+                     "k = 1 turns splitting off. k-means runs on the displayed values (z-scored when that toggle is on)."),
+            bslib::layout_columns(
+              col_widths = c(6, 6),
+              numericInput(ns("hm_row_k"), "Row clusters (k)", value = 1,
+                           min = 1, max = 20, step = 1),
+              numericInput(ns("hm_col_k"), "Column clusters (k)", value = 1,
+                           min = 1, max = 20, step = 1)),
+            tags$div(class = "d-flex align-items-end gap-2",
+              tags$div(class = "flex-grow-1",
+                       numericInput(ns("hm_seed"), "Seed", value = 1, step = 1)),
+              bslib::tooltip(
+                actionButton(ns("hm_redo"), "Redo", icon = icon("dice"),
+                             class = "btn-sm btn-outline-secondary mb-3"),
+                "Re-cluster with a new seed (then click Render).")),
+            conditionalPanel(
+              sprintf("input['%s'] >= 2", ns("hm_row_k")),
+              tags$hr(class = "my-2"),
+              textInput(ns("hm_cluster_prefix"), "Save clusters: name prefix",
+                        placeholder = "defaults to the set name"),
+              actionButton(ns("hm_save_clusters"), "Save row clusters as gene sets",
+                           icon = icon("floppy-disk"),
+                           class = "btn-sm btn-outline-primary"))),
           bslib::accordion_panel(
             "Plot size", icon = icon("up-right-and-down-left-from-center"),
             helpText(class = "small text-muted",
@@ -820,6 +848,39 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                  bslib::accordion_panel_open("hm_acc", values = TRUE))
     observeEvent(input$hm_collapse_all,
                  bslib::accordion_panel_close("hm_acc", values = TRUE))
+    # Redo = bump the seed for a fresh clustering (gated: user then clicks Render).
+    observeEvent(input$hm_redo, {
+      s <- suppressWarnings(as.integer(input$hm_seed %||% 1L))
+      if (length(s) != 1L || is.na(s)) s <- 1L
+      updateNumericInput(session, "hm_seed", value = s + 1L)
+    })
+    # Save each row-cluster (from the rendered snapshot) as a gene set, via the
+    # shared conflict-safe commit; prefix defaults to the source set's name.
+    observeEvent(input$hm_save_clusters, {
+      s <- hm_shown$value()
+      if (is.null(s) || is.null(s$row_clusters)) {
+        showNotification("Render a row-clustered heatmap (row k >= 2) first.",
+                         type = "warning"); return()
+      }
+      mem <- cluster_membership(s$row_clusters)
+      prefix <- trimws(input$hm_cluster_prefix %||% "")
+      if (!nzchar(prefix))
+        prefix <- if (identical(input$hm_source %||% "saved", "search")) "cluster"
+                  else (input$hm_pick %||% "cluster")
+      sets <- state$gene_sets %||% list(); added <- character(0)
+      for (k in names(mem)) {
+        res <- gene_set_commit(
+          sets, sprintf("%s k%s", prefix, k), mem[[k]], mode = "new",
+          source = sprintf("kmeans cluster %s of %d (seed %s) of '%s'",
+                           k, length(mem), s$seed, prefix))
+        sets <- res$sets; added <- c(added, res$name)
+      }
+      state$gene_sets <- sets
+      showNotification(
+        sprintf("Saved %d row cluster%s as gene sets: %s", length(added),
+                if (length(added) == 1L) "" else "s", paste(added, collapse = ", ")),
+        type = "message")
+    })
 
     # The gated snapshot: the value matrix (cached in `derived`), the prepared
     # gene-set matrix, the plotted (column-subset) matrix, resolved labels/marks,
@@ -855,6 +916,7 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                   row_cov = NULL, col_cov = NULL, anno = NULL,
                   cluster_rows = FALSE, cluster_cols = FALSE,
                   show_row_dend = FALSE, show_col_dend = FALSE,
+                  row_split = NULL, col_split = NULL, row_clusters = NULL, seed = 1L,
                   empty_msg = "Pick a saved set or search genes, then click Render.")
       if (is.null(hm$mat)) return(out)
       show <- intersect(colnames(hm$mat), showing_samples())
@@ -894,6 +956,19 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       out$show_row_dend <- dend(input$hm_row_dend, out$cluster_rows, n_row)
       out$show_col_dend <- dend(input$hm_col_dend, out$cluster_cols, n_col)
 
+      # k-means row/column split on the DISPLAYED matrix (follows the z-score
+      # toggle). Membership (named by id) is kept so row clusters save as gene sets.
+      seed <- suppressWarnings(as.integer(input$hm_seed %||% 1L))
+      if (length(seed) != 1L || is.na(seed)) seed <- 1L
+      rk <- suppressWarnings(as.integer(input$hm_row_k %||% 1L))
+      ck <- suppressWarnings(as.integer(input$hm_col_k %||% 1L))
+      rc <- if (length(rk) == 1L && !is.na(rk) && rk >= 2L) expr_kmeans(pm, rk, seed) else NULL
+      cc <- if (length(ck) == 1L && !is.na(ck) && ck >= 2L) expr_kmeans(t(pm), ck, seed) else NULL
+      out$seed <- seed
+      out$row_clusters <- rc
+      out$row_split <- if (!is.null(rc)) split_with_counts(rc) else NULL
+      out$col_split <- if (!is.null(cc)) split_with_counts(cc) else NULL
+
       valid <- vapply(aes_catalog(state), `[[`, "", "key")
       sel_anno <- intersect(input$hm_anno, valid)
       # Fully resolve the annotation (values + colours) NOW, so a Palette edit to an
@@ -912,6 +987,7 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                           isTRUE(input$hm_cluster_rows %||% TRUE),
                           isTRUE(input$hm_cluster_cols %||% TRUE),
                           input$hm_row_dend, input$hm_col_dend, input$hm_anno,
+                          input$hm_row_k, input$hm_col_k, input$hm_seed,  # k-means gated
                           input$hm_ramp_src, hm_ramp(), state$palette,  # colours gated too
                           state$data_version)))
     output$hm_stale <- eng$stale_note(hm_shown)

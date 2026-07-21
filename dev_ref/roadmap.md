@@ -280,10 +280,16 @@ after P7a; the heatmap splits into core + k-means; the Phase-6-deferred annotate
   (`continuous_palette_ui`/`_server`) extracted from the Palette page's per-item continuous panel
   (host-namespace sub-module → reactive `list(name,min,max,custom,reverse)`; the P8 shared heatmap
   controller reuses it). + tests. + doc-sync (per-PR) + propose `v0.4.3`.
-- **P7d ⬜** — heatmap **k-means** (computed *outside* `Heatmap()` via `expr_kmeans` → `row_split`/
-  `column_split`; **`split_with_counts()`** member-count label standard; seed + Redo; store
-  membership; **save row clusters as gene sets** → portable via the P6d export; column clusters
-  in-session only).
+- **P7d ✅ (branch `p7d-heatmap-kmeans`)** — heatmap **k-means**, a "Clustering (k-means)" accordion:
+  computed *outside* `Heatmap()` via **`expr_kmeans(mat, k, seed)`** (RNG-state-safe; clusters
+  relabelled 1 = largest; `k < 2` = off) → `row_split`/`column_split`, run on the **displayed
+  matrix** (follows the z-score toggle). **`split_with_counts()`** = the member-count slice-label
+  standard (`1 (n=23)`). A visible **seed** + a **Redo** button (bumps the seed → stale → Render);
+  `k`/seed are gated in the deferred `sig` like everything else. Membership (`cluster_membership()`,
+  named by id) is kept so **row clusters save as gene sets** — a prefix (default = source set name) +
+  a single "Save row clusters as gene sets" reusing **`gene_set_commit()`** (conflict-safe) with
+  kmeans provenance in each set's `source`, so they round-trip through the P6d export; **column
+  clusters stay in-session only**. + tests. + doc-sync (per-PR) + propose `v0.4.3`.
 - **P7e ⬜** — the Phase-6-deferred **annotated layer** (`kind="annotated"`,
   `combine_gene_set_annotation` with shared-gene **warning**, annotation-driven `row_split` +
   nested k-means) + the `Palette > Gene Set` per-set-colour domain. Closes Phase 7 → propose `v0.5.0`.

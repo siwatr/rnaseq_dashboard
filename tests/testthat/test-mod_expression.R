@@ -23,6 +23,10 @@ test_that("Expression UI mounts the gene-set heatmap pill (P7c)", {
   expect_match(ui, "ex-hm_collapse_all")        # collapse / expand all
   expect_match(ui, "ex-hm_expand_all")
   expect_match(ui, "ex-hm_acc")                 # accordion id (collapse/expand target)
+  expect_match(ui, "ex-hm_row_k")               # k-means (P7d)
+  expect_match(ui, "ex-hm_col_k")
+  expect_match(ui, "ex-hm_seed")
+  expect_match(ui, "ex-hm_save_clusters")
   expect_match(ui, "Heatmap")
 })
 
@@ -337,5 +341,46 @@ test_that("heatmap 'selected' row labels mark searched genes + report coverage",
     expect_length(s$row_mark_at, 2L)                     # 2 in-set genes marked
     expect_false(is.null(s$row_cov))
     expect_equal(s$row_cov$n_hidden, 1L)                 # the out-of-set gene can't be shown
+  })
+})
+
+test_that("heatmap k-means splits rows/columns and saves clusters as gene sets (P7d)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 4, seed = 3)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:20]))
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "auto", hm_col_mode = "auto",
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto",
+                      hm_row_k = 3, hm_col_k = 2, hm_seed = 1, hm_render = 1)
+    session$flushReact()
+    s <- hm_out$value()
+    expect_s3_class(s$row_split, "factor")
+    expect_length(levels(s$row_split), 3L)               # 3 row clusters
+    expect_length(levels(s$col_split), 2L)               # 2 column clusters
+    expect_equal(length(s$row_clusters), 20L)            # membership named by id
+    expect_true(all(grepl("n=", levels(s$row_split))))   # counts in the slice labels
+
+    # Save row clusters as gene sets -> SetA k1/k2/k3 with provenance
+    session$setInputs(hm_cluster_prefix = "", hm_save_clusters = 1)
+    session$flushReact()
+    expect_setequal(names(state$gene_sets), c("SetA", "SetA k1", "SetA k2", "SetA k3"))
+    expect_match(state$gene_sets[["SetA k1"]]$source, "kmeans cluster")
+    # the saved clusters partition the original set (no overlap, union = plotted rows)
+    parts <- lapply(c("SetA k1", "SetA k2", "SetA k3"), function(n) state$gene_sets[[n]]$ids)
+    expect_equal(sum(lengths(parts)), 20L)
+    expect_length(Reduce(intersect, parts), 0L)          # disjoint
+
+    # k = 1 turns splitting off (a Render with no clusters)
+    session$setInputs(hm_row_k = 1, hm_col_k = 1, hm_render = 2)
+    session$flushReact()
+    expect_null(hm_out$value()$row_split)
+    expect_null(hm_out$value()$row_clusters)
   })
 })

@@ -196,3 +196,49 @@ test_that("expr_symmetric_limits centres on zero (and guards empty/zero)", {
   expect_equal(expr_symmetric_limits(c(0, 0, 0)), c(-1, 1))
   expect_equal(expr_symmetric_limits(c(NA, NaN, Inf)), c(-1, 1))
 })
+
+# --- P7d: k-means split helpers --------------------------------------------
+
+test_that("expr_kmeans is reproducible, RNG-safe, and separates clear groups", {
+  m <- rbind(matrix(rnorm(20, 0), 5, 4), matrix(rnorm(20, 8), 5, 4))
+  rownames(m) <- paste0("g", 1:10)
+  set.seed(42); before <- runif(1)
+  cl <- expr_kmeans(m, 2, seed = 1)
+  expect_named(cl, paste0("g", 1:10))
+  expect_equal(sort(as.integer(table(cl))), c(5L, 5L))   # two clean groups of 5
+  expect_equal(cl, expr_kmeans(m, 2, seed = 1))          # reproducible
+  set.seed(42); expect_equal(runif(1), before)           # global RNG untouched
+})
+
+test_that("expr_kmeans handles the degenerate k / n edge cases", {
+  m <- matrix(rnorm(8), 4, 2, dimnames = list(paste0("g", 1:4), c("A", "B")))
+  expect_null(expr_kmeans(m, 1))                          # k < 2 -> no split
+  expect_null(expr_kmeans(m[1, , drop = FALSE], 2))       # < 2 rows -> no split
+  expect_equal(length(unique(expr_kmeans(m, 10))), 4L)    # k >= n -> each its own
+})
+
+test_that("expr_kmeans relabels clusters by decreasing size (1 = largest)", {
+  m <- rbind(matrix(0, 2, 3), matrix(9, 5, 3))            # groups of 2 and 5
+  rownames(m) <- paste0("g", 1:7)
+  cl <- expr_kmeans(m, 2, seed = 1)
+  expect_equal(sum(cl == 1), 5L)                          # cluster 1 = the larger
+  expect_equal(sum(cl == 2), 2L)
+})
+
+test_that("split_with_counts labels slices with member counts, ordered", {
+  cl <- c(g1 = 2, g2 = 1, g3 = 1, g4 = 2, g5 = 1)
+  f <- split_with_counts(cl)
+  expect_s3_class(f, "factor")
+  expect_equal(levels(f), c("1 (n=3)", "2 (n=2)"))        # numeric order, counts
+  expect_equal(as.character(f[1]), "2 (n=2)")
+  expect_equal(levels(split_with_counts(cl, prefix = "row ")),
+               c("row 1 (n=3)", "row 2 (n=2)"))
+})
+
+test_that("cluster_membership groups ids by cluster in order", {
+  cl <- c(g1 = 2, g2 = 1, g3 = 1, g4 = 2, g5 = 1)
+  mem <- cluster_membership(cl)
+  expect_equal(names(mem), c("1", "2"))
+  expect_equal(mem[["1"]], c("g2", "g3", "g5"))
+  expect_equal(mem[["2"]], c("g1", "g4"))
+})
