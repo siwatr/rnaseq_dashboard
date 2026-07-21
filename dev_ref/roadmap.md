@@ -280,10 +280,25 @@ after P7a; the heatmap splits into core + k-means; the Phase-6-deferred annotate
   (`continuous_palette_ui`/`_server`) extracted from the Palette page's per-item continuous panel
   (host-namespace sub-module → reactive `list(name,min,max,custom,reverse)`; the P8 shared heatmap
   controller reuses it). + tests. + doc-sync (per-PR) + propose `v0.4.3`.
-- **P7d ⬜** — heatmap **k-means** (computed *outside* `Heatmap()` via `expr_kmeans` → `row_split`/
-  `column_split`; **`split_with_counts()`** member-count label standard; seed + Redo; store
-  membership; **save row clusters as gene sets** → portable via the P6d export; column clusters
-  in-session only).
+- **P7d ✅ (branch `p7d-heatmap-kmeans`)** — heatmap **k-means**, a "Clustering (k-means)" accordion:
+  computed *outside* `Heatmap()` via **`expr_kmeans(mat, k, seed)`** (RNG-state-safe; clusters
+  relabelled 1 = largest; `k < 2` = off) → `row_split`/`column_split`, run on the **displayed
+  matrix** (follows the z-score toggle). **`split_with_counts()`** = the member-count slice-label
+  standard, two-line `C<id>\n(count)`. A visible **seed** + a **Redo** button (bumps the seed →
+  stale → Render); `k`/seed are gated in the deferred `sig` like everything else. **A blank seed =
+  no seed** (fresh random clustering each render; advances the global RNG — a fixed seed is
+  RNG-safe); **Redo** lands on a new concrete seed (increment, or a random one from blank). Slice
+  ordering is toggleable — **Cluster row/column slices** (`cluster_row_slices`/`cluster_column_slices`,
+  shown when the respective k ≥ 2; off keeps the slices in C1, C2, … order). Membership
+  (`cluster_membership()`, named by id) is kept so **row clusters save as gene sets** — a prefix
+  (default = source set name) + "Save row clusters as gene sets", each set's `source` recording kmeans
+  provenance, portable through the P6d export. **Column clusters save to a `colData` factor** ("Save
+  column clusters to colData" → `state_mutate`, an undoable edit; samples hidden by the "Showing"
+  subset get an `unclustered` level) so the sample clustering becomes a reusable annotation. **Both
+  saves are conflict-guarded**: a name clash pops an **Overwrite / Abort** modal (never a silent
+  overwrite or auto-suffix), the prefix/column-name field clears on success, and the annotation/label
+  selectors preserve their pick across the edit's `data_version` bump. + tests. + doc-sync (per-PR) +
+  propose `v0.4.3`.
 - **P7e ⬜** — the Phase-6-deferred **annotated layer** (`kind="annotated"`,
   `combine_gene_set_annotation` with shared-gene **warning**, annotation-driven `row_split` +
   nested k-means) + the `Palette > Gene Set` per-set-colour domain. Closes Phase 7 → propose `v0.5.0`.

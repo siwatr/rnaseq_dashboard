@@ -68,6 +68,16 @@
     heatmap_legend_param = list(title = s$legend))
   if (identical(s$row_mode, "all")) args$row_labels <- s$row_labels
   if (identical(s$col_mode, "all")) args$column_labels <- s$col_labels
+  # k-means slices (computed outside Heatmap(); factor levels carry member counts).
+  # cluster_*_slices orders the slices by clustering (else factor order C1, C2, ...).
+  if (!is.null(s$row_split)) {
+    args$row_split <- s$row_split
+    args$cluster_row_slices <- isTRUE(s$cluster_row_slices)
+  }
+  if (!is.null(s$col_split)) {
+    args$column_split <- s$col_split
+    args$cluster_column_slices <- isTRUE(s$cluster_col_slices)
+  }
   # "Selected": names off, mark just the searched rows/columns via anno_mark.
   if (identical(s$row_mode, "selected") && length(s$row_mark_at))
     args$right_annotation <- ComplexHeatmap::rowAnnotation(
@@ -393,14 +403,62 @@ mod_expression_ui <- function(id) {
           bslib::accordion_panel(
             "Heatmap elements", icon = icon("sitemap"),
             bslib::input_switch(ns("hm_cluster_rows"), "Cluster rows", value = TRUE),
+            conditionalPanel(              # slice ordering only matters with k >= 2
+              sprintf("input['%s'] >= 2", ns("hm_row_k")),
+              bslib::input_switch(ns("hm_cluster_row_slices"),
+                bslib::tooltip(tags$span("Cluster row slices"),
+                  "Order the k-means row slices by clustering; off keeps them C1, C2, ..."),
+                value = TRUE)),
             conditionalPanel(
               sprintf("input['%s']", ns("hm_cluster_rows")),
               hm_dend_radio(ns("hm_row_dend"), "Row dendrogram")),
             tags$hr(class = "my-2"),
             bslib::input_switch(ns("hm_cluster_cols"), "Cluster columns", value = TRUE),
             conditionalPanel(
+              sprintf("input['%s'] >= 2", ns("hm_col_k")),
+              bslib::input_switch(ns("hm_cluster_col_slices"),
+                bslib::tooltip(tags$span("Cluster column slices"),
+                  "Order the k-means column slices by clustering; off keeps them C1, C2, ..."),
+                value = TRUE)),
+            conditionalPanel(
               sprintf("input['%s']", ns("hm_cluster_cols")),
               hm_dend_radio(ns("hm_col_dend"), "Column dendrogram"))),
+          bslib::accordion_panel(
+            "Clustering (k-means)", icon = icon("object-group"),
+            helpText(class = "small text-muted",
+                     "k = 1 turns splitting off. k-means runs on the displayed values (z-scored when that toggle is on)."),
+            bslib::layout_columns(
+              col_widths = c(6, 6),
+              numericInput(ns("hm_row_k"), "Row clusters (k)", value = 1,
+                           min = 1, max = 20, step = 1),
+              numericInput(ns("hm_col_k"), "Column clusters (k)", value = 1,
+                           min = 1, max = 20, step = 1)),
+            tags$div(class = "d-flex align-items-end gap-2",
+              tags$div(class = "flex-grow-1",
+                       numericInput(ns("hm_seed"), "Seed (blank = no seed)",
+                                    value = 1, step = 1)),
+              bslib::tooltip(
+                actionButton(ns("hm_redo"), "Random seed", icon = icon("dice"),
+                             class = "btn-sm btn-outline-secondary mb-3"),
+                "Put a new random seed in the box, then click Render for a different clustering.")),
+            helpText(class = "small text-muted",
+                     "A set seed is reproducible; blank leaves it unseeded. Use Random seed to re-roll - re-clicking Render alone reuses the cached clustering."),
+            conditionalPanel(
+              sprintf("input['%s'] >= 2", ns("hm_row_k")),
+              tags$hr(class = "my-2"),
+              textInput(ns("hm_cluster_prefix"), "Save row cluster to gene set",
+                        placeholder = "name prefix (defaults to the set name)"),
+              actionButton(ns("hm_save_clusters"), "Save row clusters as gene sets",
+                           icon = icon("floppy-disk"),
+                           class = "btn-sm btn-outline-primary")),
+            conditionalPanel(
+              sprintf("input['%s'] >= 2", ns("hm_col_k")),
+              tags$hr(class = "my-2"),
+              textInput(ns("hm_col_colname"), "Save column cluster to colData",
+                        placeholder = "column name (default: sample_cluster)"),
+              actionButton(ns("hm_save_col_clusters"), "Save column clusters to colData",
+                           icon = icon("floppy-disk"),
+                           class = "btn-sm btn-outline-primary"))),
           bslib::accordion_panel(
             "Plot size", icon = icon("up-right-and-down-left-from-center"),
             helpText(class = "small text-muted",
@@ -781,33 +839,45 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
 
     # Label-source selectors (default row = <feature_type>_name -> rownames; col =
     # colnames). Forced to init while hidden so their defaults hold when collapsed.
+    # These re-render on a data edit (a new colData column must show up as a choice);
+    # each preserves the user's current pick so an edit (e.g. saving a column-cluster
+    # column) never silently resets the annotation / label controls.
     output$hm_row_source_ui <- renderUI({
       req(state$working)
       cols <- hm_disc(hm_rowdata())
       guess <- paste0(state$meta$feature_type %||% "gene", "_name")
-      def <- if (guess %in% cols) guess else "__id__"
+      cur <- shiny::isolate(input$hm_row_source)
+      sel <- if (!is.null(cur) && (identical(cur, "__id__") || cur %in% cols)) cur
+             else if (guess %in% cols) guess else "__id__"
       selectInput(ns("hm_row_source"), "Label by",
                   c("Feature ID (rownames)" = "__id__", stats::setNames(cols, cols)),
-                  selected = def)
+                  selected = sel)
     })
     output$hm_col_source_ui <- renderUI({
       req(state$working)
       cols <- hm_disc(hm_coldata())
+      cur <- shiny::isolate(input$hm_col_source)
+      sel <- if (!is.null(cur) && (identical(cur, "__id__") || cur %in% cols)) cur else "__id__"
       selectInput(ns("hm_col_source"), "Label by",
                   c("Sample ID (colnames)" = "__id__", stats::setNames(cols, cols)),
-                  selected = "__id__")
+                  selected = sel)
     })
     output$hm_col_sel_ui <- renderUI({
       req(state$working)
+      cur <- intersect(shiny::isolate(input$hm_col_sel), colnames(state$working))
       selectizeInput(ns("hm_col_sel"), NULL, choices = colnames(state$working),
-                     multiple = TRUE, options = list(placeholder = "Samples to label"))
+                     selected = cur, multiple = TRUE,
+                     options = list(placeholder = "Samples to label"))
     })
     output$hm_anno_ui <- renderUI({
       req(state$working)
-      pv <- primary_design_var(state$working)
+      ch <- aes_choices(aes_catalog(state), none = FALSE)
+      cur <- shiny::isolate(input$hm_anno)
+      sel <- if (!is.null(cur)) intersect(cur, unlist(ch, use.names = FALSE)) else {
+        pv <- primary_design_var(state$working); if (!is.na(pv)) pv else character(0)
+      }
       selectizeInput(ns("hm_anno"), "Annotate by (one or more)",
-                     choices = aes_choices(aes_catalog(state), none = FALSE),
-                     selected = if (!is.na(pv)) pv else character(0), multiple = TRUE)
+                     choices = ch, selected = sel, multiple = TRUE)
     })
     outputOptions(output, "hm_row_source_ui", suspendWhenHidden = FALSE)
     outputOptions(output, "hm_col_source_ui", suspendWhenHidden = FALSE)
@@ -820,6 +890,109 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                  bslib::accordion_panel_open("hm_acc", values = TRUE))
     observeEvent(input$hm_collapse_all,
                  bslib::accordion_panel_close("hm_acc", values = TRUE))
+    # "Random seed" puts a fresh random seed in the box (always random, so the name
+    # is honest); the new clustering is a concrete, reproducible one that takes
+    # effect on the next Render (gated, like every other heatmap setting).
+    observeEvent(input$hm_redo, {
+      updateNumericInput(session, "hm_seed", value = sample.int(1e6L, 1L))
+    })
+    .seed_lab <- function(x) if (length(x) != 1L || is.na(x)) "none" else as.character(x)
+    .conflict_modal <- function(msg, confirm_id) showModal(modalDialog(
+      title = "Name conflict", size = "m", tags$p(msg),
+      footer = tagList(modalButton("Abort"),
+                       actionButton(ns(confirm_id), "Overwrite", class = "btn-danger"))))
+
+    # Save each row-cluster (from the rendered snapshot) as a gene set. On a name
+    # clash we ask Overwrite / Abort (never silently overwrite or auto-suffix);
+    # the prefix defaults to the source set's name and clears on success.
+    row_prefix <- function() {
+      p <- trimws(input$hm_cluster_prefix %||% "")
+      if (nzchar(p)) p
+      else if (identical(input$hm_source %||% "saved", "search")) "cluster"
+      else (input$hm_pick %||% "cluster")
+    }
+    do_save_rows <- function(overwrite) {
+      s <- hm_shown$value()
+      if (is.null(s) || is.null(s$row_clusters)) {
+        showNotification("Render a row-clustered heatmap (row k >= 2) first.",
+                         type = "warning"); return()
+      }
+      # Don't persist a clustering computed on a now-stale object (e.g. samples
+      # dropped since the last Render) -- the snapshot no longer matches the data.
+      if (isTRUE(hm_shown$stale())) {
+        showNotification("The heatmap is out of date - click Render, then save.",
+                         type = "warning"); return()
+      }
+      mem <- cluster_membership(s$row_clusters); prefix <- row_prefix()
+      targets <- sprintf("%s k%s", prefix, names(mem))
+      sets <- state$gene_sets %||% list()
+      clash <- intersect(targets, names(sets))
+      if (length(clash) && !isTRUE(overwrite)) {
+        .conflict_modal(sprintf("These gene sets already exist: %s. Overwrite them, or abort and change the name prefix?",
+                                paste(clash, collapse = ", ")), "hm_row_overwrite")
+        return()
+      }
+      for (i in seq_along(mem))
+        sets[[targets[i]]] <- new_gene_set(
+          mem[[i]], source = sprintf("kmeans cluster %s of %d (seed %s) of '%s'",
+                                     names(mem)[i], length(mem), .seed_lab(s$seed), prefix))
+      state$gene_sets <- sets
+      updateTextInput(session, "hm_cluster_prefix", value = "")
+      showNotification(sprintf("Saved %d row cluster%s as gene sets: %s", length(targets),
+        if (length(targets) == 1L) "" else "s", paste(targets, collapse = ", ")),
+        type = "message")
+    }
+    observeEvent(input$hm_save_clusters, do_save_rows(FALSE))
+    observeEvent(input$hm_row_overwrite, { removeModal(); do_save_rows(TRUE) })
+
+    # Save the column (sample) clustering as a colData factor for later annotation.
+    # A real, undoable edit (state_mutate). Samples not in the plot (dropped by the
+    # "Showing" subset) get an "unclustered" level. Same Overwrite / Abort on a
+    # name clash; the column-name field clears on success.
+    col_name <- function() {
+      n <- trimws(input$hm_col_colname %||% ""); if (nzchar(n)) n else "sample_cluster"
+    }
+    do_save_cols <- function(overwrite) {
+      s <- hm_shown$value()
+      if (is.null(s) || is.null(s$col_clusters)) {
+        showNotification("Render a column-clustered heatmap (column k >= 2) first.",
+                         type = "warning"); return()
+      }
+      if (isTRUE(hm_shown$stale())) {
+        showNotification("The heatmap is out of date - click Render, then save.",
+                         type = "warning"); return()
+      }
+      colname <- col_name()
+      if (colname %in% colnames(SummarizedExperiment::colData(state$working)) &&
+          !isTRUE(overwrite)) {
+        .conflict_modal(sprintf("colData column '%s' already exists. Overwrite it, or abort and change the column name?",
+                                colname), "hm_col_overwrite")
+        return()
+      }
+      cc <- s$col_clusters                         # named by sample id (shown only)
+      all_s <- colnames(state$working)
+      lab <- stats::setNames(rep("unclustered", length(all_s)), all_s)
+      lab[names(cc)] <- paste0("C", cc)
+      has_unclustered <- any(lab == "unclustered")
+      lv <- c(paste0("C", sort(unique(as.integer(cc)))),
+              if (has_unclustered) "unclustered")
+      fac <- factor(unname(lab[all_s]), levels = lv)
+      state_mutate(state, function(dds) {
+        cd <- SummarizedExperiment::colData(dds)
+        cd[[colname]] <- fac
+        SummarizedExperiment::colData(dds) <- cd
+        dds
+      }, action = list(action = "add_col_cluster", column = colname,
+                       k = length(unique(cc)), seed = .seed_lab(s$seed)))
+      updateTextInput(session, "hm_col_colname", value = "")
+      showNotification(
+        sprintf("Saved column clusters to colData column '%s' (%d cluster%s%s).",
+                colname, length(unique(cc)), if (length(unique(cc)) == 1L) "" else "s",
+                if (has_unclustered) sprintf("; %d unclustered", sum(lab == "unclustered")) else ""),
+        type = "message")
+    }
+    observeEvent(input$hm_save_col_clusters, do_save_cols(FALSE))
+    observeEvent(input$hm_col_overwrite, { removeModal(); do_save_cols(TRUE) })
 
     # The gated snapshot: the value matrix (cached in `derived`), the prepared
     # gene-set matrix, the plotted (column-subset) matrix, resolved labels/marks,
@@ -855,6 +1028,10 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                   row_cov = NULL, col_cov = NULL, anno = NULL,
                   cluster_rows = FALSE, cluster_cols = FALSE,
                   show_row_dend = FALSE, show_col_dend = FALSE,
+                  row_split = NULL, col_split = NULL,
+                  row_clusters = NULL, col_clusters = NULL, seed = NA_integer_,
+                  cluster_row_slices = TRUE, cluster_col_slices = TRUE,
+                  row_k_degenerate = FALSE, col_k_degenerate = FALSE,
                   empty_msg = "Pick a saved set or search genes, then click Render.")
       if (is.null(hm$mat)) return(out)
       show <- intersect(colnames(hm$mat), showing_samples())
@@ -894,6 +1071,30 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
       out$show_row_dend <- dend(input$hm_row_dend, out$cluster_rows, n_row)
       out$show_col_dend <- dend(input$hm_col_dend, out$cluster_cols, n_col)
 
+      # k-means row/column split on the DISPLAYED matrix (follows the z-score
+      # toggle). Membership (named by id) is kept so row clusters save as gene sets.
+      # A blank seed = NA -> no seed (fresh random clustering on each recompute of
+      # this cached reactive; a bare Render re-click with nothing changed reuses it).
+      seed <- suppressWarnings(as.integer(input$hm_seed))
+      if (length(seed) != 1L) seed <- NA_integer_
+      rk <- suppressWarnings(as.integer(input$hm_row_k %||% 1L))
+      ck <- suppressWarnings(as.integer(input$hm_col_k %||% 1L))
+      rc <- if (length(rk) == 1L && !is.na(rk) && rk >= 2L) expr_kmeans(pm, rk, seed) else NULL
+      cc <- if (length(ck) == 1L && !is.na(ck) && ck >= 2L) expr_kmeans(t(pm), ck, seed) else NULL
+      out$seed <- seed
+      out$row_clusters <- rc                     # named by gene id (save as gene sets)
+      out$col_clusters <- cc                     # named by sample id (save to colData)
+      out$row_split <- if (!is.null(rc)) split_with_counts(rc) else NULL
+      out$col_split <- if (!is.null(cc)) split_with_counts(cc) else NULL
+      # k >= the number of genes/samples shown -> every item its own cluster
+      # (expr_kmeans caps k at n); flag it so the info line can warn.
+      out$row_k_degenerate <- length(rk) == 1L && !is.na(rk) && rk >= 2L && rk >= n_row
+      out$col_k_degenerate <- length(ck) == 1L && !is.na(ck) && ck >= 2L && ck >= n_col
+      # Whether the k-means slices themselves are ordered by clustering (only
+      # meaningful when there are slices); off keeps them in C1, C2, ... order.
+      out$cluster_row_slices <- isTRUE(input$hm_cluster_row_slices %||% TRUE)
+      out$cluster_col_slices <- isTRUE(input$hm_cluster_col_slices %||% TRUE)
+
       valid <- vapply(aes_catalog(state), `[[`, "", "key")
       sel_anno <- intersect(input$hm_anno, valid)
       # Fully resolve the annotation (values + colours) NOW, so a Palette edit to an
@@ -912,6 +1113,12 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
                           isTRUE(input$hm_cluster_rows %||% TRUE),
                           isTRUE(input$hm_cluster_cols %||% TRUE),
                           input$hm_row_dend, input$hm_col_dend, input$hm_anno,
+                          # coerced to match hm_spec's effective k/seed, so a
+                          # fractional keystroke doesn't flicker the stale banner
+                          suppressWarnings(as.integer(input$hm_row_k %||% 1L)),
+                          suppressWarnings(as.integer(input$hm_col_k %||% 1L)),
+                          suppressWarnings(as.integer(input$hm_seed)),
+                          input$hm_cluster_row_slices, input$hm_cluster_col_slices,
                           input$hm_ramp_src, hm_ramp(), state$palette,  # colours gated too
                           state$data_version)))
     output$hm_stale <- eng$stale_note(hm_shown)
@@ -935,7 +1142,13 @@ mod_expression_server <- function(id, state, dark_mode = reactive(FALSE)) {
         lines <- c(lines, list(tags$div(sprintf(
           "Column labels: %d of %d selected not shown (outside the current 'Showing').",
           s$col_cov$n_hidden, s$col_cov$n_selected))))
-      tags$div(class = "small text-muted mb-2", lines)
+      warn <- function(txt) tags$div(class = "text-warning",
+                                     icon("triangle-exclamation"), " ", txt)
+      if (isTRUE(s$row_k_degenerate))
+        lines <- c(lines, list(warn("Row k is at least the number of genes shown - every gene forms its own cluster.")))
+      if (isTRUE(s$col_k_degenerate))
+        lines <- c(lines, list(warn("Column k is at least the number of samples shown - every sample forms its own cluster.")))
+      tags$div(class = "small mb-2 text-muted", lines)
     })
 
     output$hm_plot <- renderPlot({

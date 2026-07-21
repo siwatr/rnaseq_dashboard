@@ -16,7 +16,19 @@
 * Extracted a reusable **continuous-palette control** (`continuous_palette_ui`/`_server`) from the
   Palette page so any plot can carry its own colour ramp (base palette + anchors + reverse + custom
   stops); the heatmap uses it now and the planned shared heatmap controller will too.
-* Next: Phase 7 continues — P7d (heatmap k-means).
+* **Heatmap k-means** (P7d): a "Clustering (k-means)" panel splits the heatmap into row and/or
+  column clusters (k = 1 turns it off), computed on the displayed values with a visible seed and a
+  Redo button for a fresh clustering; slices are labelled `C1 / (count)`. Each **row cluster can be
+  saved as a gene set** in one click (prefix defaults to the source set's name, with kmeans
+  provenance recorded), and the **column clustering can be saved to a colData column** for reuse as
+  a sample annotation (samples hidden by the "Showing" subset are marked `unclustered`). So clusters
+  flow into the rest of the app, the gene-set export, and the annotation controls. Leave the seed
+  blank for a fresh (non-reproducible) clustering each render; toggle whether the k-means slices are
+  ordered by clustering. Saving is conflict-guarded — a name clash prompts Overwrite / Abort rather
+  than silently overwriting, the name field clears on success, and saving a column-cluster column no
+  longer resets the annotation selectors.
+* Next: Phase 7 continues — P7e (annotated gene-set layer + the Palette Gene Set domain), which
+  closes the phase.
 
 # ddsdashboard 0.4.2
 

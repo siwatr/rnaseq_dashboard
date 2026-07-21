@@ -23,6 +23,10 @@ test_that("Expression UI mounts the gene-set heatmap pill (P7c)", {
   expect_match(ui, "ex-hm_collapse_all")        # collapse / expand all
   expect_match(ui, "ex-hm_expand_all")
   expect_match(ui, "ex-hm_acc")                 # accordion id (collapse/expand target)
+  expect_match(ui, "ex-hm_row_k")               # k-means (P7d)
+  expect_match(ui, "ex-hm_col_k")
+  expect_match(ui, "ex-hm_seed")
+  expect_match(ui, "ex-hm_save_clusters")
   expect_match(ui, "Heatmap")
 })
 
@@ -337,5 +341,155 @@ test_that("heatmap 'selected' row labels mark searched genes + report coverage",
     expect_length(s$row_mark_at, 2L)                     # 2 in-set genes marked
     expect_false(is.null(s$row_cov))
     expect_equal(s$row_cov$n_hidden, 1L)                 # the out-of-set gene can't be shown
+  })
+})
+
+test_that("heatmap k-means splits rows/columns and saves clusters as gene sets (P7d)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 4, seed = 3)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:20]))
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "auto", hm_col_mode = "auto",
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto",
+                      hm_row_k = 3, hm_col_k = 2, hm_seed = 1, hm_render = 1)
+    session$flushReact()
+    s <- hm_out$value()
+    expect_s3_class(s$row_split, "factor")
+    expect_length(levels(s$row_split), 3L)               # 3 row clusters
+    expect_length(levels(s$col_split), 2L)               # 2 column clusters
+    expect_equal(length(s$row_clusters), 20L)            # membership named by id
+    expect_true(all(grepl("^C\\d+\n\\(\\d+\\)$", levels(s$row_split))))  # "C1\n(8)" slice labels
+    expect_true(s$cluster_row_slices && s$cluster_col_slices)  # slice ordering (default on)
+
+    # Save row clusters as gene sets -> SetA k1/k2/k3 with provenance
+    session$setInputs(hm_cluster_prefix = "", hm_save_clusters = 1)
+    session$flushReact()
+    expect_setequal(names(state$gene_sets), c("SetA", "SetA k1", "SetA k2", "SetA k3"))
+    expect_equal(input$hm_cluster_prefix, "")            # prefix clears on success
+    expect_match(state$gene_sets[["SetA k1"]]$source, "kmeans cluster")
+    # the saved clusters partition the original set (no overlap, union = plotted rows)
+    parts <- lapply(c("SetA k1", "SetA k2", "SetA k3"), function(n) state$gene_sets[[n]]$ids)
+    expect_equal(sum(lengths(parts)), 20L)
+    expect_length(Reduce(intersect, parts), 0L)          # disjoint
+
+    # k = 1 turns splitting off (a Render with no clusters)
+    session$setInputs(hm_row_k = 1, hm_col_k = 1, hm_render = 2)
+    session$flushReact()
+    expect_null(hm_out$value()$row_split)
+    expect_null(hm_out$value()$row_clusters)
+
+    # row k >= genes shown -> each its own cluster + a degenerate-k warning flag
+    state$gene_sets$Tiny <- new_gene_set(rn[1:5])
+    session$setInputs(hm_pick = "Tiny", hm_row_k = 8, hm_col_k = 1, hm_render = 3)
+    session$flushReact()
+    s2 <- hm_out$value()
+    expect_true(s2$row_k_degenerate)
+    expect_equal(length(unique(s2$row_clusters)), nrow(s2$mat))   # all singletons
+  })
+})
+
+test_that("heatmap saves column clusters to a colData factor (unshown -> unclustered)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 4, seed = 3)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:20]))
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "auto", hm_col_mode = "auto",
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto",
+                      hm_row_k = 1, hm_col_k = 2, hm_seed = 1)
+    session$flushReact()
+    # hide one condition via the display-only "Showing" subset -> those become "unclustered"
+    session$setInputs(hm_show_by = "condition", hm_show_values = "control")
+    session$flushReact()
+    session$setInputs(hm_render = 1); session$flushReact()
+    expect_equal(ncol(hm_out$value()$mat), 4L)           # only the shown half
+
+    dv0 <- state$data_version
+    session$setInputs(hm_col_colname = "sample_km", hm_save_col_clusters = 1)
+    session$flushReact()
+    cd <- SummarizedExperiment::colData(state$working)
+    expect_true("sample_km" %in% colnames(cd))
+    expect_true(is.factor(cd$sample_km))
+    expect_setequal(levels(cd$sample_km), c("C1", "C2", "unclustered"))
+    expect_equal(sum(cd$sample_km == "unclustered"), 4L) # the hidden 'treated' half
+    expect_gt(state$data_version, dv0)                    # a real, undoable edit
+  })
+})
+
+test_that("row-cluster save asks before overwriting + clears prefix; colData save keeps annotation", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 4, seed = 3)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:20]))
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "auto", hm_col_mode = "auto",
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto",
+                      hm_row_k = 2, hm_col_k = 2, hm_seed = 1,
+                      hm_anno = "condition", hm_render = 1)
+    session$flushReact()
+    session$setInputs(hm_cluster_prefix = "grp", hm_save_clusters = 1); session$flushReact()
+    ids1 <- state$gene_sets[["grp k1"]]$ids
+    expect_true(!is.null(ids1))
+
+    # Save again with the SAME prefix -> a clash: nothing changes without Overwrite.
+    session$setInputs(hm_cluster_prefix = "grp", hm_save_clusters = 2); session$flushReact()
+    expect_length(state$gene_sets, 3L)                   # SetA + grp k1/k2 (no _2 suffix)
+    # Confirm Overwrite -> replaces in place (still 3 sets, ids refreshed)
+    session$setInputs(hm_row_overwrite = 1); session$flushReact()
+    expect_length(state$gene_sets, 3L)
+    expect_setequal(names(state$gene_sets), c("SetA", "grp k1", "grp k2"))
+
+    # Saving a column-cluster colData column must NOT reset the annotation selection.
+    expect_equal(input$hm_anno, "condition")
+    session$setInputs(hm_col_colname = "sc", hm_save_col_clusters = 1); session$flushReact()
+    expect_true("sc" %in% colnames(SummarizedExperiment::colData(state$working)))
+    expect_equal(input$hm_anno, "condition")             # preserved across the edit
+  })
+})
+
+test_that("cluster save refuses a stale snapshot (computed on a different matrix)", {
+  skip_if_not_installed("DESeq2")
+  state <- new_app_state()
+  shiny::testServer(mod_expression_server, args = list(state = state), {
+    state_load(state, ensure_logcounts(make_mock_dds(n_genes = 80, n_per_group = 4, n_spike = 4, seed = 3)),
+               source = "demo", meta = list(feature_type = "gene"))
+    rn <- rownames(state$working)
+    state$gene_sets <- list(SetA = new_gene_set(rn[1:20]))
+    session$setInputs(tabs = "Gene sets", hm_source = "saved", hm_pick = "SetA",
+                      hm_val_assay = "logcounts", hm_val_transform = "none",
+                      hm_zscore = TRUE, hm_only_expr = TRUE, hm_ramp_src = "custom",
+                      hm_row_mode = "auto", hm_col_mode = "auto",
+                      hm_cluster_rows = TRUE, hm_cluster_cols = TRUE,
+                      hm_row_dend = "auto", hm_col_dend = "auto",
+                      hm_row_k = 2, hm_col_k = 1, hm_seed = 1, hm_render = 1)
+    session$flushReact()
+    expect_false(hm_out$stale())
+
+    # Change a gated setting WITHOUT re-rendering -> stale. A Save must be refused
+    # (the snapshot's clustering no longer matches the current settings/data).
+    session$setInputs(hm_row_k = 3); session$flushReact()
+    expect_true(hm_out$stale())
+    session$setInputs(hm_cluster_prefix = "x", hm_save_clusters = 1); session$flushReact()
+    expect_false(any(grepl("^x k", names(state$gene_sets))))   # nothing saved
+    expect_setequal(names(state$gene_sets), "SetA")
   })
 })

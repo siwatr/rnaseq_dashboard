@@ -325,6 +325,90 @@ expr_label_coverage <- function(selected, present_keys) {
        n_hidden = length(selected) - n_shown)
 }
 
+#' k-means cluster the rows of a value matrix (reproducibly)
+#'
+#' Computed *outside* `ComplexHeatmap::Heatmap()` so the caller controls the seed,
+#' keeps the membership (to save clusters as gene sets), and can label slices with
+#' member counts. Clusters are relabelled by decreasing size (cluster 1 = largest)
+#' for a stable, meaningful order. The global RNG state is saved and restored, so
+#' seeding here never perturbs the rest of the session.
+#'
+#' @param mat A numeric rows x cols matrix (e.g. the displayed heatmap matrix).
+#'   Non-finite values are treated as 0 before clustering.
+#' @param k Number of clusters. `< 2` (or fewer than 2 rows) returns `NULL`
+#'   (no split). Clamped to the number of rows.
+#' @param seed Integer seed for reproducibility, or `NA`/`NULL` for **no seed** --
+#'   a fresh (non-reproducible) clustering each call, which advances the global
+#'   RNG. A concrete seed is RNG-safe (state saved/restored).
+#' @param nstart Passed to [stats::kmeans()] (random restarts).
+#' @return A named integer vector (names = `rownames(mat)`) of cluster ids, or
+#'   `NULL` when no split applies / clustering fails.
+#' @export
+expr_kmeans <- function(mat, k, seed = 1L, nstart = 10L) {
+  mat <- as.matrix(mat)
+  k <- suppressWarnings(as.integer(k)[1]); n <- nrow(mat)
+  if (is.na(k) || k < 2L || n < 2L) return(NULL)
+  if (!all(is.finite(mat))) mat[!is.finite(mat)] <- 0
+  k <- min(k, n)
+  relabel <- function(cl) {                      # cluster 1 = largest, stable order
+    tab <- sort(table(cl), decreasing = TRUE)
+    remap <- stats::setNames(seq_along(tab), names(tab))
+    out <- unname(remap[as.character(cl)]); names(out) <- rownames(mat); out
+  }
+  if (k >= n) return(relabel(seq_len(n)))        # each row its own cluster
+  seed <- suppressWarnings(as.integer(seed)[1])
+  if (!is.na(seed)) {                            # fixed seed -> reproducible + RNG-safe
+    old <- if (exists(".Random.seed", envir = .GlobalEnv))
+      get(".Random.seed", envir = .GlobalEnv) else NULL
+    on.exit(if (is.null(old)) suppressWarnings(rm(".Random.seed", envir = .GlobalEnv))
+            else assign(".Random.seed", old, envir = .GlobalEnv), add = TRUE)
+    set.seed(seed)
+  }                                              # else: no seed -> random, RNG advances
+  km <- tryCatch(stats::kmeans(mat, centers = k, nstart = nstart),
+                 error = function(e) NULL)
+  if (is.null(km)) return(NULL)
+  relabel(km$cluster)
+}
+
+#' Slice labels carrying member counts, e.g. "C1\\n(23)"
+#'
+#' Turns a cluster-assignment vector into a factor whose levels are the two-line
+#' slice titles ComplexHeatmap shows for `row_split`/`column_split`: a `<prefix><id>`
+#' line over a `(count)` line. Numeric cluster ids order numerically; levels are
+#' ordered so the slices read C1, C2, C3, ...
+#'
+#' @param clusters A cluster-assignment vector (from [expr_kmeans()]).
+#' @param prefix Label prefix before the cluster id (default `"C"` -> "C1").
+#' @return A factor aligned to `clusters`, levels = the `"<prefix><id>\n(count)"`
+#'   titles.
+#' @export
+split_with_counts <- function(clusters, prefix = "C") {
+  cl <- as.character(clusters)
+  cnt <- table(cl)
+  lv <- names(cnt)
+  num <- suppressWarnings(as.numeric(lv))
+  lv <- if (!any(is.na(num))) lv[order(num)] else lv[order(lv)]
+  lab_for <- function(x) sprintf("%s%s\n(%d)", prefix, x, as.integer(cnt[x]))
+  factor(lab_for(cl), levels = lab_for(lv))
+}
+
+#' Cluster membership as a named list (cluster -> ids)
+#'
+#' Groups the ids (names of a [expr_kmeans()] vector) by cluster, in cluster order
+#' -- the basis for "save each row cluster as a gene set".
+#'
+#' @param clusters A named cluster-assignment vector (names = ids).
+#' @return A named list keyed by cluster id, each a character vector of ids.
+#' @export
+cluster_membership <- function(clusters) {
+  ids <- names(clusters)
+  if (is.null(ids)) ids <- as.character(seq_along(clusters))
+  cl <- as.character(clusters)
+  num <- suppressWarnings(as.numeric(unique(cl)))
+  keys <- if (!any(is.na(num))) as.character(sort(unique(num))) else sort(unique(cl))
+  stats::setNames(lapply(keys, function(k) ids[cl == k]), keys)
+}
+
 #' Symmetric colour limits around zero
 #'
 #' For a z-scored heatmap the divergent ramp should be centred at 0, so the limits
